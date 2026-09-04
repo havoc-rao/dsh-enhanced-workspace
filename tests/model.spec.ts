@@ -650,6 +650,24 @@ describe('deriveFlat', () => {
     const rows = deriveFlat(sessions, [])
     expect(rows.map(row => row.id)).toEqual([S('b'), S('a')])
   })
+
+  it('marks the viewer-open session row as current', () => {
+    const sessions: SessionListState = {
+      ids: [S('a'), S('b')],
+      byId: {
+        [S('a')]: { id: S('a'), displayTitle: 'a', running: false, blank: false, updatedAt: 1 },
+        [S('b')]: { id: S('b'), displayTitle: 'b', running: false, blank: false, updatedAt: 2 },
+      },
+      current: S('a'),
+      phase: 'ready',
+      subagentsByParent: {},
+      jobsBySession: {},
+      currentAddress: undefined,
+    }
+    const rows = deriveFlat(sessions, [])
+    expect(rows.find(row => row.id === S('a'))?.current, 'the open session row is current').toBe(true)
+    expect(rows.find(row => row.id === S('b'))?.current, 'every other row is not').toBe(false)
+  })
 })
 
 describe('filterForestByQuery (in-place dirs-list filter)', () => {

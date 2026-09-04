@@ -452,17 +452,21 @@ describe('enhanced workspace browser', () => {
     const artRow = treeRowByText('绘画收集')!
     expect(artRow.getAttribute('aria-expanded')).toBe('true') // first-encounter expansion
     expect(artRow.querySelector('[class*="folderActive"]'), 'expanded workspace holding the current session lights its glyph').not.toBeNull()
+    expect(artRow.className, 'the expanded workspace holding the current session carries the current-session wash').toContain('workspaceRowCurrent')
     const recencySection = [...container.querySelectorAll('section')]
       .find(section => section.querySelector('h3')?.textContent === zh.recents)
     expect(recencySection?.querySelector('[class*="folderActive"]'), 'the collapsed recency row keeps its glyph unlit').toBeNull()
+    expect(recencySection?.querySelector('[class*="workspaceRowCurrent"]'), 'the collapsed recency row keeps its wash off').toBeNull()
     const sessionRowOf = (text: string): HTMLElement =>
       [...container.querySelectorAll<HTMLElement>('[class*="sessionRow"]')]
         .find(row => row.closest('section')?.querySelector('h3')?.textContent !== zh.recents
           && row.textContent?.includes(text))!
     const runningRow = sessionRowOf('画布草图') // s1
     expect(runningRow.querySelector('[data-state="ongoing"]'), 'running session shows the loading dot').not.toBeNull()
+    expect(runningRow.className, 'the viewer-open session row carries the wash').toContain('sessionRowCurrent')
     expect(runningRow.textContent).toContain('运行中')
     expect(sessionRowOf('配色研究').querySelector('[data-state="done"]'), 'completed session shows the done dot').not.toBeNull()
+    expect(sessionRowOf('配色研究').className, 'other session rows keep their plain surface').not.toContain('sessionRowCurrent')
     expect(sessionRowOf('空闲会话').querySelector('[data-state]'), 'idle sessions show no dot').toBeNull()
   })
 

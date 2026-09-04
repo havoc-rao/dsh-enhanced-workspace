@@ -1030,8 +1030,8 @@ function FolderRow(props: {
   const { node, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const dropZone = props.drag.dropZoneOf('folder', node.folderId)
-  // Dir-level activity sync: an expanded folder holding the current session
-  // lights its glyph (built-in parity).
+  // Dir-level activity sync (built-in parity): an expanded folder holding
+  // the current session lights its glyph and carries the current-session wash.
   const active = dirActive(node.expanded, node.containsCurrent)
   // While a guide band is hovered, the ancestor's whole line lights up:
   // every row whose stroke at the hovered column belongs to the same
@@ -1043,7 +1043,7 @@ function FolderRow(props: {
   return (
     <div className={css.folderBranch}>
       <div
-        className={`${css.folderRow}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
+        className={`${css.folderRow}${active ? ` ${css.folderRowCurrent}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
         role="treeitem"
         aria-expanded={node.expanded}
         style={{
@@ -1190,7 +1190,8 @@ function LeafRow(props: {
   const indentPx = rowIndent(depth)
   const dropZone = hasAccount ? props.drag.dropZoneOf('workspace', leaf.workspaceId as string) : undefined
   // Dir-level activity sync (built-in parity): an expanded workspace holding
-  // the current session lights its glyph — recency rows follow the same rule.
+  // the current session lights its glyph and carries the current-session
+  // wash — recency rows follow the same rule.
   const active = dirActive(leaf.expanded, leaf.containsCurrent)
   // See FolderRow: while a guide band is hovered, rows that carry the
   // hovered ancestor's column stroke paint it highlighted.
@@ -1208,7 +1209,7 @@ function LeafRow(props: {
   return (
     <div className={css.leafBranch}>
       <div
-        className={`${css.workspaceRow}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
+        className={`${css.workspaceRow}${active ? ` ${css.workspaceRowCurrent}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
         role="treeitem"
         aria-expanded={leaf.expanded}
         style={{
@@ -1368,7 +1369,7 @@ function SessionRow(props: {
   const highlightCol = guideHighlightColumn(props.guide?.hover ?? null, props.columns ?? [])
   return (
     <div
-      className={css.sessionRow}
+      className={`${css.sessionRow}${session.current ? ` ${css.sessionRowCurrent}` : ''}`}
       role="treeitem"
       style={{
         ...(props.indent === undefined ? undefined : { paddingLeft: `${props.indent + SESSION_INDENT_OFFSET_PX}px` }),

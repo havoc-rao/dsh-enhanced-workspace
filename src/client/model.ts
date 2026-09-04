@@ -664,6 +664,9 @@ export function dirActive(expanded: boolean, containsCurrent: boolean): boolean 
 /** One top-level session row in a group or the flat list. */
 export interface SessionNode {
   id: SessionId
+  /** Whether this row is the session currently open in the viewer (the row
+   *  that is "on display right now" — drives the current-session wash). */
+  current: boolean
   title: string
   blank: boolean
   pendingInteraction?: PendingInteractionStatus
@@ -802,10 +805,15 @@ function projectionSessionStats(
   return (values as unknown as { sessionStats?: SessionStatsProjection }).sessionStats
 }
 
-function sessionNode(session: SessionSummary, descendants: ReadonlyMap<SessionId, { runningCount: number }>): SessionNode {
+function sessionNode(
+  session: SessionSummary,
+  descendants: ReadonlyMap<SessionId, { runningCount: number }>,
+  current: SessionId | undefined,
+): SessionNode {
   const stats = projectionSessionStats(session.projectionValues)
   return {
     id: session.id,
+    current: session.id === current,
     title: sessionTitle(session),
     blank: session.blank,
     running: session.running,
@@ -864,7 +872,7 @@ function buildLeaf(
     sessionCount: members.length,
     expanded,
     containsCurrent: list.current !== undefined && workspace.sessionIds.includes(list.current as SessionId),
-    sessions: expanded ? ordered.map(member => sessionNode(member, descendants)) : [],
+    sessions: expanded ? ordered.map(member => sessionNode(member, descendants, list.current)) : [],
   }
 }
 
@@ -1008,7 +1016,7 @@ export function deriveFolderForest(
       expanded: expandedGroups.has(UNGROUPED_KEY),
       containsCurrent: currentGroup === UNGROUPED_KEY,
       sessions: expandedGroups.has(UNGROUPED_KEY)
-        ? ordered.map(session => sessionNode(session, descendants))
+        ? ordered.map(session => sessionNode(session, descendants, list.current))
         : [],
     }
   }
@@ -1032,7 +1040,7 @@ export function deriveFlat(list: SessionListState, archivedSessionIds: readonly 
     rows.push(session)
   }
   rows.sort(byRecency)
-  return rows.map(session => sessionNode(session, descendants))
+  return rows.map(session => sessionNode(session, descendants, list.current))
 }
 
 /**

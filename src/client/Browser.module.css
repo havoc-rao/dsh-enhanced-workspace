@@ -70,10 +70,31 @@
 }
 
 .scroll {
+  /* Slimmer bar than the global 8px: rebinds the width variable so the
+     padding-right formula below stays exact, and restates the WebKit bar's
+     layout width like ui-theme's scrollbar.css does. */
+  --dsh-scrollbar-width: 6px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Scrollbar seats at the sidebar edge: 2px from the shell's right edge
+     (the region seat cancels the shell inset), content keeps the shell's
+     12px inset with or without the bar — the stable gutter reserves the
+     bar's width, so showing/hiding the thumb never moves a row. Same
+     geometry split as ui-workspace's WorkspaceBrowser .list. */
+  margin-right: 2px;
+  padding-right: calc(
+    var(--dsh-sidebar-inline-padding, 12px)
+    - var(--dsh-scrollbar-width, 8px)
+    - 2px
+  );
   padding-bottom: 12px;
+  scrollbar-gutter: stable;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
 .grouped,
@@ -82,6 +103,14 @@
 .leafBranch {
   display: flex;
   flex-direction: column;
+}
+
+/* With rounded 8px row pills, adjacent rows touch corner-to-corner — a 1px
+   hairline gap between the workspace row and its session list (and, via
+   .sessionList, between the session rows themselves) keeps each row's fill
+   reading as its own pill. */
+.leafBranch {
+  gap: 1px;
 }
 
 /* Shared block padding for the recency module and the "all" workspace list. */
@@ -98,7 +127,7 @@
 
 .sectionTitle {
   margin: 0;
-  padding: 6px 12px 2px;
+  padding: 6px 0 2px;
   font-size: 11px;
   font-weight: 600;
   color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
@@ -112,6 +141,10 @@
   gap: 6px;
   width: 100%;
   box-sizing: border-box;
+  /* Item radius in the sidebar's new-session pill style (SidebarRoot
+     .newSession: 12px) — hover/selection fills and the indent-guide
+     background layers clip to the rounded row. */
+  border-radius: 12px;
   border: none;
   background: transparent;
   color: inherit;
@@ -122,15 +155,46 @@
 
 .workspaceRow,
 .folderRow {
-  padding: 3px 12px;
+  /* The right inset comes from the scroll container (padding-right), not
+     per row; the left inset is inline (rowIndent). */
+  padding: 3px 0 3px 12px;
   /* relative: anchors the clickable indent-guide bands (.guideHit) to the row. */
   position: relative;
+}
+
+/* Workspace and session rows use a tighter corner than the shared 12px
+   pill radius above — they're the widest entries in the tree, so their
+   hover/selection fill reads better with a smaller fillet. */
+.workspaceRow,
+.sessionRow {
+  border-radius: 8px;
 }
 
 .folderRow:hover,
 .workspaceRow:hover,
 .sessionRow:hover {
   background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+}
+
+/* The current-session wash ("正在展示 ing"): the row of the session open in
+ * the viewer gets a soft blue wash, and — the dir-level sync rule, same as
+ * the lit glyph — its expanded workspace row and expanded ancestor folder
+ * rows carry the same wash, so the open session's trail reads down the tree.
+ * The tone is the active glyph's business blue (.folderActive), diluted —
+ * the repo's color-mix pattern. Painted with the background-color longhand
+ * only, so the inline indent-guide gradients (guideBackground) keep
+ * composing; the explicit :hover pair (after the generic hover fill above)
+ * keeps the wash through hover instead of the plain gray fill. */
+.folderRowCurrent,
+.workspaceRowCurrent,
+.sessionRowCurrent {
+  background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, var(--ds-color-accent, #4c8dff)) 14%, transparent);
+}
+
+.folderRowCurrent:hover,
+.workspaceRowCurrent:hover,
+.sessionRowCurrent:hover {
+  background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, var(--ds-color-accent, #4c8dff)) 24%, transparent);
 }
 
 /* The clickable indent-guide band: one absolutely-positioned pill per
@@ -260,6 +324,7 @@
 .sessionList {
   display: flex;
   flex-direction: column;
+  gap: 1px;
 }
 
 /* Session rows: a fixed 16px status slot at the row head holds the built-in
@@ -293,7 +358,9 @@
 }
 
 .sessionRow {
-  padding: 2px 12px 2px 32px;
+  /* Left 32px insets the indent-guide columns; the right inset comes from
+     the scroll container. */
+  padding: 2px 0 2px 32px;
   /* relative: anchors the clickable indent-guide bands (.guideHit) to the
      row — session rows carry the workspace column's band too. */
   position: relative;
@@ -302,14 +369,14 @@
 /* Search feedback: the no-match hint shown while a query filters
  * everything out of the original dirs list. */
 .searchStatus {
-  padding: 6px 12px;
+  padding: 6px 0;
   font-size: 11px;
   color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
 }
 
 .overflowButton {
   align-self: flex-start;
-  margin: 1px 12px 2px 32px;
+  margin: 1px 0 2px 32px; /* left aligns with the rows' indent; right inset from the container */
   padding: 2px 8px;
   font-size: 11px;
   border: none;
@@ -324,12 +391,12 @@
 }
 
 /* The "all" section header: title on the left, the new-folder icon action on
- * the right — same icon+tooltip seat as the header's add-workspace button. */
+ * the right — same icon+tooltip seat as the header's add-workspace button.
+ * The right inset comes from the scroll container. */
 .sectionHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-right: 12px;
 }
 
 /* Dialog seats (input / confirm / move-to). */
