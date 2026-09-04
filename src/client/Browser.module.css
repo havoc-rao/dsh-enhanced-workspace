@@ -84,13 +84,15 @@
   flex-direction: column;
 }
 
-/* The recency module: capped at five dir rows, each rendered like an
- * ordinary workspace row (expandable session list) with no session count and
- * no relative time on the UI — the stamps stay recorded in the store for
- * ordering. The bottom border divides the section from the workspace list. */
+/* Shared block padding for the recency module and the "all" workspace list. */
 .section {
   padding: 0 0 8px;
   margin-bottom: 4px;
+}
+
+/* Recency module only: the trailing divider separates it from the workspace
+ * list below — the "all" section is the last block and draws no border. */
+.sectionDivider {
   border-bottom: 1px solid var(--ds-color-border, rgba(128, 128, 128, 0.35));
 }
 

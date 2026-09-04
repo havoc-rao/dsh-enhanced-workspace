@@ -82,6 +82,16 @@ const SEARCH_QUERY_MAX_CODE_UNITS = 500
 const RECENTS_LIMIT = 5
 /** Session rows visible per Workspace before the local overflow control. */
 const COLLAPSED_SESSION_LIMIT = 5
+/** Folder-tree indent: 8px base (built-in 8px row-cell parity) + 8px per level. */
+const FOLDER_INDENT_BASE_PX = 8
+const FOLDER_INDENT_STEP_PX = 8
+/** Session rows under a workspace: workspace indent + this offset (title-column delta, 32px vs 12px before unification). */
+const SESSION_INDENT_OFFSET_PX = 20
+
+/** Left inset for one tree row: 8px base + 8px per ancestor folder level. */
+function rowIndent(ancestorFolderCount: number): number {
+  return FOLDER_INDENT_BASE_PX + ancestorFolderCount * FOLDER_INDENT_STEP_PX
+}
 
 /** Immutable membership toggle for local expand arrays. */
 function toggled(list: readonly string[], key: string): string[] {
@@ -707,12 +717,13 @@ function GroupedView(props: {
           // count and no relative time on the UI (the recency stamps stay
           // recorded in the store for ordering); the bottom border divides
           // this section from the workspace list below.
-          <section className={css.section}>
+          <section className={`${css.section} ${css.sectionDivider}`}>
             <h3 className={css.sectionTitle}>{t('recents')}</h3>
             {props.recents.map(recent => (
               <LeafRow
                 key={recent.workspaceId}
                 leaf={recent}
+                depth={0}
                 callbacks={callbacks}
                 sessionSeat={sessionSeat}
                 sessionsOverflow={sessionsOverflow}
@@ -726,10 +737,10 @@ function GroupedView(props: {
       {props.forest.length > 0 || props.topLevel.length > 0 || props.ungrouped !== undefined
         ? (
           // The full workspace tree below the recents border: folder forest,
-          // root-level leaves, and the ungrouped bucket — same section styling
-          // as the recency module; the "new folder" action sits on the title's
-          // right side and the section's bottom border divides it from the
-          // recents module above.
+          // root-level leaves, and the ungrouped bucket — shared section
+          // styling with the recency module but the last block, so its trailing
+          // divider is omitted; the "new folder" action sits on the title's
+          // right side.
           <section className={css.section}>
             <div className={css.sectionHeader}>
               <h3 className={css.sectionTitle}>{t('all')}</h3>
@@ -760,6 +771,7 @@ function GroupedView(props: {
               <LeafRow
                 key={leaf.key}
                 leaf={leaf}
+                depth={0}
                 callbacks={callbacks}
                 sessionSeat={sessionSeat}
                 sessionsOverflow={sessionsOverflow}
@@ -770,6 +782,7 @@ function GroupedView(props: {
             {props.ungrouped !== undefined && (
               <LeafRow
                 leaf={props.ungrouped}
+                depth={0}
                 callbacks={callbacks}
                 sessionSeat={sessionSeat}
                 sessionsOverflow={sessionsOverflow}
@@ -806,7 +819,7 @@ function FolderRow(props: {
         className={`${css.folderRow}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
         role="treeitem"
         aria-expanded={node.expanded}
-        style={{ paddingLeft: `${8 + (node.depth - 1) * 14}px` }}
+        style={{ paddingLeft: `${rowIndent(node.depth - 1)}px` }}
         draggable
         onDragStart={event => {
           const transfer = event.dataTransfer
@@ -902,6 +915,7 @@ function FolderRow(props: {
               <LeafRow
                 key={leaf.key}
                 leaf={leaf}
+                depth={node.depth}
                 callbacks={callbacks}
                 sessionSeat={props.sessionSeat}
                 sessionsOverflow={props.sessionsOverflow}
@@ -919,19 +933,22 @@ function FolderRow(props: {
 /** One workspace leaf row (or the ungrouped bucket) with its session rows. */
 function LeafRow(props: {
   leaf: WorkspaceLeaf
+  /** Ancestor folder count (0 = top-level); the row indents one 8px step per folder. */
+  depth: number
   callbacks: RowCallbacks
   sessionSeat: SessionRowSeat
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
 }): ReactNode {
-  const { leaf, callbacks } = props
+  const { leaf, callbacks, depth } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const hasAccount = leaf.workspaceId !== undefined
   const overflowExpanded = props.sessionsOverflow.includes(leaf.key)
   const shownSessions = overflowExpanded
     ? leaf.sessions
     : leaf.sessions.slice(0, COLLAPSED_SESSION_LIMIT)
+  const indentPx = rowIndent(depth)
   const dropZone = hasAccount ? props.drag.dropZoneOf('workspace', leaf.workspaceId as string) : undefined
   // Dir-level activity sync (built-in parity): an expanded workspace holding
   // the current session lights its glyph — recency rows follow the same rule.
@@ -942,6 +959,7 @@ function LeafRow(props: {
         className={`${css.workspaceRow}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
         role="treeitem"
         aria-expanded={leaf.expanded}
+        style={{ paddingLeft: `${indentPx}px` }}
         draggable={hasAccount}
         onDragStart={hasAccount ? (event => {
           const transfer = event.dataTransfer
@@ -1038,12 +1056,13 @@ function LeafRow(props: {
         ? (
           <div className={css.sessionList}>
             {shownSessions.map(session => (
-              <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} />
+              <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx} />
             ))}
             {leaf.sessions.length > COLLAPSED_SESSION_LIMIT && (
               <button
                 type="button"
                 className={css.overflowButton}
+                style={{ marginLeft: `${indentPx + SESSION_INDENT_OFFSET_PX}px` }}
                 aria-expanded={overflowExpanded}
                 onClick={() => { props.onToggleOverflow(leaf.key) }}
               >
@@ -1064,6 +1083,8 @@ function SessionRow(props: {
   session: SessionNode
   seat: SessionRowSeat
   onOpen: (sessionId: SessionId) => void
+  /** Workspace-row left inset; absent keeps the flat-list CSS inset. */
+  indent?: number
 }): ReactNode {
   const { session, seat } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1083,6 +1104,7 @@ function SessionRow(props: {
     <div
       className={css.sessionRow}
       role="treeitem"
+      style={props.indent === undefined ? undefined : { paddingLeft: `${props.indent + SESSION_INDENT_OFFSET_PX}px` }}
       onClick={() => props.onOpen(session.id)}
     >
       <span className={css.sessionStatusSlot}>
