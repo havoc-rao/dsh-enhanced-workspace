@@ -57,6 +57,12 @@ type EnhancedWorkspaceActions = {
   setGroupExpanded: (draft: EnhancedWorkspaceState, key: string, expanded: boolean) => void
   setFolderExpanded: (draft: EnhancedWorkspaceState, folderId: FolderId, expanded: boolean) => void
   /**
+   * Collapse every expandable directory row: expanded folders AND workspace
+   * session groups (recency rows included) fold back to the top-level
+   * outline. The tree and the recency stamps themselves stay untouched.
+   */
+  collapseAll: (draft: EnhancedWorkspaceState) => void
+  /**
    * Record a recency stamp at Date.now() — written only when a new query was
    * sent in the workspace (observed via {@link observeSessionActivity}; clicks
    * and opens never touch). Idempotent — one stamp per observation batch.
@@ -132,6 +138,10 @@ export function createEnhancedWorkspaceStore(): EngineStoreHandle<EnhancedWorksp
       setOrderBy: (draft, mode) => { draft.orderBy = mode },
       setGroupExpanded: (draft, key, expanded) => { draft.groupExpansion[key] = expanded },
       setFolderExpanded: (draft, folderId, expanded) => { draft.folderExpansion[folderId] = expanded },
+      collapseAll: draft => {
+        draft.folderExpansion = {}
+        draft.groupExpansion = {}
+      },
       touchWorkspace: (draft, workspaceId) => {
         draft.recentTouchById[workspaceId] = Date.now()
       },

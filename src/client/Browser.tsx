@@ -36,6 +36,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import {
   IconArchiveOutline20,
   IconBranchOutline16,
+  IconChevronUpOutline14,
   IconEditOutline16,
   IconEllipsisOutline16,
   IconFolderClose16,
@@ -852,6 +853,13 @@ function GroupedView(props: {
   }
   const topLevelLabel = t('moveDestinationTopLevel')
   const toggleOverflow = (key: string): void => setSessionsOverflow(keys => toggled(keys, key))
+  // Collapse-all: every expandable directory row — the folder forest AND the
+  // workspace session groups (recency rows included) — folds back to the
+  // top-level outline; the per-row "show more" overflows reset with them.
+  const collapseAll = (): void => {
+    actions.collapseAll()
+    setSessionsOverflow([])
+  }
 
   // Drag & drop seat: source + highlighted target live here; drops resolve
   // against the tree through the pure drag module and dispatch store actions
@@ -927,7 +935,19 @@ function GroupedView(props: {
           // recorded in the store for ordering); the bottom border divides
           // this section from the workspace list below.
           <section className={`${css.section} ${css.sectionDivider}`}>
-            <h3 className={css.sectionTitle}>{t('recents')}</h3>
+            <div className={css.sectionHeader}>
+              <h3 className={css.sectionTitle}>{t('recents')}</h3>
+              <Tooltip label={t('collapseAll')} side="bottom" delayMs={500}>
+                <button
+                  type="button"
+                  className={css.iconButton}
+                  aria-label={t('collapseAll')}
+                  onClick={collapseAll}
+                >
+                  <IconChevronUpOutline14 />
+                </button>
+              </Tooltip>
+            </div>
             {props.recents.map(recent => (
               <LeafRow
                 key={recent.workspaceId}
@@ -951,21 +971,33 @@ function GroupedView(props: {
           // The full workspace tree below the recents border: folder forest,
           // root-level leaves, and the ungrouped bucket — shared section
           // styling with the recency module but the last block, so its trailing
-          // divider is omitted; the "new folder" action sits on the title's
-          // right side.
+          // divider is omitted; the collapse-all and "new folder" actions sit
+          // on the title's right side.
           <section className={css.section}>
             <div className={css.sectionHeader}>
               <h3 className={css.sectionTitle}>{t('all')}</h3>
-              <Tooltip label={t('newFolder')} side="bottom" delayMs={500}>
-                <button
-                  type="button"
-                  className={css.iconButton}
-                  aria-label={t('newFolder')}
-                  onClick={props.openers.onNewFolder}
-                >
-                  <IconPlusOutline16 />
-                </button>
-              </Tooltip>
+              <div className={css.headerActions}>
+                <Tooltip label={t('collapseAll')} side="bottom" delayMs={500}>
+                  <button
+                    type="button"
+                    className={css.iconButton}
+                    aria-label={t('collapseAll')}
+                    onClick={collapseAll}
+                  >
+                    <IconChevronUpOutline14 />
+                  </button>
+                </Tooltip>
+                <Tooltip label={t('newFolder')} side="bottom" delayMs={500}>
+                  <button
+                    type="button"
+                    className={css.iconButton}
+                    aria-label={t('newFolder')}
+                    onClick={props.openers.onNewFolder}
+                  >
+                    <IconPlusOutline16 />
+                  </button>
+                </Tooltip>
+              </div>
             </div>
             {props.forest.map(folder => (
               <FolderRow

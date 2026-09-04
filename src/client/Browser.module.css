@@ -390,13 +390,29 @@
   background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
 }
 
-/* The "all" section header: title on the left, the new-folder icon action on
- * the right — same icon+tooltip seat as the header's add-workspace button.
- * The right inset comes from the scroll container. */
+/* Section headers (recents / all): title on the left, icon actions on the
+ * right — the collapse-all button (both sections) and, in "all", the
+ * new-folder button, in the same icon+tooltip seat style as the header's
+ * add-workspace button. The right inset comes from the scroll container.
+ *
+ * Sticky: while the sidebar scrolls, the title band pins to the top of the
+ * scrolling container and the rows pass beneath it. The band fills with
+ * --dsw-specific-sidebar-fill — the exact token SidebarRoot paints the
+ * column with (AppFrame does the same), so the pinned band is
+ * pixel-identical to the surface behind it in every theme and skin, and
+ * the passing rows hide cleanly behind an opaque surface. Blur-based glass
+ * is deliberately NOT used here: the region seat (.regionArea) clips with
+ * overflow:hidden, and in that clip context Chromium composites
+ * backdrop-filter against a missing backdrop — the band renders solid
+ * black. */
 .sectionHeader {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  background: var(--dsw-specific-sidebar-fill);
 }
 
 /* Dialog seats (input / confirm / move-to). */
