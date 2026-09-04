@@ -9,7 +9,6 @@
 
 import type {
   SessionId,
-  SessionSearchResultItem,
   WorkspaceId,
   WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
@@ -31,13 +30,6 @@ export interface EnhancedWorkspaceInjected {
   startSession: (workspaceId?: WorkspaceId) => void
   /** Open a real Session. */
   open: (sessionId: SessionId) => void
-  /** Search current visible conversation messages. */
-  searchSessions: (
-    query: string,
-    signal: AbortSignal,
-  ) => Promise<{ items: readonly SessionSearchResultItem[]; hasMore: boolean }>
-  /** Maximum number of merged rows rendered for one search. */
-  searchResultLimit: number
   /** Rename a Session (explicit user title; resolves on host acceptance). */
   renameSession: (sessionId: SessionId, title: string) => Promise<void>
   /** Fork a Session at its last completed turn and open the child. */

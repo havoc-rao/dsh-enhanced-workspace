@@ -51,7 +51,7 @@ import {
   StateDot,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SessionId, SessionSearchResultItem, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { EnhancedWorkspaceBrowserProps } from './contract.ts'
 import {
   folderDropZone,
@@ -76,6 +76,8 @@ import {
   deriveFolderForest,
   deriveRecentWorkspaces,
   dirActive,
+  filterFlatByQuery,
+  filterForestByQuery,
   folderOfWorkspace,
   observeSessionActivity,
   orderDeltas,
@@ -91,10 +93,6 @@ import {
 import { FLAT_SESSION_ORDER_KEY } from './store.ts'
 import css from './Browser.module.css'
 
-/** Pause between the latest keystroke and a Host content-search request. */
-const SEARCH_DEBOUNCE_MS = 250
-/** `session.search` wire bound, measured in JavaScript UTF-16 code units. */
-const SEARCH_QUERY_MAX_CODE_UNITS = 500
 /** Recency-module row budget: only the five most recently queried dirs. */
 const RECENTS_LIMIT = 5
 /** Session rows visible per Workspace before the local overflow control. */
@@ -296,22 +294,11 @@ function toggled(list: readonly string[], key: string): string[] {
 /** Stable selector identity for the framework hook cache (never re-created). */
 const identity = <T,>(snapshot: T): T => snapshot
 
-/** Keep controlled input and RPC payload inside the session.search wire contract. */
-function sanitizeSearchQuery(value: string): string {
-  const withoutNul = value.replaceAll('\0', '')
-  if (withoutNul.length <= SEARCH_QUERY_MAX_CODE_UNITS) return withoutNul
-  let end = SEARCH_QUERY_MAX_CODE_UNITS
-  const last = withoutNul.charCodeAt(end - 1)
-  const next = withoutNul.charCodeAt(end)
-  if (last >= 0xD800 && last <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) end--
-  return withoutNul.slice(0, end)
-}
-
 /** The enhanced browsing region. @param props - the four-share composed props. */
 export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): ReactNode {
   const {
     useStore, actions, t,
-    startSession, open, searchSessions, searchResultLimit,
+    startSession, open,
     renameSession, forkSession, archiveSession,
     renameWorkspace, deleteWorkspace,
     insertWorkspaceBefore, createWorkspace, pickDirectory,
@@ -320,7 +307,6 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   const sessions = props.useSessions(identity)
   const state = useStore(identity)
   const [query, setQuery] = useState('')
-  const [search, setSearch] = useState<{ items: readonly SessionSearchResultItem[]; hasMore: boolean } | undefined>(undefined)
 
   // Baseline convergence: adopt Host workspaces the tree does not know yet
   // (newest first at the root account head) and prune ids the Host no longer
@@ -396,26 +382,9 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     actions.setGroupExpanded(currentGroup, true)
   }, [currentGroup, state.groupExpansion, actions])
 
-  // Content search: debounce, sanitize, abort the in-flight request on change.
-  useEffect(() => {
-    if (query.trim() === '') {
-      setSearch(undefined)
-      return
-    }
-    const controller = new AbortController()
-    const timer = setTimeout(() => {
-      searchSessions(sanitizeSearchQuery(query), controller.signal)
-        .then(result => setSearch(result))
-        .catch(() => {
-          if (!controller.signal.aborted) setSearch(undefined)
-        })
-    }, SEARCH_DEBOUNCE_MS)
-    return () => {
-      controller.abort()
-      clearTimeout(timer)
-    }
-  }, [query, searchSessions])
-
+  // Content search input: while the query is non-blank the browser filters
+  // the original dirs list in place (see `filterForestByQuery`), hides the
+  // recency module, and restores everything on an empty query.
   const searching = query.trim() !== ''
 
   const addWorkspace = async (): Promise<void> => {
@@ -451,6 +420,26 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     () => deriveFlat(sessions, workspaces.archivedSessionIds),
     [sessions, workspaces.archivedSessionIds],
   )
+  // While searching, the SAME tree renders filtered down to the matching
+  // dirs (workspace title / cwd basename / session title hits; folders keep
+  // the match path) — no separate results surface. The recency module is
+  // omitted in this state (`recents={[]}` below).
+  const filteredForest = useMemo(
+    () => searching
+      ? filterForestByQuery(forest, sessions, workspaces.items, query, workspaces.archivedSessionIds)
+      : forest,
+    [searching, forest, sessions, workspaces.items, query, workspaces.archivedSessionIds],
+  )
+  const filteredFlat = useMemo(
+    () => searching ? filterFlatByQuery(flat, query) : flat,
+    [searching, flat, query],
+  )
+  const searchEmpty = searching
+    && (state.groupBy === 'flat'
+      ? filteredFlat.length === 0
+      : filteredForest.folders.length === 0
+        && filteredForest.topLevel.length === 0
+        && filteredForest.ungrouped === undefined)
 
   // --- Browser-owned dialog seats (outlive row unmounts during collapse) ---
 
@@ -656,9 +645,24 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
       </div>
       <div className={css.scroll}>
         {searching
-          ? search === undefined
-            ? null
-            : <SearchList props={props} rows={search.items} />
+          ? searchEmpty
+            ? (
+              // The filtered tree is fully empty — a quiet hint instead of a
+              // blank area (the query stays; clearing it restores the list).
+              <div className={css.searchStatus} role="status">{t('searchNoMatches')}</div>
+            )
+            : state.groupBy === 'flat'
+              ? <FlatList props={props} rows={filteredFlat} onRename={openers.onRenameSession} />
+              : <GroupedView
+                props={props}
+                forest={filteredForest.folders}
+                topLevel={filteredForest.topLevel}
+                // While filtering, the recency module is omitted: the user
+                // sees only the matching dirs of the original list.
+                recents={[]}
+                ungrouped={filteredForest.ungrouped}
+                openers={openers}
+              />
           : state.groupBy === 'flat'
             ? <FlatList props={props} rows={flat} onRename={openers.onRenameSession} />
             : <GroupedView
@@ -1442,43 +1446,6 @@ function FlatList(props: {
       {props.rows.map(session => (
         <SessionRow key={session.id} session={session} seat={seat} onOpen={seat.onOpen} />
       ))}
-    </div>
-  )
-}
-
-/** Bounded search result rows: the wire item carries only `sessionId` +
- * `snippet`, so titles and workspace labels resolve through the session and
- * workspace snapshots. */
-function SearchList(props: {
-  props: EnhancedWorkspaceBrowserProps
-  rows: readonly SessionSearchResultItem[]
-}): ReactNode {
-  const sessions = props.props.useSessions(identity)
-  const workspaces = props.props.useWorkspaces(identity)
-  const workspaceBySession = useMemo(() => {
-    const map = new Map<SessionId, WorkspaceView>()
-    for (const workspace of workspaces.items) {
-      for (const sessionId of workspace.sessionIds) map.set(sessionId, workspace)
-    }
-    return map
-  }, [workspaces.items])
-  return (
-    <div className={css.flatList}>
-      {props.rows.slice(0, props.props.searchResultLimit).map(row => {
-        const session = sessions.byId[row.sessionId]
-        const workspace = workspaceBySession.get(row.sessionId)
-        return (
-          <button
-            key={row.sessionId}
-            type="button"
-            className={css.sessionRow}
-            onClick={() => props.props.open(row.sessionId)}
-          >
-            <span className={css.rowLabel}>{session?.displayTitle ?? row.sessionId}</span>
-            <span className={css.rowTime}>{workspace?.title ?? ''}</span>
-          </button>
-        )
-      })}
     </div>
   )
 }

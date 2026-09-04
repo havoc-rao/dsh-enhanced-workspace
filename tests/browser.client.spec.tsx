@@ -115,8 +115,6 @@ function renderBrowser(): EnhancedWorkspaceBrowserProps {
     t,
     startSession: vi.fn(),
     open: vi.fn(),
-    searchSessions: vi.fn(async () => ({ items: [], hasMore: false })),
-    searchResultLimit: 10,
     renameSession: vi.fn(async () => undefined),
     forkSession: vi.fn(),
     archiveSession: vi.fn(async () => undefined),
@@ -520,6 +518,81 @@ describe('enhanced workspace browser', () => {
     expect(after[ROOT_FOLDER_ID]?.folderIds).toEqual([alpha])
     expect(warn, 'the cycle guard warns non-fatally').toHaveBeenCalled()
     warn.mockRestore()
+  })
+})
+
+describe('search: in-place filter of the original dirs list', () => {
+  /** The region's `type="search"` input. */
+  const searchInput = (): HTMLInputElement =>
+    [...document.body.querySelectorAll<HTMLInputElement>('input')]
+      .find(input => input.type === 'search')!
+
+  /** The region's section blocks (recents + all), in render order. */
+  const sections = (): HTMLElement[] => [...container.querySelectorAll('section')]
+
+  it('dir-level match: the tree filters in place, the recency section hides, and clearing restores everything', () => {
+    const props = renderBrowser()
+    const input = searchInput()
+    expect(input.placeholder).toBe(zh.searchPlaceholder)
+    expect(sections()).toHaveLength(2) // recents + all (seeded workspaces are recent by creation)
+
+    typeText(input, '文档')
+    // No results surface: the SAME tree renders, filtered — recency is gone,
+    // the non-matching dir hides, the matching dir stays.
+    expect(sections()).toHaveLength(1)
+    expect(sections()[0]!.querySelector('h3')?.textContent).toBe(zh.all)
+    expect(treeRowByText('绘画收集')).toBeUndefined()
+    expect(treeRowByText('文档')).toBeDefined()
+
+    // Clearing the query restores the full list including the recency module.
+    typeText(input, '')
+    expect(sections()).toHaveLength(2)
+    expect(treeRowByText('绘画收集')).toBeDefined()
+    expect(treeRowByText('文档')).toBeDefined()
+  })
+
+  it('session-level match keeps the owning dir visible, and the row still expands to its sessions', () => {
+    renderBrowser()
+    typeText(searchInput(), '构图')
+    expect(treeRowByText('绘画收集'), 'the dir holding the matching session stays').toBeDefined()
+    expect(treeRowByText('文档'), 'non-matching dirs hide').toBeUndefined()
+    // The kept row behaves like the original: clicking expands its sessions.
+    click(treeRowByText('绘画收集')!)
+    expect(sessionRowByText('构图笔记')).toBeDefined()
+    expect(sessionRowByText('配色研究')).toBeDefined()
+    expect(treeRowByText('绘画收集')!.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('a match inside a subfolder keeps the folder path and opens it', () => {
+    renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '产品组') })
+    const team = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-art'), team) })
+    typeText(searchInput(), '画布草图') // session title inside w-art
+    const folderRow = treeRowByText('产品组')
+    expect(folderRow, 'the folder path of a match stays').toBeDefined()
+    expect(folderRow!.getAttribute('aria-expanded'), 'folders holding a match open').toBe('true')
+    expect(treeRowByText('绘画收集')).toBeDefined()
+    expect(treeRowByText('文档'), 'sibling dirs hide').toBeUndefined()
+    expect(sessionRowByText('README 整理'), 'the sibling dir‘s sessions are gone too').toBeUndefined()
+  })
+
+  it('a query matching nothing shows the no-match hint instead of a blank area', () => {
+    renderBrowser()
+    typeText(searchInput(), '不存在的关键词')
+    expect(container.querySelector('[class*="searchStatus"]')?.textContent).toContain(zh.searchNoMatches)
+    expect(container.querySelectorAll('[role="treeitem"]')).toHaveLength(0)
+  })
+
+  it('flat mode filters the session rows by title', () => {
+    renderBrowser()
+    act(() => { instance.actions.setGroupBy('flat') })
+    typeText(searchInput(), '构图')
+    expect(sessionRowByText('构图笔记')).toBeDefined()
+    expect(sessionRowByText('配色研究'), 'non-matching flat rows hide').toBeUndefined()
+    expect(container.querySelectorAll('[role="treeitem"]')).toHaveLength(1)
+    typeText(searchInput(), '')
+    expect(sessionRowByText('配色研究'), 'clearing restores the flat list').toBeDefined()
   })
 })
 

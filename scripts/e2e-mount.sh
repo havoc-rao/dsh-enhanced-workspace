@@ -83,6 +83,10 @@ cleanup() {
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
+  # 守护化服务器（web.pid）走官方停服路径收尾。
+  if [ -f "$DSH_HOME/web.pid" ]; then
+    "$DSH_CMD" web stop >/dev/null 2>&1 || true
+  fi
   if [ -z "${KEEP_HOME:-}" ]; then
     rm -rf "$SCRATCH"
   else
@@ -144,19 +148,22 @@ say "挂载已注册：dsh.profile.bundles 包含 dsh-enhanced-workspace"
 # 步骤 4：启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）
 say "启动 dsh web（port=${PORT}）..."
 pushd "$ROOT" >/dev/null
-$DSH_CMD web --port "$PORT" > "$WEB_LOG" 2>&1 &
+$DSH_CMD web --port "$PORT" --no-open > "$WEB_LOG" 2>&1 &
 SERVER_PID=$!
 popd >/dev/null
 
+# 等待 web 就绪。注意：输出被重定向（非 TTY）时 CLI 可能守护化——CLI 进程
+# 退出而真实服务器继续（$DSH_HOME/web.pid）；"退出"只有在 CLI 已死且没有
+# pid 文件时才判定为启动失败。
 URL=""
 for _ in $(seq 1 120); do
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+  if URL="$(grep -oE 'dsh web: http://127\.0\.0\.1:[0-9]+' "$WEB_LOG" | head -1 | awk '{print $3}')" && [ -n "$URL" ]; then
+    if curl -s -m 3 -o /dev/null "$URL/"; then break; fi
+  fi
+  if ! kill -0 "$SERVER_PID" 2>/dev/null && [ ! -f "$DSH_HOME/web.pid" ]; then
     echo "=== dsh web 提前退出，日志尾部 ===" >&2
     tail -30 "$WEB_LOG" >&2 || true
     exit 1
-  fi
-  if URL="$(grep -oE 'dsh web: http://127\.0\.0\.1:[0-9]+' "$WEB_LOG" | head -1 | awk '{print $3}')" && [ -n "$URL" ]; then
-    break
   fi
   sleep 1
 done

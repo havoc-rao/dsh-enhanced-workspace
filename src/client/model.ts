@@ -1035,6 +1035,105 @@ export function deriveFlat(list: SessionListState, archivedSessionIds: readonly 
   return rows.map(session => sessionNode(session, descendants))
 }
 
+/**
+ * Filter flat session rows down to the ones matching `query`
+ * (case-insensitive substring on the display title). Blank placeholders
+ * never match (their canonical title displays localized, so matching it
+ * would tie search to one language).
+ * @param rows - the derived flat list ("In one list" mode).
+ * @param query - caller text; surrounding whitespace is ignored.
+ * @returns the matching rows, unchanged for a blank query.
+ */
+export function filterFlatByQuery(rows: readonly SessionNode[], query: string): readonly SessionNode[] {
+  const q = query.trim().toLowerCase()
+  if (q === '') return rows
+  return rows.filter(row => !row.blank && row.title.toLowerCase().includes(q))
+}
+
+/**
+ * Filter the derived folder forest down to the rows matching `query`
+ * (case-insensitive substring), preserving the ORIGINAL tree structure:
+ * a workspace leaf stays when its display label, its cwd basename, or any
+ * of its visible sessions' titles matches ("dir-level" and "session-level"
+ * hits keep the same row); a folder stays when its own name matches or any
+ * descendant stays; folders holding a descendant match render expanded so
+ * the kept rows are reachable without extra clicks. Blank / archived /
+ * subagent-origin sessions never match.
+ * @param forest - the browser's derived folder forest.
+ * @param sessions - sessions list snapshot (session-title authority).
+ * @param workspaces - Workspace membership and display titles.
+ * @param query - caller text; surrounding whitespace is ignored.
+ * @param archivedSessionIds - registry-global archive set.
+ * @returns the filtered forest, preserving the original row shapes; all
+ *   sections are empty when nothing matches (the caller shows the hint).
+ */
+export function filterForestByQuery(
+  forest: ForestResult,
+  sessions: SessionListState,
+  workspaces: readonly WorkspaceView[],
+  query: string,
+  archivedSessionIds: readonly SessionId[],
+): ForestResult {
+  const q = query.trim().toLowerCase()
+  if (q === '') return forest
+  const archived = new Set(archivedSessionIds)
+  const has = (text: string | undefined): boolean => text !== undefined && text.toLowerCase().includes(q)
+  const basename = (path: string): string => path.split(/[\\/]/).filter(Boolean).at(-1) ?? ''
+
+  // Stray sessions (outside every workspace) are the ungrouped bucket's members.
+  const accounted = new Set<SessionId>()
+  for (const workspace of workspaces) {
+    for (const id of workspace.sessionIds) accounted.add(id)
+  }
+  const forestUngroupedSessionIds = sessions.ids.filter(id => !accounted.has(id))
+  // Session-level matches of one workspace (or the ungrouped bucket): the
+  // visible summaries behind its session ids.
+  const visibleSessionTitles = (sessionIds: readonly SessionId[]): readonly string[] => {
+    const titles: string[] = []
+    for (const id of sessionIds) {
+      const summary = sessions.byId[id]
+      if (summary === undefined || summary.blank || !sessionVisible(summary, sessions.current, archived)) continue
+      titles.push(sessionTitle(summary))
+    }
+    return titles
+  }
+  const workspaceMatches = (leaf: WorkspaceLeaf): boolean => {
+    if (has(leaf.label)) return true
+    if (has(basename(leaf.cwd ?? ''))) return true
+    if (leaf.workspaceId !== undefined) {
+      const workspace = workspaces.find(candidate => candidate.workspaceId === leaf.workspaceId)
+      if (workspace !== undefined) return visibleSessionTitles(workspace.sessionIds).some(title => has(title))
+      return false
+    }
+    // The ungrouped bucket: label or any stray session title.
+    return visibleSessionTitles(forestUngroupedSessionIds).some(title => has(title))
+  }
+
+  const filterFolder = (node: FolderNode): FolderNode | undefined => {
+    const children: FolderNode[] = []
+    for (const child of node.children) {
+      const filtered = filterFolder(child)
+      if (filtered !== undefined) children.push(filtered)
+    }
+    const workspaceGroups = node.workspaceGroups.filter(workspaceMatches)
+    if (children.length === 0 && workspaceGroups.length === 0 && !has(node.name)) return undefined
+    return {
+      ...node,
+      children,
+      workspaceGroups,
+      // A folder holding a descendant match opens so the kept rows show;
+      // a name-only match keeps the folder's own expansion state.
+      expanded: node.expanded || children.length > 0 || workspaceGroups.length > 0,
+    }
+  }
+
+  return {
+    folders: forest.folders.map(filterFolder).filter((node): node is FolderNode => node !== undefined),
+    topLevel: forest.topLevel.filter(workspaceMatches),
+    ungrouped: forest.ungrouped !== undefined && workspaceMatches(forest.ungrouped) ? forest.ungrouped : undefined,
+  }
+}
+
 /** One new-query observation pass over the session list. */
 export interface SessionActivityObservation {
   /** Sessions whose stamp advanced past what the previous pass saw (a new query send). */

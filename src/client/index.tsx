@@ -62,17 +62,9 @@ export const inject = ['slots', 'sessions', 'workspaces', 'locale', 'connection'
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-enhanced-workspace: dictionaries')
 
-  const searchSessions: EnhancedWorkspaceInjected['searchSessions'] = async (query, signal) => {
-    const result = await ctx.sessions.search(query, signal)
-    if (!result.ok) throw new Error(result.error.message)
-    return result.value
-  }
-
   const injected = (): EnhancedWorkspaceInjected => ({
     startSession: (workspaceId) => { ctx.workspaces.startSession(workspaceId) },
     open: (sessionId) => { ctx.sessions.open(sessionId) },
-    searchSessions,
-    searchResultLimit: ctx.sessions.searchResultLimit,
     renameSession: async (sessionId, title) => {
       const session = ctx.sessions.binding(sessionId)?.session
       if (session === undefined) throw new Error(`unknown session "${sessionId}"`)

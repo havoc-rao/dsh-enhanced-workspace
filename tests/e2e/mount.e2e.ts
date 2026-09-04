@@ -83,6 +83,16 @@ test('the enhanced workspace region shadows the sidebar and renders rows without
 
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
 
+  // A brand-new scratch DSH_HOME mounts the web app's first-run onboarding
+  // takeover, which holds `#root` inert and blocks pointer/keyboard input
+  // app-wide. The lane only probes the plugin region, so it strips the
+  // overlay and the inert flag after the mount assertions below.
+  const stripOnboarding = (): Promise<void> => page.evaluate(() => {
+    document.querySelector<HTMLElement>('[class*="onboardingOverlay"]')?.remove()
+    const appRoot = document.getElementById('root')
+    if (appRoot !== null) appRoot.inert = false
+  })
+
   // The plugin's shadow mount is visible and occupies the sidebar region.
   const region = page.locator(BROWSER_SELECTOR)
   await expect(region).toBeVisible({ timeout: 60_000 })
@@ -93,8 +103,28 @@ test('the enhanced workspace region shadows the sidebar and renders rows without
   await expect(rows.first()).toBeVisible({ timeout: 30_000 })
   await expect(region).toContainText(join(WORKSPACE_PATH).split(/[\\/]/).pop() ?? 'e2e-mount')
 
-  // The recency module renders above the workspace list (its section title).
-  await expect(region.locator('section')).toHaveCount(1)
+  // Release the first-run takeover before any interaction with the region.
+  await stripOnboarding()
+
+  // The recency module renders above the workspace list. A workspace seeded
+  // before first paint counts as recent by definition (its creation stamp
+  // scores it), so the region shows BOTH sections: recents + all.
+  await expect(region.locator('section')).toHaveCount(2)
+
+  // The search input filters the ORIGINAL dirs list in place: a match keeps
+  // the dir row and hides the recency module, a no-match query empties the
+  // tree with a hint line, and clearing the query restores everything.
+  const searchInput = region.locator('input[type="search"]')
+  await expect(searchInput).toBeVisible()
+  const basename = join(WORKSPACE_PATH).split(/[\\/]/).pop() ?? 'e2e-mount'
+  await searchInput.fill(basename)
+  await expect(region.locator('section')).toHaveCount(1, { timeout: 15_000 }) // recents hidden
+  await expect(region.locator('[role="treeitem"]').filter({ hasText: basename })).toBeVisible({ timeout: 15_000 })
+  await searchInput.fill('zzz-no-such-session')
+  await expect(region.locator('[role="treeitem"]')).toHaveCount(0, { timeout: 15_000 })
+  await expect(region.locator('[class*="searchStatus"]').first()).toBeVisible({ timeout: 15_000 })
+  await searchInput.fill('')
+  await expect(region.locator('section')).toHaveCount(2, { timeout: 15_000 }) // recents back
 
   // No crash markers anywhere on the page.
   expect(pageErrors, `pageerrors: ${pageErrors.map(error => error.message).join(' | ')}`).toEqual([])

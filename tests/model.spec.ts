@@ -19,6 +19,8 @@ import {
   deriveFolderForest,
   deriveRecentWorkspaces,
   dirActive,
+  filterFlatByQuery,
+  filterForestByQuery,
   folderOfWorkspace,
   moveFolderIn,
   moveWorkspaceIn,
@@ -33,6 +35,7 @@ import {
   UNGROUPED_KEY,
   type FolderRecord,
   type FolderTree,
+  type ForestResult,
   type ForestView,
   type LiveKeysSlice,
 } from '../src/client/model.ts'
@@ -646,6 +649,136 @@ describe('deriveFlat', () => {
     }
     const rows = deriveFlat(sessions, [])
     expect(rows.map(row => row.id)).toEqual([S('b'), S('a')])
+  })
+})
+
+describe('filterForestByQuery (in-place dirs-list filter)', () => {
+  /** One fixture summary; `cwd` optional (exactOptionalPropertyTypes). */
+  function summary(id: string, displayTitle: string, updatedAt: number, extra: Partial<SessionSummary> = {}): SessionSummary {
+    return {
+      id: S(id),
+      displayTitle,
+      blank: false,
+      running: false,
+      completed: true,
+      updatedAt,
+      ...extra,
+    }
+  }
+
+  const sessions: SessionListState = {
+    ids: [S('s1'), S('s2'), S('s3'), S('s4'), S('sub'), S('blank'), S('u1')],
+    byId: {
+      [S('s1')]: summary('s1', '画布草图', 900),
+      [S('s2')]: summary('s2', '配色研究', 800),
+      [S('s3')]: summary('s3', '构图笔记', 700),
+      [S('s4')]: summary('s4', 'README 整理', 600),
+      [S('sub')]: summary('sub', '子代理汇报', 500, { origin: 'subagent', parentId: S('s1') }),
+      [S('blank')]: summary('blank', '', 400, { blank: true }),
+      [S('u1')]: summary('u1', '未分组草稿', 300),
+    },
+    current: undefined,
+    phase: 'ready',
+    subagentsByParent: {},
+    jobsBySession: {},
+    currentAddress: undefined,
+  }
+  const workspaces: WorkspaceView[] = [
+    { workspaceId: W('w-art'), path: '/projects/w-art', title: '绘画收集', sessionIds: [S('s1'), S('s2'), S('s3'), S('sub')], createdAt: NOW, updatedAt: NOW },
+    { workspaceId: W('w-docs'), path: '/projects/w-docs', title: '文档', sessionIds: [S('s4')], createdAt: NOW, updatedAt: NOW },
+  ]
+  /** The derived forest: 产品组 holds w-art (s1..s3), w-docs sits at the root, u1 is ungrouped. */
+  function forest(): ForestResult {
+    const team = createFolderIn(rootTree(['w-art', 'w-docs']), ROOT_FOLDER_ID, '产品组', F('team'), NOW)
+    const moved = moveWorkspaceIn(team.folders, W('w-art'), F('team'), undefined, NOW)
+    return deriveFolderForest(sessions, workspaces, moved, [], {
+      folderExpansion: {},
+      groupExpansion: {},
+      orderBy: 'updated',
+    })
+  }
+
+  it('dir-level match: a workspace title keeps that leaf, everything else hides', () => {
+    const filtered = filterForestByQuery(forest(), sessions, workspaces, '文档', [])
+    expect(filtered.folders).toEqual([])
+    expect(filtered.topLevel.map(leaf => leaf.workspaceId)).toEqual([W('w-docs')])
+    expect(filtered.ungrouped).toBeUndefined()
+  })
+
+  it('dir-level match: the cwd basename keeps a renamed workspace leaf', () => {
+    const filtered = filterForestByQuery(forest(), sessions, workspaces, 'w-docs', [])
+    expect(filtered.topLevel.map(leaf => leaf.workspaceId)).toEqual([W('w-docs')])
+  })
+
+  it('session-level match keeps the owning dir, and the folder path opens to reveal it', () => {
+    const filtered = filterForestByQuery(forest(), sessions, workspaces, '构图', [])
+    expect(filtered.topLevel).toEqual([])
+    expect(filtered.ungrouped).toBeUndefined()
+    expect(filtered.folders).toHaveLength(1)
+    const folder = filtered.folders[0]!
+    expect(folder.name).toBe('产品组')
+    expect(folder.workspaceGroups.map(leaf => leaf.workspaceId)).toEqual([W('w-art')])
+    expect(folder.expanded, 'a folder holding a descendant match opens').toBe(true)
+  })
+
+  it('a folder name match alone keeps the folder without opening it', () => {
+    const filtered = filterForestByQuery(forest(), sessions, workspaces, '产品组', [])
+    expect(filtered.folders).toHaveLength(1)
+    const folder = filtered.folders[0]!
+    expect(folder.name).toBe('产品组')
+    expect(folder.expanded, 'name-only matches keep the folder‘s own expansion').toBe(false)
+    expect(folder.workspaceGroups, 'non-matching workspaces hide inside a name-matched folder').toEqual([])
+  })
+
+  it('the ungrouped bucket stays when its label or a stray session title matches', () => {
+    expect(filterForestByQuery(forest(), sessions, workspaces, 'ungrouped', []).ungrouped?.workspaceId).toBeUndefined()
+    expect(filterForestByQuery(forest(), sessions, workspaces, '未分组草稿', []).ungrouped?.key).toBe(UNGROUPED_KEY)
+  })
+
+  it('blank / subagent-origin sessions never match, and a blank query passes the forest through unchanged', () => {
+    const f = forest()
+    expect(filterForestByQuery(f, sessions, workspaces, '子代理汇报', []).topLevel).toEqual([])
+    expect(filterForestByQuery(f, sessions, workspaces, '子代理汇报', []).folders).toEqual([])
+    expect(filterForestByQuery(f, sessions, workspaces, '   ', []), 'a blank query returns the forest untouched').toBe(f)
+    // Archived sessions never match: the only hit (s1) is hidden, so the
+    // whole subtree filters out along with the leaf.
+    const archived = filterForestByQuery(f, sessions, workspaces, '画布草图', [S('s1')])
+    expect(archived.topLevel).toEqual([])
+    expect(archived.folders).toEqual([])
+  })
+})
+
+describe('filterFlatByQuery', () => {
+  it('keeps title matches case-insensitively and never matches blank placeholders', () => {
+    const sessions: SessionListState = {
+      ids: [S('a'), S('b')],
+      byId: {
+        [S('a')]: { id: S('a'), displayTitle: 'Alpha notes', running: false, blank: false, updatedAt: 1 },
+        [S('b')]: { id: S('b'), displayTitle: 'Beta', running: false, blank: false, updatedAt: 2 },
+      },
+      current: undefined,
+      phase: 'ready',
+      subagentsByParent: {},
+      jobsBySession: {},
+      currentAddress: undefined,
+    }
+    const flat = deriveFlat(sessions, [])
+    expect(filterFlatByQuery(flat, 'alpha').map(row => row.id)).toEqual([S('a')])
+    expect(filterFlatByQuery(flat, '')).toBe(flat)
+
+    // A blank (current) placeholder never matches, even on the canonical title.
+    const withBlank: SessionListState = {
+      ...sessions,
+      ids: [S('a'), S('blank')],
+      byId: {
+        ...sessions.byId,
+        [S('blank')]: { id: S('blank'), displayTitle: 'New Session', running: false, blank: true, updatedAt: 5 },
+      },
+      current: S('blank'),
+    }
+    const flatWithBlank = deriveFlat(withBlank, [])
+    expect(flatWithBlank.map(row => row.id)).toContain(S('blank'))
+    expect(filterFlatByQuery(flatWithBlank, 'new').map(row => row.id)).not.toContain(S('blank'))
   })
 })
 
