@@ -52,6 +52,14 @@ pnpm pack                # 发布产物（与 CI 挂载冒烟一致）
 pnpm test:mount          # 挂载冒烟：真实 DSH 无头渲染（需 PATH 上有 dsh）
 ```
 
+- **开发模式的构建节奏**：本地开发联调时，每**完全完成一个功能点**后，就用
+  `NODE_ENV=development pnpm build` 构建一次，再继续下一个功能点——不攒
+  功能点、不跳过构建。`NODE_ENV=development` 会被 tsdown 烘焙进 bundle
+  （见 `tsdown.config.ts` 的 `define`），使 `src/client/index.tsx` 中
+  dev-only 的 code-finder 定位块（Opt+Shift 悬停显示组件源码位置）随包
+  生效，方便在真实 DSH 里对照源码核对当前功能点；对外发布仍走默认
+  `pnpm build`（production）。
+
 ## 3. 测试姿势
 
 - 纯函数（model/store）在 node 环境直接断言行为；组件 spec

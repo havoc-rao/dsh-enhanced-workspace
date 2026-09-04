@@ -275,9 +275,8 @@ describe('enhanced workspace browser', () => {
   it('wraps workspaces into multi-level directories: root folder, subfolder, and a move into the folder', () => {
     renderBrowser()
 
-    // Root-level "New folder" button opens the input dialog.
-    click([...container.querySelectorAll<HTMLElement>('button')]
-      .find(node => node.textContent?.includes('新建目录'))!)
+    // Root-level "New folder" icon button (tooltip-seated) opens the input dialog.
+    click(buttonByAria('新建目录')!)
     const [dialogInput] = [...document.body.querySelectorAll<HTMLInputElement>('input')]
       .filter(input => input.getAttribute('aria-label') === '目录名称')
     expect(dialogInput).toBeDefined()
@@ -322,8 +321,7 @@ describe('enhanced workspace browser', () => {
   it('deleting a folder promotes its workspaces back to the top level', () => {
     const props = renderBrowser()
     // Create 归档 at the root, move 绘画收集 into it.
-    click([...container.querySelectorAll<HTMLElement>('button')]
-      .find(node => node.textContent?.includes('新建目录'))!)
+    click(buttonByAria('新建目录')!)
     const input = [...document.body.querySelectorAll<HTMLInputElement>('input')]
       .filter(field => field.getAttribute('aria-label') === '目录名称').at(-1)
     typeText(input!, '归档')

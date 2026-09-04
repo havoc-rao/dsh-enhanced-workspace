@@ -727,9 +727,23 @@ function GroupedView(props: {
         ? (
           // The full workspace tree below the recents border: folder forest,
           // root-level leaves, and the ungrouped bucket — same section styling
-          // as the recency module, with its own border above the new-folder row.
+          // as the recency module; the "new folder" action sits on the title's
+          // right side and the section's bottom border divides it from the
+          // recents module above.
           <section className={css.section}>
-            <h3 className={css.sectionTitle}>{t('all')}</h3>
+            <div className={css.sectionHeader}>
+              <h3 className={css.sectionTitle}>{t('all')}</h3>
+              <Tooltip label={t('newFolder')} side="bottom" delayMs={500}>
+                <button
+                  type="button"
+                  className={css.iconButton}
+                  aria-label={t('newFolder')}
+                  onClick={props.openers.onNewFolder}
+                >
+                  <IconPlusOutline16 />
+                </button>
+              </Tooltip>
+            </div>
             {props.forest.map(folder => (
               <FolderRow
                 key={folder.folderId}
@@ -766,12 +780,6 @@ function GroupedView(props: {
           </section>
         )
         : null}
-      <div className={css.newFolderRow}>
-        <button type="button" className={css.newFolderButton} onClick={props.openers.onNewFolder}>
-          <IconPlusOutline16 />
-          <span>{t('newFolder')}</span>
-        </button>
-      </div>
     </div>
   )
 }
