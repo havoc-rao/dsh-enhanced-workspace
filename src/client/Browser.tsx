@@ -12,10 +12,27 @@
  * wrap workspaces into multi-level directories (new subfolder / rename /
  * move / delete with child promotion). Icons are the ui-primitives outline
  * set — no emoji or text glyphs.
+ *
+ * Indent guides (VSCode-style, ported from the better-sidebar FileTree):
+ * rows paint a 1px vertical guide line under every ancestor folder at that
+ * ancestor's icon column (inline background gradients — see
+ * `guideBackground`), with a horizontal corner on expanded folder rows —
+ * and on workspace rows while their session list is open — so the folder
+ * structure reads at a glance. Each ancestor stroke is also a CLICK TARGET
+ * (`guideHitBands`): hovering a row reveals a small band over every
+ * ancestor column, the band under the pointer lights up together with the
+ * ancestor's WHOLE vertical line across its visible subtree, and clicking
+ * it collapses that ancestor — from any descendant row, so a folder full of
+ * expanded subfolders folds without scrolling to find the folder rows.
+ * Session rows hang off their workspace the way files hang off a directory:
+ * they draw all folder strokes plus the workspace's own column, and its
+ * band quickly collapses the session list. The folder tree has no
+ * collapsible root: the guide columns cover exactly the real ancestors
+ * (the 8px indent grid), unlike the file tree's root-anchored columns.
  * @module dsh-enhanced-workspace/client/Browser
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   IconArchiveOutline20,
   IconBranchOutline16,
@@ -91,6 +108,184 @@ const SESSION_INDENT_OFFSET_PX = 20
 /** Left inset for one tree row: 8px base + 8px per ancestor folder level. */
 function rowIndent(ancestorFolderCount: number): number {
   return FOLDER_INDENT_BASE_PX + ancestorFolderCount * FOLDER_INDENT_STEP_PX
+}
+
+/** The indent-guide stroke: the app's border token slightly faded (the
+ *  repo's color-mix pattern), the visual weight of VSCode's guide lines —
+ *  clearly visible but quieter than the row dividers. (Mirror of the
+ *  better-sidebar FileTree guide, re-geometried to this tree's 8px step.) */
+export const GUIDE_STROKE = 'color-mix(in srgb, var(--dsw-alias-border-l1, var(--ds-color-border, rgba(128, 128, 128, 0.35))) 70%, transparent)'
+
+/** The guide stroke while its column is hovered: the ancestor's WHOLE
+ *  vertical line lights up (every row in its visible subtree paints this
+ *  stroke at the same column — see the highlightCol parameter below). A
+ *  strong accent so the full "collapse target" line reads at a glance. The
+ *  band's ::before stroke in Browser.module.css mirrors this look — keep the
+ *  two in sync. */
+export const GUIDE_STROKE_HOVER = 'color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent, var(--ds-color-accent, #4c8dff)) 80%, transparent)'
+
+/** Half-width of the clickable band around each guide stroke, in px. The
+ *  stroke itself is 1px; the band (2 × this) sits on the 8px column grid so
+ *  neighbor bands touch without overlapping (columns are exactly 8px apart),
+ *  and the deepest band's outside edge stops 3.5px short of the row's
+ *  content — the band never overlaps the chevron or glyph. */
+const GUIDE_HIT_HALF = 4
+
+/**
+ * One row's indent-guide background layer set: a 1px vertical stroke under
+ * every ancestor folder at that ancestor's icon column (column k sits at
+ * `8 + 8k` — the same grid as the rows' own indents, so each stroke aligns
+ * with the folder row that owns that level), plus — on expanded FOLDER rows
+ * only — the horizontal corner segment joining the deepest ancestor stroke
+ * to the folder icon (the "├─" joint). Workspace rows and collapsed folders
+ * keep just the verticals, so the folder structure reads at a glance exactly
+ * like the VSCode explorer.
+ *
+ * Neighboring rows decide where strokes stop: a row at ancestor-count A
+ * draws only the A ancestor columns, so the first shallower sibling below a
+ * subtree simply has no stroke for it — each guide ends flush at its
+ * subtree's last row, never dangling into empty space.
+ *
+ * `highlightCol`: when a guide band is hovered, the ancestor's whole line
+ * lights up — every row carrying that column's stroke paints it in the
+ * hover stroke instead (2px, centered on the 1px guide).
+ *
+ * The style is applied inline as background longhands (never the `background`
+ * shorthand): the shorthand would claim `background-color`, which the
+ * stylesheet's row fill and hover fill own.
+ */
+export function guideBackground(ancestorCount: number, isOpenDir: boolean, highlightCol?: number): CSSProperties {
+  if (ancestorCount <= 0) return {}
+  const image: string[] = []
+  const size: string[] = []
+  const position: string[] = []
+  const repeat: string[] = []
+  if (isOpenDir) {
+    // The corner: a horizontal stroke across the deepest indent column at
+    // the row's vertical center (rows have no fixed height — percentage
+    // stops keep the joint centered whoever resizes them).
+    const from = (ancestorCount - 1) * FOLDER_INDENT_STEP_PX + FOLDER_INDENT_BASE_PX
+    image.push(`linear-gradient(0deg, transparent calc(50% - 0.5px), ${GUIDE_STROKE} calc(50% - 0.5px), ${GUIDE_STROKE} calc(50% + 0.5px), transparent calc(50% + 0.5px))`)
+    size.push(`${FOLDER_INDENT_STEP_PX}px 100%`)
+    position.push(`${from}px 0`)
+    repeat.push('no-repeat')
+  }
+  for (let k = 0; k < ancestorCount; k++) {
+    const x = k * FOLDER_INDENT_STEP_PX + FOLDER_INDENT_BASE_PX
+    if (k === highlightCol) {
+      // The hovered column: the full line, 2px and brighter.
+      image.push(`linear-gradient(90deg, transparent ${x - 0.5}px, ${GUIDE_STROKE_HOVER} ${x - 0.5}px, ${GUIDE_STROKE_HOVER} ${x + 1.5}px, transparent ${x + 1.5}px)`)
+    } else {
+      image.push(`linear-gradient(90deg, transparent ${x}px, ${GUIDE_STROKE} ${x}px, ${GUIDE_STROKE} ${x + 1}px, transparent ${x + 1}px)`)
+    }
+    size.push('100% 100%')
+    position.push('0px 0px')
+    repeat.push('no-repeat')
+  }
+  return {
+    backgroundImage: image.join(', '),
+    backgroundSize: size.join(', '),
+    backgroundPosition: position.join(', '),
+    backgroundRepeat: repeat.join(', '),
+  }
+}
+
+/** The hovered guide band: the row owning it, its column, and the ancestor
+ *  that owns the stroke — the whole vertical line of that ancestor lights up
+ *  across its visible subtree while the band is hovered (see
+ *  `guideBackground`'s highlightCol). */
+export interface GuideHover {
+  /** The owning row's key (folder id / workspace leaf key / session id). */
+  row: string
+  /** The ancestor column under the pointer (index into the row's guide columns). */
+  col: number
+  /** The ancestor the stroke belongs to: a folder id, or a workspace group
+   *  key (the deepest column when the row sits below a workspace leaf). */
+  ancestor: string
+}
+
+/**
+ * One guide column of a row: the ancestor whose stroke runs at that column,
+ * plus the collapse action for it. Folders and workspace groups are both
+ * collapsible ancestors — a workspace leaf is the "directory" of its session
+ * rows, so session rows carry one extra column (the leaf's own) whose band
+ * collapses the session list.
+ */
+export interface GuideColumn {
+  /** Folder id or workspace group key (the archetype of the identity). */
+  id: string
+  /** Collapse the ancestor (toggle its expansion) — the band click action. */
+  onToggle: () => void
+}
+
+/** The guide columns of a folder or workspace leaf row: one per ancestor
+ *  folder, in root-side-first order (column k collapses `ancestors[k]`). */
+function folderGuideColumns(ancestors: readonly FolderId[], onToggleFolder: (folderId: FolderId) => void): GuideColumn[] {
+  return ancestors.map(folderId => ({ id: folderId, onToggle: () => onToggleFolder(folderId) }))
+}
+
+/**
+ * The indent-guide seat shared by every tree row: the hovered band plus the
+ * state setter, so one row's hover lights the ancestor's whole line across
+ * every row of its visible subtree (the highlight is computed per row during
+ * render — same model as the better-sidebar FileTree).
+ */
+export interface GuideSeat {
+  hover: GuideHover | null
+  /** Setter with identity guard: pass a thunk; rows re-use the previous
+   *  value when the row+column already match, so re-entry renders nothing. */
+  onHover: (setter: (prev: GuideHover | null) => GuideHover | null) => void
+}
+
+/** The row's highlighted guide column, when the hovered band's ancestor is
+ *  IN this row's own chain at exactly that column — the row is then part of
+ *  the ancestor's visible subtree, so its stroke at that column lights up
+ *  with the whole line (a different branch's row of the same depth must not).
+ *  The ancestor's own row is shallower, so its chain can never hold the
+ *  ancestor at that column — only descendant rows light up. */
+function guideHighlightColumn(hover: GuideHover | null, columns: readonly GuideColumn[]): number | undefined {
+  if (hover === null || hover.col >= columns.length) return undefined
+  return columns[hover.col]!.id === hover.ancestor ? hover.col : undefined
+}
+
+/** The clickable indent-guide bands on one row: one per guide column k in
+ *  [0, columns.length), absolutely positioned exactly over that ancestor's
+ *  stroke. Invisible until the row is hovered; the band under the pointer
+ *  lights up (`.guideHit:hover`) and — while hovered — the ancestor's whole
+ *  vertical line lights up across its subtree (the row background painter,
+ *  `guideBackground`'s highlightCol); clicking the band collapses that
+ *  ancestor (the folder — or, on session rows, the workspace group — whose
+ *  vertical line was clicked). Clicks stop propagation so the row's own
+ *  open/toggle action never fires. Rows without ancestors get no bands. */
+function guideHitBands(
+  rowKey: string,
+  columns: readonly GuideColumn[],
+  onHover: (setter: (prev: GuideHover | null) => GuideHover | null) => void,
+): ReactNode[] {
+  const bands: ReactNode[] = []
+  for (let k = 0; k < columns.length; k++) {
+    const column = columns[k]!
+    bands.push(
+      <span
+        key={k}
+        className={css.guideHit}
+        style={{ left: k * FOLDER_INDENT_STEP_PX + FOLDER_INDENT_BASE_PX - (GUIDE_HIT_HALF - 0.5) }}
+        onMouseEnter={() => {
+          onHover(prev => prev !== null && prev.row === rowKey && prev.col === k
+            ? prev
+            : { row: rowKey, col: k, ancestor: column.id })
+        }}
+        onMouseLeave={() => {
+          onHover(prev => prev !== null && prev.row === rowKey && prev.col === k ? null : prev)
+        }}
+        onClick={(event) => {
+          event.stopPropagation()
+          column.onToggle()
+        }}
+      />,
+    )
+  }
+  return bands
 }
 
 /** Immutable membership toggle for local expand arrays. */
@@ -697,6 +892,16 @@ function GroupedView(props: {
         ? dropTarget.zone
         : undefined,
   }
+  /** The indent-guide band under the pointer (null = none): while set, the
+   *  whole vertical line of the hovered ancestor lights up across its
+   *  visible subtree — the "click collapses this whole folder" signal.
+   *  Shared by every tree row; the recency rows (top-level, no ancestor
+   *  folders) never produce or consume it. */
+  const [hoverGuide, setHoverGuide] = useState<GuideHover | null>(null)
+  const guide: GuideSeat = {
+    hover: hoverGuide,
+    onHover: setHoverGuide,
+  }
   return (
     // The container swallows dragover/drop so a drag released on empty space
     // cancels instead of navigating (dropped text must never leave the region).
@@ -723,12 +928,15 @@ function GroupedView(props: {
               <LeafRow
                 key={recent.workspaceId}
                 leaf={recent}
-                depth={0}
+                // Recency rows are top-level workspace rows: no ancestor
+                // folders, so no indent guides.
+                ancestors={[]}
                 callbacks={callbacks}
                 sessionSeat={sessionSeat}
                 sessionsOverflow={sessionsOverflow}
                 onToggleOverflow={toggleOverflow}
                 drag={drag}
+                guide={guide}
               />
             ))}
           </section>
@@ -765,29 +973,33 @@ function GroupedView(props: {
                 sessionsOverflow={sessionsOverflow}
                 onToggleOverflow={toggleOverflow}
                 drag={drag}
+                ancestors={[]}
+                guide={guide}
               />
             ))}
             {props.topLevel.map(leaf => (
               <LeafRow
                 key={leaf.key}
                 leaf={leaf}
-                depth={0}
+                ancestors={[]}
                 callbacks={callbacks}
                 sessionSeat={sessionSeat}
                 sessionsOverflow={sessionsOverflow}
                 onToggleOverflow={toggleOverflow}
                 drag={drag}
+                guide={guide}
               />
             ))}
             {props.ungrouped !== undefined && (
               <LeafRow
                 leaf={props.ungrouped}
-                depth={0}
+                ancestors={[]}
                 callbacks={callbacks}
                 sessionSeat={sessionSeat}
                 sessionsOverflow={sessionsOverflow}
                 onToggleOverflow={toggleOverflow}
                 drag={drag}
+                guide={guide}
               />
             )}
           </section>
@@ -806,6 +1018,10 @@ function FolderRow(props: {
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
+  /** Root-side-first folder chain above this row; column k of the indent
+   *  guides belongs to `ancestors[k]`. Empty for top-level folders. */
+  ancestors: readonly FolderId[]
+  guide: GuideSeat
 }): ReactNode {
   const { node, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -813,13 +1029,23 @@ function FolderRow(props: {
   // Dir-level activity sync: an expanded folder holding the current session
   // lights its glyph (built-in parity).
   const active = dirActive(node.expanded, node.containsCurrent)
+  // While a guide band is hovered, the ancestor's whole line lights up:
+  // every row whose stroke at the hovered column belongs to the same
+  // ancestor renders that stroke highlighted — the hovered row included
+  // (its band sits on that column), so the full line from the ancestor's
+  // corner down through its visible subtree reads as the collapse target.
+  const guideColumns = folderGuideColumns(props.ancestors, callbacks.onToggleFolder)
+  const highlightCol = guideHighlightColumn(props.guide.hover, guideColumns)
   return (
     <div className={css.folderBranch}>
       <div
         className={`${css.folderRow}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
         role="treeitem"
         aria-expanded={node.expanded}
-        style={{ paddingLeft: `${rowIndent(node.depth - 1)}px` }}
+        style={{
+          paddingLeft: `${rowIndent(props.ancestors.length)}px`,
+          ...guideBackground(props.ancestors.length, node.expanded, highlightCol),
+        }}
         draggable
         onDragStart={event => {
           const transfer = event.dataTransfer
@@ -855,6 +1081,7 @@ function FolderRow(props: {
         onDragEnd={() => props.drag.onDragEnd()}
         onClick={() => callbacks.onToggleFolder(node.folderId)}
       >
+        {guideHitBands(node.folderId, guideColumns, props.guide.onHover)}
         <span className={css.chevron}>
           <IconTriangleRightFill14 className={node.expanded ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
         </span>
@@ -909,18 +1136,21 @@ function FolderRow(props: {
                 sessionsOverflow={props.sessionsOverflow}
                 onToggleOverflow={props.onToggleOverflow}
                 drag={props.drag}
+                ancestors={[...props.ancestors, node.folderId]}
+                guide={props.guide}
               />
             ))}
             {node.workspaceGroups.map(leaf => (
               <LeafRow
                 key={leaf.key}
                 leaf={leaf}
-                depth={node.depth}
+                ancestors={[...props.ancestors, node.folderId]}
                 callbacks={callbacks}
                 sessionSeat={props.sessionSeat}
                 sessionsOverflow={props.sessionsOverflow}
                 onToggleOverflow={props.onToggleOverflow}
                 drag={props.drag}
+                guide={props.guide}
               />
             ))}
           </div>
@@ -933,33 +1163,54 @@ function FolderRow(props: {
 /** One workspace leaf row (or the ungrouped bucket) with its session rows. */
 function LeafRow(props: {
   leaf: WorkspaceLeaf
-  /** Ancestor folder count (0 = top-level); the row indents one 8px step per folder. */
-  depth: number
+  /** Root-side-first folder chain above this row; every entry is one 8px
+   *  indent step AND one indent-guide column (`ancestors[k]` owns column k
+   *  — a band click collapses it). Empty for top-level rows. */
+  ancestors: readonly FolderId[]
   callbacks: RowCallbacks
   sessionSeat: SessionRowSeat
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
+  guide: GuideSeat
 }): ReactNode {
-  const { leaf, callbacks, depth } = props
+  const { leaf, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const hasAccount = leaf.workspaceId !== undefined
   const overflowExpanded = props.sessionsOverflow.includes(leaf.key)
   const shownSessions = overflowExpanded
     ? leaf.sessions
     : leaf.sessions.slice(0, COLLAPSED_SESSION_LIMIT)
+  // One indent step per ancestor folder (0 = top level).
+  const depth = props.ancestors.length
   const indentPx = rowIndent(depth)
   const dropZone = hasAccount ? props.drag.dropZoneOf('workspace', leaf.workspaceId as string) : undefined
   // Dir-level activity sync (built-in parity): an expanded workspace holding
   // the current session lights its glyph — recency rows follow the same rule.
   const active = dirActive(leaf.expanded, leaf.containsCurrent)
+  // See FolderRow: while a guide band is hovered, rows that carry the
+  // hovered ancestor's column stroke paint it highlighted.
+  const folderColumns = folderGuideColumns(props.ancestors, callbacks.onToggleFolder)
+  const highlightCol = guideHighlightColumn(props.guide.hover, folderColumns)
+  // Session rows hang one level deeper: besides the folder columns they
+  // draw the workspace's OWN column (the deepest stroke, at this row's icon
+  // column), whose band collapses the session list — the workspace is the
+  // "directory" of its sessions, exactly like a folder of a subtree.
+  // Recency rows collapse through their prefixed group key the same way.
+  const sessionColumns: GuideColumn[] = [
+    ...folderColumns,
+    { id: leaf.key, onToggle: () => callbacks.onWorkspaceClick(leaf.key) },
+  ]
   return (
     <div className={css.leafBranch}>
       <div
         className={`${css.workspaceRow}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
         role="treeitem"
         aria-expanded={leaf.expanded}
-        style={{ paddingLeft: `${indentPx}px` }}
+        style={{
+          paddingLeft: `${indentPx}px`,
+          ...guideBackground(depth, leaf.expanded, highlightCol),
+        }}
         draggable={hasAccount}
         onDragStart={hasAccount ? (event => {
           const transfer = event.dataTransfer
@@ -998,6 +1249,7 @@ function LeafRow(props: {
           else callbacks.onToggleGroup(leaf.key)
         }}
       >
+        {guideHitBands(leaf.key, folderColumns, props.guide.onHover)}
         <span className={css.chevron}>
           <IconTriangleRightFill14 className={leaf.expanded ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
         </span>
@@ -1056,7 +1308,7 @@ function LeafRow(props: {
         ? (
           <div className={css.sessionList}>
             {shownSessions.map(session => (
-              <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx} />
+              <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx} columns={sessionColumns} guide={props.guide} />
             ))}
             {leaf.sessions.length > COLLAPSED_SESSION_LIMIT && (
               <button
@@ -1085,6 +1337,12 @@ function SessionRow(props: {
   onOpen: (sessionId: SessionId) => void
   /** Workspace-row left inset; absent keeps the flat-list CSS inset. */
   indent?: number
+  /** The row's guide columns: the workspace's folder ancestors plus the
+   *  workspace's OWN column (the deepest stroke — sessions hang off their
+   *  workspace, and its band collapses the session list). Absent → the row
+   *  renders without guides (flat list / search rows). */
+  columns?: readonly GuideColumn[]
+  guide?: GuideSeat
 }): ReactNode {
   const { session, seat } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1100,13 +1358,23 @@ function SessionRow(props: {
   const dotLabel = dot === 'warning' ? seat.t('sessionStatusWarning')
     : dot === 'ongoing' ? seat.t('sessionStatusOngoing')
       : dot === 'done' ? seat.t('sessionStatusDone') : undefined
+  // See FolderRow: the session rows are the deepest leaf level — they carry
+  // every ancestor stroke (folders plus the workspace's own column) and the
+  // hovered ancestor's line lights up through them too.
+  const highlightCol = guideHighlightColumn(props.guide?.hover ?? null, props.columns ?? [])
   return (
     <div
       className={css.sessionRow}
       role="treeitem"
-      style={props.indent === undefined ? undefined : { paddingLeft: `${props.indent + SESSION_INDENT_OFFSET_PX}px` }}
+      style={{
+        ...(props.indent === undefined ? undefined : { paddingLeft: `${props.indent + SESSION_INDENT_OFFSET_PX}px` }),
+        ...(props.columns === undefined ? undefined : guideBackground(props.columns.length, false, highlightCol)),
+      }}
       onClick={() => props.onOpen(session.id)}
     >
+      {props.columns !== undefined && props.guide !== undefined && props.columns.length > 0
+        ? guideHitBands(session.id, props.columns, props.guide.onHover)
+        : null}
       <span className={css.sessionStatusSlot}>
         {dot !== undefined && (
           <>

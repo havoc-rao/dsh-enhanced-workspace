@@ -11,7 +11,7 @@ import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
-import { EnhancedWorkspaceBrowser } from '../src/client/Browser.tsx'
+import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
 import type { EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { ROOT_FOLDER_ID } from '../src/client/model.ts'
 import { zh } from '../src/client/locales.ts'
@@ -145,6 +145,13 @@ function treeRowByText(text: string): HTMLElement | undefined {
       && row.closest('section')?.querySelector('h3')?.textContent !== zh.recents)
 }
 
+/** One session row under the workspace tree (not the recency section). */
+function sessionRowByText(text: string): HTMLElement | undefined {
+  return [...container.querySelectorAll<HTMLElement>('[class*="sessionRow"]')]
+    .find(row => row.closest('section')?.querySelector('h3')?.textContent !== zh.recents
+      && row.textContent?.includes(text))
+}
+
 /** One menu item (portal seat) whose text contains `text`, or undefined. */
 function menuItemByText(text: string): HTMLElement | undefined {
   return [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
@@ -199,6 +206,11 @@ function dragOver(row: HTMLElement, clientY: number): void {
 /** Release the drag over the target row. */
 function dropOn(row: HTMLElement, clientY: number): void {
   act(() => { row.dispatchEvent(dragEvent('drop', clientY)) })
+}
+
+/** Move the pointer onto a band (React's onMouseEnter derives from mouseover). */
+function hover(target: Element): void {
+  act(() => { target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
 }
 
 function treeitemRows(): HTMLElement[] {
@@ -508,5 +520,135 @@ describe('enhanced workspace browser', () => {
     expect(after[ROOT_FOLDER_ID]?.folderIds).toEqual([alpha])
     expect(warn, 'the cycle guard warns non-fatally').toHaveBeenCalled()
     warn.mockRestore()
+  })
+})
+
+describe('indent guides (better-sidebar FileTree parity)', () => {
+  it('paints one 1px stroke per ancestor-folder column, a corner on expanded folder rows, and the bright 2px hover stroke', () => {
+    // No ancestors → no guide layers at all.
+    expect(guideBackground(0, false)).toEqual({})
+    expect(guideBackground(0, true)).toEqual({})
+    // One ancestor: a single faint stroke at the 8px base column.
+    const single = guideBackground(1, false)
+    expect(single.backgroundImage).toContain('transparent 8px')
+    expect(single.backgroundImage).not.toContain('transparent 16px')
+    expect(single.backgroundImage).not.toContain(GUIDE_STROKE_HOVER)
+    // Deep open row: one stroke per ancestor column (8, 16, 24) — never at
+    // the row's own content column (32) — plus the 8px corner across the
+    // deepest indent column (x=24 → ends at the row content start).
+    const deep = guideBackground(3, true)
+    expect(deep.backgroundImage).toContain('transparent 8px')
+    expect(deep.backgroundImage).toContain('transparent 16px')
+    expect(deep.backgroundImage).toContain('transparent 24px')
+    expect(deep.backgroundImage).not.toContain('transparent 32px')
+    expect(deep.backgroundSize).toContain('8px 100%')
+    expect(deep.backgroundPosition).toContain('24px 0')
+    // Collapsed deep row: the corner is gone, the verticals stay.
+    const collapsed = guideBackground(3, false)
+    expect(collapsed.backgroundImage).not.toContain('linear-gradient(0deg')
+    // The hovered column swaps to the bright, 2px-wide stroke; the other
+    // columns keep the faint 1px stroke.
+    const highlighted = guideBackground(2, false, 1)
+    expect(highlighted.backgroundImage).toContain(GUIDE_STROKE_HOVER)
+    expect(highlighted.backgroundImage).toContain('transparent 15.5px')
+    expect(highlighted.backgroundImage).toContain('transparent 17.5px')
+    expect(highlighted.backgroundImage).toContain('transparent 8px')
+    expect(highlighted.backgroundImage).not.toContain('transparent 17px')
+  })
+
+  it('quick-collapse from any descendant row: hovering a band lights the ancestor line, clicking folds the folder', () => {
+    renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
+    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    act(() => { instance.actions.createFolder(alpha, 'beta') })
+    const beta = instance.getSnapshot().folders[alpha]!.folderIds[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-art'), beta) })
+    act(() => { instance.actions.setFolderExpanded(alpha, true) })
+    act(() => { instance.actions.setFolderExpanded(beta, true) })
+
+    const alphaRow = treeRowByText('alpha')!
+    const betaRow = treeRowByText('beta')!
+    const artRow = treeRowByText('绘画收集')!
+
+    // Column alignment: a top-level folder carries no guides at all; the
+    // row directly under it paints one stroke at its icon column (8); the
+    // leaf under beta paints two — one per ancestor, exactly at the
+    // ancestors' icon columns.
+    expect(alphaRow.querySelectorAll('[class*="guideHit"]'), 'top-level rows get no bands').toHaveLength(0)
+    expect(alphaRow.style.backgroundImage).toBe('')
+    expect(betaRow.querySelectorAll('[class*="guideHit"]')).toHaveLength(1)
+    expect(artRow.querySelectorAll('[class*="guideHit"]')).toHaveLength(2)
+    const bands = artRow.querySelectorAll<HTMLElement>('[class*="guideHit"]')
+    expect(bands[0]!.style.left, 'column 0 sits at the 8px base').toBe('4.5px')
+    expect(bands[1]!.style.left, 'column 1 sits one 8px step in').toBe('12.5px')
+    expect(artRow.style.backgroundImage).toContain('transparent 8px')
+    expect(artRow.style.backgroundImage).toContain('transparent 16px')
+
+    // Hover the deepest band (beta's column): beta's whole vertical line
+    // lights up on every descendant row of its subtree — the leaf repaints
+    // that stroke bright; beta's own row (shallower) stays faint.
+    hover(bands[1]!)
+    expect(artRow.style.backgroundImage).toContain(GUIDE_STROKE_HOVER)
+    expect(betaRow.style.backgroundImage).not.toContain(GUIDE_STROKE_HOVER)
+
+    // Click the band: beta collapses from the leaf row, folding its subtree
+    // (beta's own row stays — only its children unmount).
+    click(bands[1]!)
+    expect(instance.getSnapshot().folderExpansion[beta]).toBe(false)
+    expect(treeRowByText('beta')!.getAttribute('aria-expanded')).toBe('false')
+    expect(treeRowByText('绘画收集')).toBeUndefined()
+    expect(treeRowByText('alpha'), 'alpha stays open').toBeDefined()
+    expect(instance.getSnapshot().groupExpansion['w-art'], 'the band click never toggles the leaf row itself').toBeUndefined()
+
+    // Re-open beta; the band directly under it (column 0) folds alpha from
+    // the leaf row — one level per click, all the way up the chain, and the
+    // collapse never touches the leaf's own expansion.
+    click(treeRowByText('beta')!)
+    const artRowAgain = treeRowByText('绘画收集')!
+    const bandsAgain = artRowAgain.querySelectorAll<HTMLElement>('[class*="guideHit"]')
+    expect(bandsAgain.length, 'the leaf keeps one band per ancestor after reopen').toBe(2)
+    hover(bandsAgain[0]!)
+    expect(artRowAgain.style.backgroundImage).toContain(GUIDE_STROKE_HOVER)
+    click(bandsAgain[0]!)
+    expect(instance.getSnapshot().folderExpansion[alpha]).toBe(false)
+    expect(instance.getSnapshot().folderExpansion[beta]).toBe(true)
+    expect(treeRowByText('beta')).toBeUndefined()
+  })
+
+  it('hangs session rows off their workspace column: aligned strokes through the folder levels, hover lights the whole line, and the deepest band collapses the session list', () => {
+    renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
+    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-art'), alpha) })
+    act(() => { instance.actions.setFolderExpanded(alpha, true) })
+    click(treeRowByText('绘画收集')!) // open the session list
+
+    const artRow = treeRowByText('绘画收集')!
+    const sessionRow = sessionRowByText('画布草图')!
+    // Session rows carry every ancestor stroke — the folder column (8) plus
+    // the workspace's OWN column (16, at the workspace row's icon column).
+    const bands = sessionRow.querySelectorAll<HTMLElement>('[class*="guideHit"]')
+    expect(bands.length).toBe(2)
+    expect(bands[0]!.style.left).toBe('4.5px')
+    expect(bands[1]!.style.left).toBe('12.5px')
+    expect(sessionRow.style.backgroundImage).toContain('transparent 8px')
+    expect(sessionRow.style.backgroundImage).toContain('transparent 16px')
+    // The workspace row paints the corner (joins alpha's stroke to its icon)
+    // while its session list is open — like an expanded folder row.
+    expect(artRow.style.backgroundImage).toContain('linear-gradient(0deg')
+
+    // Hover the workspace's band: the whole line lights up across EVERY
+    // session row of the list; the workspace row itself stays unlit.
+    hover(bands[1]!)
+    expect(sessionRow.style.backgroundImage).toContain(GUIDE_STROKE_HOVER)
+    expect(sessionRowByText('配色研究')!.style.backgroundImage).toContain(GUIDE_STROKE_HOVER)
+    expect(artRow.style.backgroundImage).not.toContain(GUIDE_STROKE_HOVER)
+
+    // Click the deepest band: collapses the session list from the deepest
+    // row — the workspace row stays, only its sessions fold.
+    click(bands[1]!)
+    expect(instance.getSnapshot().groupExpansion['w-art']).toBe(false)
+    expect(rowByText('画布草图')).toBeUndefined()
+    expect(treeRowByText('绘画收集'), 'the workspace row stays').toBeDefined()
   })
 })

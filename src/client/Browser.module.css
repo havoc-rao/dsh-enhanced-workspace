@@ -123,12 +123,71 @@
 .workspaceRow,
 .folderRow {
   padding: 3px 12px;
+  /* relative: anchors the clickable indent-guide bands (.guideHit) to the row. */
+  position: relative;
 }
 
 .folderRow:hover,
 .workspaceRow:hover,
 .sessionRow:hover {
   background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+}
+
+/* The clickable indent-guide band: one absolutely-positioned pill per
+ * ancestor-folder column on a row (left edge set inline from the same
+ * geometry constants as the guide painter), centered on the 1px stroke.
+ * The VSCode indent-guide affordance — invisible at rest, hovering the ROW
+ * faintly reveals every band (discoverability: the guide columns are
+ * interactive), the band under the pointer lights up full with a bright
+ * 2px stroke (::before) while the ancestor's WHOLE vertical line lights up
+ * across its subtree (the row background painter, `guideBackground`'s
+ * highlightCol) — the full line reads as "click collapses this whole
+ * folder". Bands sit left of the row content (the deepest band's outside
+ * edge stops 3.5px short of the padding edge), so they never overlap the
+ * chevron or glyph. */
+.guideHit {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  /* 2 × GUIDE_HIT_HALF (Browser.tsx) — keep in sync. */
+  width: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent, var(--ds-color-accent, #4c8dff)) 26%, transparent);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+/* The bright guide stroke that replaces the faint 1px background line
+ * while its band is hovered — the same look as the full-line highlight
+ * (GUIDE_STROKE_HOVER, Browser.tsx) — keep in sync. */
+.guideHit::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent, var(--ds-color-accent, #4c8dff)) 80%, transparent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.folderRow:hover > .guideHit,
+.workspaceRow:hover > .guideHit,
+.sessionRow:hover > .guideHit {
+  opacity: 0.5;
+}
+
+.folderRow:hover > .guideHit:hover,
+.workspaceRow:hover > .guideHit:hover,
+.sessionRow:hover > .guideHit:hover {
+  opacity: 1;
+}
+
+.guideHit:hover::before {
+  opacity: 1;
 }
 
 .chevron {
@@ -235,6 +294,9 @@
 
 .sessionRow {
   padding: 2px 12px 2px 32px;
+  /* relative: anchors the clickable indent-guide bands (.guideHit) to the
+     row — session rows carry the workspace column's band too. */
+  position: relative;
 }
 
 .overflowButton {
