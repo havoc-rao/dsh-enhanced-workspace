@@ -1,0 +1,19 @@
+# dsh-enhanced-workspace bundle patch
+#
+# This file is the `dsh.bundle.patch` layer of the published npm package: when
+# the plugin is installed through the official CLI —
+#
+#   dsh plugin --profile <name> add dsh-enhanced-workspace@<version>
+#
+# — the command reconciles `dsh.profile.bundles` against installed packages
+# and appends `dsh-enhanced-workspace` to the bundle stack. The profile boot
+# then merges THIS patch (a single `insert` of the plugin row) exactly like
+# the manual cordis.patch.yml mount line used before. No profile file edits
+# needed — one command installs and mounts.
+#
+# The client half loads through dsh.plugin.json's `client.main`
+# (`lib/client-registry.js`) once the row is mounted; the host row itself is
+# a near-empty plugin (all behavior lives in the browser bundle).
+- insert:
+    - id: enhanced-workspace
+      name: 'dsh-enhanced-workspace'

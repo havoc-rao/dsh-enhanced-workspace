@@ -1,0 +1,73 @@
+# 加强版工作区（dsh-enhanced-workspace）— 开发状态跟踪
+
+> 本文件是开发进度的唯一权威记录（每轮工作开始先读这里，结束更新这里）。
+> 设计与需求定稿见 `docs/plan/2026-09-04-plugin-mode-design.md`。
+> （原 Host 方案文档 `enhanced-workspace-plan.md` 已废弃删除，设计文档 §1 保留
+> 其转向背景一句话。）
+
+## 大目标
+
+以**独立插件**（不修改 DSH 本体）替换内置 `WorkspaceBrowser`：遮蔽
+`sidebar.workspaces`（priority -1），提供 ① 目录树（嵌套 ≤6 层、删除提升、
+同级重名、拖拽、深度/环守卫）② 最近使用模块（仅保留最近 **5** 个 dir，
+行 = 工作区行形态可展开会话列表但不显示计数、底部 border 分隔，时间戳
+**只在发送新 query 时更新**，展开状态与树行**互不联动**）③ 持久化（插件
+store localStorage `dsh.enhanced-workspace.v1` + Host 平铺顺序最小移动集
+reconcile）。仓库形态与门禁参照 DSH-better-sidebar（双通道 client bundle、
+purity gate、挂载冒烟、jsdom 组件 spec）。
+
+## 当前进度（2026-09-04）
+
+### 已完成（里程碑摘要）
+
+- **P1 脚手架 + 接入**：双通道 bundle（`lib/client.js` + `client-registry.js`）、
+  slots 遮蔽注册（priority -1，自持 store/inject/locale/registrant）、
+  发布清单市场合规（三字段无 cordis、无生命周期脚本）、挂载手测通过
+  （`dsh plugin add link:…` → bundle 协调 + `--dump-config` 可见 insert 行）。
+- **P2 数据面**：`model.ts` 纯函数全集（树 CRUD/守卫/提升、`treeOrder` /
+  `orderDeltas` reconcile、森林/flat/最近派生、`retainLiveKeys` 清账、
+  `relativeTime` 后台记录）；store persist `dsh.enhanced-workspace.v1`，
+  动作全部走 model 校验；`tests/harness/runtime-client.ts` 桥接真实 store
+  引擎。
+- **P3 交互面**：
+  - 区头（视图切换/添加/搜索）+ 目录/工作区行菜单 + 对话框（新建/重命名/
+    删除提升/移动到…）；
+  - 最近使用需求定稿：上限 5、工作区行形态（可展开/行菜单/新建会话）、
+    时间戳仅新 query 更新（`observeSessionActivity` 观测 `updatedAt` 推进，
+    点击/打开不再 touch）、UI 不展示计数与相对时间、独立展开键
+    `recent:<id>`（前缀键随工作区清账）；
+  - 会话排序策略：`orderBy` updated（活动倒序，默认）/ manual（账号顺序）；
+  - 拖拽状态机（`drag.ts` 纯函数 + HTML5 DnD 接线：目录行 = 移入末尾、
+    行间 = 锚点插入、自拖 noop、环/深度守卫非致命）；
+  - 状态复刻（内置 parity）：会话行 `StateDot`（running 像素追逐 loading
+    动画 / pending warning / completed done / 空闲与 blank 无点）、dir 级
+    loading 同步（`expanded && containsCurrent` 的目录/工作区/最近行图标
+    点亮业务蓝）。
+- **P4 收尾**：组件 spec（jsdom + 真实 store 引擎 + fixture 快照）、
+  `scripts/e2e-mount.sh` + `playwright.config.ts` + `tests/e2e/mount.e2e.ts`
+  （scratch DSH_HOME + 官方 CLI 挂载 + 无头渲染断言，需本机 `dsh` +
+  chromium）、`.agents/notes/enhanced-workspace.md`、README/设计文档同步。
+- **质量门**：`pnpm typecheck` 全绿；`pnpm test` 67/67（model 42 + drag 9 +
+  store 7 + browser 9）；`pnpm build` 双通道通过（purity gate）。
+
+### 后续任务目标
+
+- **P3 剩余**：会话拖拽（手动顺序编辑入口，`setSessionOrder` /
+  `insertSessionBefore` 已就绪未接线）；rail 模式（窄宽度）两图标 +
+  expandSidebar 请求。
+- **P4 剩余**：逐文件覆盖率门；`pnpm test:mount` 实测（需有网络的本机/CI
+  装 chromium）；README 双语补全。
+- **发布准备**：`pnpm pack` + 挂载到现有 profile 手测（遮蔽生效、最近模块
+  与目录树交互、拖拽、状态点、Host 顺序 reconcile、搜索/添加流程）。
+
+## 关键约束备忘
+
+- 不修改 DSH 本体（fork 零写入）；client bundle 不 value-import
+  平台表之外的 @deepseek-ai 包（purity gate 硬挡）。
+- 遮蔽形态限制（设计文档 §7）：logo 三槽位与 directory-flow 子槽位不可
+  渲染（子槽位声明冲突）；目录树跨标签页 last-writer-wins。
+- 每次目录/视图变更后跑 Host 顺序 reconcile（失败仅 console.warn，
+  插件树仍是显示权威）。
+- 测试姿势：纯函数 node 直接断言；组件 spec 用 jsdom + 真实 store 引擎 +
+  fixture 快照 + `[class*="…"]` 选择器（CSS module 哈希类名）；e2e 只经
+  `pnpm test:mount` 跑（vitest 不收 `tests/e2e/**`）。

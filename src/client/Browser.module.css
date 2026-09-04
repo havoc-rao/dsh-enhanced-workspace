@@ -1,0 +1,343 @@
+/* Enhanced workspace browser region: header, search, recency module, folder
+ * forest rows, session rows, row action menus, and the browser-owned dialog
+ * seats. Tokens follow the DSH sidebar surface. */
+
+.region {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-size: 13px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 4px;
+  flex: none;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.headerActions {
+  display: flex;
+  gap: 4px;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ds-color-text-secondary, inherit);
+  cursor: pointer;
+  padding: 0;
+}
+
+.iconButton:hover {
+  background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+}
+
+.searchBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 8px;
+  flex: none;
+}
+
+.searchIcon {
+  flex: none;
+  color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--ds-color-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+.grouped,
+.flatList,
+.folderBranch,
+.leafBranch {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The recency module: capped at five dir rows, each rendered like an
+ * ordinary workspace row (expandable session list) with no session count and
+ * no relative time on the UI — the stamps stay recorded in the store for
+ * ordering. The bottom border divides the section from the workspace list. */
+.section {
+  padding: 0 0 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--ds-color-border, rgba(128, 128, 128, 0.35));
+}
+
+.sectionTitle {
+  margin: 0;
+  padding: 6px 12px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
+}
+
+.folderRow,
+.workspaceRow,
+.sessionRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.workspaceRow,
+.folderRow {
+  padding: 3px 12px;
+}
+
+.folderRow:hover,
+.workspaceRow:hover,
+.sessionRow:hover {
+  background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+}
+
+.chevron {
+  display: inline-flex;
+  width: 12px;
+  flex: none;
+}
+
+.arrow {
+  color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
+  transition: transform 120ms ease;
+}
+
+.arrowOpen {
+  transform: rotate(90deg);
+}
+
+.rowGlyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--ds-color-text-secondary, inherit);
+}
+
+.rowLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowTime {
+  flex: none;
+  font-size: 11px;
+  color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
+}
+
+/* Drag & drop indicators: a top/bottom accent line for anchor inserts, a
+ * selection fill for folder targets ("move into"). */
+.dropBefore {
+  box-shadow: inset 0 2px 0 0 var(--ds-color-accent, #4c8dff);
+}
+
+.dropAfter {
+  box-shadow: inset 0 -2px 0 0 var(--ds-color-accent, #4c8dff);
+}
+
+.dropOn {
+  background: var(--ds-color-selection, rgba(128, 128, 128, 0.22));
+}
+
+/* Row action menus and the plus button: revealed on row hover. */
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  opacity: 0;
+}
+
+.folderRow:hover .rowActions,
+.workspaceRow:hover .rowActions,
+.sessionRow:hover .rowActions,
+.folderRow:focus-within .rowActions,
+.workspaceRow:focus-within .rowActions,
+.sessionRow:focus-within .rowActions {
+  opacity: 1;
+}
+
+.sessionList {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Session rows: a fixed 16px status slot at the row head holds the built-in
+ * StateDot (pixel-chase loading animation for ongoing sessions); idle rows
+ * keep the empty slot so titles stay aligned. */
+.sessionStatusSlot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex: none;
+}
+
+/* Dir-level activity sync (built-in parity): an expanded dir holding the
+ * current session lights its folder glyph in the business color. */
+.folderActive {
+  color: var(--dsw-alias-state-business-primary, var(--ds-color-accent, #4c8dff));
+}
+
+/* Screen-reader-only status labels (the StateDot itself is aria-hidden). */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sessionRow {
+  padding: 2px 12px 2px 32px;
+}
+
+.overflowButton {
+  align-self: flex-start;
+  margin: 1px 12px 2px 32px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ds-color-text-secondary, inherit);
+  cursor: pointer;
+}
+
+.overflowButton:hover {
+  background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+}
+
+.newFolderRow {
+  padding: 8px 12px 2px;
+}
+
+.newFolderButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ds-color-text-secondary, inherit);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.newFolderButton:hover {
+  background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+}
+
+/* Dialog seats (input / confirm / move-to). */
+.dialogInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--ds-color-border, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.dialogError {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ds-color-danger, #e5484d);
+}
+
+.dangerAction {
+  color: var(--ds-color-danger, #e5484d);
+}
+
+.moveSubject {
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ds-color-text-secondary, inherit);
+}
+
+.moveList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.moveRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.moveRow:hover {
+  background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+}
+
+.moveRowSelected {
+  background: var(--ds-color-selection, rgba(128, 128, 128, 0.22));
+}
+
+.moveCheck {
+  margin-left: auto;
+  flex: none;
+  color: var(--ds-color-accent, inherit);
+}

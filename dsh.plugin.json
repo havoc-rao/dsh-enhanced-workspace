@@ -1,0 +1,16 @@
+{
+  "id": "dsh-external/dsh-enhanced-workspace",
+  "version": "0.1.0",
+  "main": "./lib/index.js",
+  "description": "加强版工作区：最近使用模块 + 多层目录树组织工作区，替换内置 WorkspaceBrowser（遮蔽 sidebar.workspaces 槽位）",
+  "engines": {
+    "dsh": ">=0.0.1"
+  },
+  "contributes": {
+    "tools": [],
+    "skills": []
+  },
+  "client": {
+    "main": "./lib/client-registry.js"
+  }
+}
