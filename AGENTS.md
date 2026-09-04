@@ -75,3 +75,9 @@ pnpm test:mount          # 挂载冒烟：真实 DSH 无头渲染（需 PATH 上
   `docs/plan/2026-09-04-plugin-mode-design.md` §7。
 - 目录树为插件本地权威，跨标签页并发编辑 last-writer-wins；Host 平铺顺序
   reconcile（`ctx.workspaces.insertBefore`）失败仅 console.warn。
+- 持久化不走 localStorage（桌面端 webserver 每次启动端口随机，Chromium 按
+  origin 含端口分桶，重启即丢）：信封经宿主半 `/enhanced-workspace` RPC
+  通道（loopback 权威）原子写入 `~/.dsh/storages/dsh-enhanced-workspace.json`，
+  localStorage 仅作同源兜底。宿主与客户端共用 `src/shared/persistence.ts`
+  的通道字面量防漂移；改信封结构需同步 `src/host/storage.ts` 的
+  `validateEnvelope` 与 `src/client/model.ts` 的 `isPersistedViewState`。

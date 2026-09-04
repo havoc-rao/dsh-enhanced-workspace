@@ -18,37 +18,27 @@ import {
   moveFolderIn,
   moveWorkspaceIn,
   renameFolderIn,
+  restoredState,
   retainLiveKeys,
   type FolderId,
   type FolderTree,
   type LiveKeysSlice,
+  type PersistedViewState,
+  type SessionGroupBy,
   type SessionOrderBy,
 } from './model.ts'
-export type { SessionOrderBy } from './model.ts'
-
-/** Session-list grouping mode: workspace sections or one flat recency list. */
-export type SessionGroupBy = 'workspace' | 'flat'
+export type { SessionGroupBy, SessionOrderBy } from './model.ts'
 
 /** Browser-local order account key for the hierarchy-free flat Session list. */
 export const FLAT_SESSION_ORDER_KEY = '__flat_session_order__'
 
-/** Enhanced workspace browser viewing state, persisted as one localStorage value. */
-export interface EnhancedWorkspaceState {
-  /** The folder tree (root record included); display order = the records' child accounts. */
-  folders: FolderTree
-  /** Per-folder expand/collapse (root itself is never rendered, never keyed here). */
-  folderExpansion: Record<string, boolean>
-  /** New-query-send stamps by workspace id (derived activity time needs no storage). */
-  recentTouchById: Record<string, number>
-  groupBy: SessionGroupBy
-  orderBy: SessionOrderBy
-  /** Explicit zero-or-five-session state keyed by Workspace group identity. */
-  groupExpansion: Record<string, boolean>
-  /** Shared editable order per Workspace group plus the browser-local flat-list account. */
-  sessionOrderByAccount: Record<string, string[]>
-  /** Last observed update timestamps per order account for one-time promotion events. */
-  sessionUpdatedAtByAccount: Record<string, Record<string, number>>
-}
+/**
+ * Enhanced workspace browser viewing state (the persisted envelope). The
+ * state is stored as one JSON file on the Host side (`~/.dsh/storages/`,
+ * see `src/host/storage.ts`) — never localStorage, whose origin (the
+ * webserver port) changes on every desktop launch.
+ */
+export type EnhancedWorkspaceState = PersistedViewState
 
 /** Annotation twin of the actions literal below; drift fails assignability at the defineStore call. */
 type EnhancedWorkspaceActions = {
@@ -99,6 +89,14 @@ type EnhancedWorkspaceActions = {
   adoptWorkspace: (draft: EnhancedWorkspaceState, workspaceId: WorkspaceId) => void
   /** Prune every dead workspace id after the Host baseline (one-way convergence). */
   retainLiveKeys: (draft: EnhancedWorkspaceState, liveWorkspaceIds: readonly WorkspaceId[]) => void
+  /**
+   * Restore the persisted envelope — the folder tree, the expansion maps,
+   * the recency stamps, and the viewing mode — replacing the current state,
+   * then converge onto the Host baseline (adopt live workspaces the
+   * envelope does not know, prune dead ids, drop expansion keys of folders
+   * the envelope does not hold). Throws `TypeError` on an invalid envelope.
+   */
+  restoreEnvelope: (draft: EnhancedWorkspaceState, envelope: unknown, liveWorkspaceIds: readonly WorkspaceId[]) => void
 }
 
 /** ISO-8601 now (a fresh stamp per action call). */
@@ -132,7 +130,13 @@ export function createEnhancedWorkspaceStore(): EngineStoreHandle<EnhancedWorksp
       sessionOrderByAccount: {},
       sessionUpdatedAtByAccount: {},
     }),
-    persist: 'dsh.enhanced-workspace.v1',
+    // NOTE: no `persist` key. The desktop app binds its webserver to an
+    // OS-assigned port per launch and Chromium partitions localStorage per
+    // origin (port included), so localStorage-based persistence silently
+    // lost the folder tree on every restart. Durability now lives on the
+    // Host side (`~/.dsh/storages/dsh-enhanced-workspace.json`) via the
+    // `/enhanced-workspace` RPC channel; the browser hydrates with
+    // `restoreEnvelope` and writes back debounced.
     actions: {
       setGroupBy: (draft, mode) => { draft.groupBy = mode },
       setOrderBy: (draft, mode) => { draft.orderBy = mode },
@@ -189,6 +193,17 @@ export function createEnhancedWorkspaceStore(): EngineStoreHandle<EnhancedWorksp
         draft.groupExpansion = retained.groupExpansion
         draft.sessionOrderByAccount = retained.sessionOrderByAccount
         draft.sessionUpdatedAtByAccount = retained.sessionUpdatedAtByAccount
+      },
+      restoreEnvelope: (draft, envelope, liveWorkspaceIds) => {
+        const next = restoredState(envelope, liveWorkspaceIds, now())
+        draft.folders = next.folders
+        draft.folderExpansion = next.folderExpansion
+        draft.recentTouchById = next.recentTouchById
+        draft.groupBy = next.groupBy
+        draft.orderBy = next.orderBy
+        draft.groupExpansion = next.groupExpansion
+        draft.sessionOrderByAccount = next.sessionOrderByAccount
+        draft.sessionUpdatedAtByAccount = next.sessionUpdatedAtByAccount
       },
     },
   })

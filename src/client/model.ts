@@ -470,6 +470,166 @@ export function retainLiveKeys(state: LiveKeysSlice, liveWorkspaceIds: readonly 
 }
 
 /**
+ * The persisted slice of the viewing state — exactly the store's durable
+ * fields (the folder tree, the expansion maps, the recency stamps, and the
+ * viewing mode), also known as the *envelope*: the host half stores this
+ * shape under `<dsh-home>/storages/dsh-enhanced-workspace.json` and the
+ * browser restores it through {@link restoredState}. The reserved
+ * `__flat_session_order__` account key lives inside `sessionOrderByAccount`,
+ * so the flat-list order travels with the envelope like every other order.
+ */
+export interface PersistedViewState {
+  /** The folder tree (root record included); display order = the records' child accounts. */
+  folders: FolderTree
+  /** Per-folder expand/collapse (root itself is never rendered, never keyed here). */
+  folderExpansion: Record<string, boolean>
+  /** New-query-send stamps by workspace id (derived activity time needs no storage). */
+  recentTouchById: Record<string, number>
+  /** Session-list grouping mode: workspace sections or one flat recency list. */
+  groupBy: SessionGroupBy
+  /** Session-order strategy: newest activity or the stored per-account order. */
+  orderBy: SessionOrderBy
+  /** Explicit zero-or-five-session state keyed by Workspace group identity. */
+  groupExpansion: Record<string, boolean>
+  /** Shared editable order per Workspace group plus the browser-local flat-list account. */
+  sessionOrderByAccount: Record<string, string[]>
+  /** Last observed update timestamps per order account for one-time promotion events. */
+  sessionUpdatedAtByAccount: Record<string, Record<string, number>>
+}
+
+/** Session-list grouping mode: workspace sections or one flat recency list. */
+export type SessionGroupBy = 'workspace' | 'flat'
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isBooleanMap(value: unknown): value is Record<string, boolean> {
+  return isPlainRecord(value) && Object.values(value).every(item => typeof item === 'boolean')
+}
+
+function isFiniteNumberMap(value: unknown): value is Record<string, number> {
+  return isPlainRecord(value) && Object.values(value).every(item => typeof item === 'number' && Number.isFinite(item))
+}
+
+/**
+ * Whether `value` is a structurally sound {@link PersistedViewState}: a
+ * root-anchored, depth-capped, cycle-free folder tree plus the typed viewing
+ * maps. This is the client-side twin of the host's `validateEnvelope`; the
+ * host gate already vets what crosses the RPC boundary, so this guard exists
+ * to keep a stale or hand-edited value from crashing the browser's own
+ * render path.
+ * @param value - candidate envelope (any JSON value).
+ * @returns whether every structural check passes.
+ */
+export function isPersistedViewState(value: unknown): value is PersistedViewState {
+  if (!isPlainRecord(value)) return false
+  if (value.groupBy !== 'workspace' && value.groupBy !== 'flat') return false
+  if (value.orderBy !== 'updated' && value.orderBy !== 'manual') return false
+  if (!isBooleanMap(value.folderExpansion) || !isBooleanMap(value.groupExpansion)) return false
+  if (!isFiniteNumberMap(value.recentTouchById)) return false
+  if (!isPlainRecord(value.sessionOrderByAccount)
+    || !Object.values(value.sessionOrderByAccount).every(entry => Array.isArray(entry) && entry.every(item => typeof item === 'string'))) return false
+  if (!isPlainRecord(value.sessionUpdatedAtByAccount)
+    || !Object.values(value.sessionUpdatedAtByAccount).every(isFiniteNumberMap)) return false
+
+  const folders = value.folders
+  if (!isPlainRecord(folders)) return false
+  const root = folders[ROOT_FOLDER_ID]
+  if (!isPlainRecord(root) || root.folderId !== 'root' || root.parentFolderId !== null) return false
+  for (const [key, record] of Object.entries(folders)) {
+    if (!isPlainRecord(record)) return false
+    if (record.folderId !== key) return false
+    if (typeof record.name !== 'string' || record.name.trim() === '') return false
+    if (!Array.isArray(record.workspaceIds) || !record.workspaceIds.every(item => typeof item === 'string')) return false
+    if (!Array.isArray(record.folderIds) || !record.folderIds.every(item => typeof item === 'string')) return false
+    const parent = record.parentFolderId
+    if (parent !== null) {
+      if (typeof parent !== 'string') return false
+      const parentRecord = folders[parent] as { readonly folderIds: unknown } | undefined
+      if (parentRecord === undefined || !Array.isArray(parentRecord.folderIds) || !parentRecord.folderIds.includes(key)) return false
+    }
+    for (const childId of record.folderIds) {
+      const child = folders[childId] as { readonly parentFolderId: unknown } | undefined
+      if (child === undefined || child.parentFolderId !== key) return false
+    }
+  }
+  for (const folderId of Object.keys(folders)) {
+    const visited = new Set<string>()
+    let cursor: string | undefined = folderId
+    let depth = 0
+    while (cursor !== undefined) {
+      depth += 1
+      if (depth > MAX_FOLDER_DEPTH) return false
+      if (visited.has(cursor)) return false
+      visited.add(cursor)
+      // See depthOf: the loop-back assignment makes the record type circular.
+      const record: { readonly parentFolderId: string | null } | undefined =
+        folders[cursor] as { readonly parentFolderId: string | null } | undefined
+      if (record === undefined) return false
+      cursor = record.parentFolderId ?? undefined
+    }
+  }
+  return true
+}
+
+/**
+ * Rebuild the viewing state from a persisted envelope and converge it onto
+ * the Host baseline: take the stored tree and maps, adopt every live
+ * workspace the envelope does not know yet (root-account head, idempotent),
+ * then prune every dead workspace id from the workspace-keyed maps exactly
+ * like the store's `retainLiveKeys` action does. Expansion keys of folders
+ * the stored tree does not hold are dropped as well. Ordering converges
+ * regardless of when this runs relative to the browser's own baseline
+ * effect: both paths only add live ids and prune dead ones.
+ * @param envelope - the persisted envelope (validated by
+ *   {@link isPersistedViewState}; anything else throws `TypeError`).
+ * @param liveWorkspaceIds - workspaces the Host baseline lists.
+ * @param now - ISO-8601 stamp for records the convergence touches.
+ * @returns the next viewing state (fresh object graph; the envelope is not mutated).
+ */
+export function restoredState(
+  envelope: unknown,
+  liveWorkspaceIds: readonly WorkspaceId[],
+  now: string,
+): PersistedViewState {
+  if (!isPersistedViewState(envelope)) {
+    throw new TypeError('dsh-enhanced-workspace: refusing to restore an invalid persisted envelope')
+  }
+  const live = liveWorkspaceIds.map(id => id as WorkspaceId)
+  let folders = envelope.folders
+  for (const workspaceId of live) {
+    folders = adoptWorkspaceIn(folders, workspaceId, now)
+  }
+  const folderIds = new Set(Object.keys(folders).map(id => id as FolderId))
+  const keptExpansion: Record<string, boolean> = {}
+  for (const [folderId, expanded] of Object.entries(envelope.folderExpansion)) {
+    if (folderIds.has(folderId as FolderId)) keptExpansion[folderId] = expanded
+  }
+  const retained = retainLiveKeys(
+    {
+      folders,
+      folderExpansion: keptExpansion,
+      recentTouchById: envelope.recentTouchById,
+      groupExpansion: envelope.groupExpansion,
+      sessionOrderByAccount: envelope.sessionOrderByAccount,
+      sessionUpdatedAtByAccount: envelope.sessionUpdatedAtByAccount,
+    },
+    live,
+  )
+  return {
+    folders: retained.folders,
+    folderExpansion: retained.folderExpansion,
+    recentTouchById: retained.recentTouchById,
+    groupBy: envelope.groupBy,
+    orderBy: envelope.orderBy,
+    groupExpansion: retained.groupExpansion,
+    sessionOrderByAccount: retained.sessionOrderByAccount,
+    sessionUpdatedAtByAccount: retained.sessionUpdatedAtByAccount,
+  }
+}
+
+/**
  * Depth-first workspace order over the folder tree: for every folder its
  * child folders' subtrees first, then its directly owned workspaces, starting
  * at the root. This is the order the browser renders AND the order the Host's

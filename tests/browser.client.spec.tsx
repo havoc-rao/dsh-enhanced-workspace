@@ -101,7 +101,7 @@ let root: ReturnType<typeof createRoot>
 let instance: ReturnType<ReturnType<typeof createEnhancedWorkspaceStore>['create']>
 
 /** Render the browser over a fresh real store engine instance. */
-function renderBrowser(): EnhancedWorkspaceBrowserProps {
+function renderBrowser(persistence: EnhancedWorkspaceBrowserProps['persistence'] = defaultPersistence()): EnhancedWorkspaceBrowserProps {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -125,9 +125,15 @@ function renderBrowser(): EnhancedWorkspaceBrowserProps {
       throw new Error('unused in this spec')
     }),
     pickDirectory: vi.fn(async () => null),
+    persistence,
   } as unknown as EnhancedWorkspaceBrowserProps
   act(() => { root.render(<EnhancedWorkspaceBrowser {...props} />) })
   return props
+}
+
+/** Inert persistence face: nothing durable stored, saves no-op. */
+function defaultPersistence(): EnhancedWorkspaceBrowserProps['persistence'] {
+  return { load: vi.fn(async () => null), save: vi.fn(async () => undefined) }
 }
 
 /** One row (treeitem) whose text contains `text`, or undefined. */
@@ -776,5 +782,75 @@ describe('indent guides (better-sidebar FileTree parity)', () => {
     expect(instance.getSnapshot().groupExpansion['w-art']).toBe(false)
     expect(rowByText('画布草图')).toBeUndefined()
     expect(treeRowByText('绘画收集'), 'the workspace row stays').toBeDefined()
+  })
+})
+describe('durable envelope persistence', () => {
+  /** A durable envelope built through a real store engine (models a previous session). */
+  function envelopeFor(folderName: string): EnhancedWorkspaceState {
+    const seed = createEnhancedWorkspaceStore().create()
+    seed.actions.adoptWorkspace(W('w-art'))
+    seed.actions.createFolder(ROOT_FOLDER_ID, folderName)
+    const team = seed.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    seed.actions.moveWorkspaceIn(W('w-art'), team)
+    seed.actions.setFolderExpanded(team, true)
+    seed.actions.setGroupExpanded(W('w-art'), true)
+    return structuredClone(seed.getSnapshot())
+  }
+
+  const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+
+  it('restores the saved directory tree when the store is pristine, then saves it back', async () => {
+    const persistence = defaultPersistence()
+    vi.mocked(persistence.load).mockResolvedValue(envelopeFor('团队'))
+    renderBrowser(persistence)
+    await act(async () => {}) // flush the load promise
+    expect(persistence.load).toHaveBeenCalledTimes(1)
+    expect(treeRowByText('团队'), 'the folder row restores').toBeDefined()
+    expect(treeRowByText('绘画收集'), 'the folder member restores').toBeDefined()
+    const teamId = Object.keys(instance.getSnapshot().folders).find(id => id !== ROOT_FOLDER_ID)
+    expect(instance.getSnapshot().folderExpansion[teamId!]).toBe(true)
+    // Live workspaces the envelope lacks (w-docs) are adopted at the root.
+    expect(instance.getSnapshot().folders[ROOT_FOLDER_ID]!.workspaceIds).toEqual([W('w-docs')])
+
+    // Once the first load settled, the state writes back debounced.
+    await act(async () => { await sleep(400) })
+    expect(persistence.save).toHaveBeenCalledTimes(1)
+    expect(persistence.save).toHaveBeenCalledWith(expect.objectContaining({
+      groupBy: 'workspace',
+      folders: expect.objectContaining({}),
+    }))
+  })
+
+  it('never restores over a tree the current session already built', async () => {
+    let resolveLoad!: (value: EnhancedWorkspaceState | null) => void
+    const persistence = {
+      load: vi.fn(() => new Promise<EnhancedWorkspaceState | null>(resolved => { resolveLoad = resolved })),
+      save: vi.fn(async () => undefined),
+    }
+    renderBrowser(persistence)
+    // The session creates a folder before the durable envelope lands.
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '会话组') })
+    await act(async () => { resolveLoad(envelopeFor('团队')) })
+    expect(treeRowByText('会话组')).toBeDefined()
+    expect(treeRowByText('团队'), 'the stale envelope stays out').toBeUndefined()
+  })
+
+  it('holds writes until the first load settles, then writes the tree', async () => {
+    let resolveLoad!: (value: EnhancedWorkspaceState | null) => void
+    const persistence = {
+      load: vi.fn(() => new Promise<EnhancedWorkspaceState | null>(resolved => { resolveLoad = resolved })),
+      save: vi.fn(async () => undefined),
+    }
+    renderBrowser(persistence)
+    // No durable value yet: however long we wait, nothing is written.
+    await act(async () => { await sleep(400) })
+    expect(persistence.save).not.toHaveBeenCalled()
+    // The first load settles (nothing durable): the write gate opens.
+    await act(async () => { resolveLoad(null) })
+    await act(async () => { await sleep(400) })
+    expect(persistence.save).toHaveBeenCalledTimes(1)
+    // A steady state writes ONCE — the debounce coalesces.
+    await act(async () => { await sleep(400) })
+    expect(persistence.save).toHaveBeenCalledTimes(1)
   })
 })

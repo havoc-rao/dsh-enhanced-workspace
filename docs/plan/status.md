@@ -12,8 +12,9 @@
 同级重名、拖拽、深度/环守卫）② 最近使用模块（仅保留最近 **5** 个 dir，
 行 = 工作区行形态可展开会话列表但不显示计数、底部 border 分隔，时间戳
 **只在发送新 query 时更新**，展开状态与树行**互不联动**）③ 持久化（插件
-store localStorage `dsh.enhanced-workspace.v1` + Host 平铺顺序最小移动集
-reconcile）。仓库形态与门禁参照 DSH-better-sidebar（双通道 client bundle、
+store 信封经宿主半 `/enhanced-workspace` RPC 通道落盘
+`~/.dsh/storages/dsh-enhanced-workspace.json`，localStorage 仅作同源兜底；
+另含 Host 平铺顺序最小移动集 reconcile）。仓库形态与门禁参照 DSH-better-sidebar（双通道 client bundle、
 purity gate、挂载冒烟、jsdom 组件 spec）。
 
 ## 当前进度（2026-09-04）
@@ -26,9 +27,18 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   （`dsh plugin add link:…` → bundle 协调 + `--dump-config` 可见 insert 行）。
 - **P2 数据面**：`model.ts` 纯函数全集（树 CRUD/守卫/提升、`treeOrder` /
   `orderDeltas` reconcile、森林/flat/最近派生、`retainLiveKeys` 清账、
-  `relativeTime` 后台记录）；store persist `dsh.enhanced-workspace.v1`，
+  `restoredState` / `isPersistedViewState` 信封恢复、`relativeTime` 后台记录）；
   动作全部走 model 校验；`tests/harness/runtime-client.ts` 桥接真实 store
   引擎。
+- **P2.5 持久化（宿主落盘）**：发现桌面端 webserver 每次启动端口随机
+  （`port: 0`），Chromium 按 origin（含端口）分桶 localStorage —— 旧
+  persist 方案重启即丢树（leveldb 佐证：55281/59136/59216 三个 origin 各
+  一份数据）。改为宿主半 `src/host/storage.ts` 严格校验（双向账目、深度
+  ≤6、环守卫、1 MiB 上限）+ 原子写（tmp+rename）入 `<dsh-home>/storages/`，
+  `/enhanced-workspace` 通道（loopback 权威）两端共享字面量
+  （`src/shared/persistence.ts`）防漂移；浏览器挂载时一次性 restore
+  （仅当树仍为初始态，且以 restore 时刻为准——会话已建目录则跳过），
+  300ms 防抖写回；localStorage 降级为兜底。
 - **P3 交互面**：
   - 区头（视图切换/添加/搜索）+ 目录/工作区行菜单 + 对话框（新建/重命名/
     删除提升/移动到…）；
@@ -47,8 +57,8 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   `scripts/e2e-mount.sh` + `playwright.config.ts` + `tests/e2e/mount.e2e.ts`
   （scratch DSH_HOME + 官方 CLI 挂载 + 无头渲染断言，需本机 `dsh` +
   chromium）、`.agents/notes/enhanced-workspace.md`、README/设计文档同步。
-- **质量门**：`pnpm typecheck` 全绿；`pnpm test` 67/67（model 42 + drag 9 +
-  store 7 + browser 9）；`pnpm build` 双通道通过（purity gate）。
+- **质量门**：`pnpm typecheck` 全绿；`pnpm test` 119/119（model 63 + drag 9 +
+  store 10 + browser 12 + host-storage 25）；`pnpm build` 双通道通过（purity gate）。
 
 ### 后续任务目标
 
@@ -65,7 +75,8 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
 - 不修改 DSH 本体（fork 零写入）；client bundle 不 value-import
   平台表之外的 @deepseek-ai 包（purity gate 硬挡）。
 - 遮蔽形态限制（设计文档 §7）：logo 三槽位与 directory-flow 子槽位不可
-  渲染（子槽位声明冲突）；目录树跨标签页 last-writer-wins。
+  渲染（子槽位声明冲突）；目录树跨标签页 last-writer-wins（宿主文件
+  同为 last-writer-wins）。
 - 每次目录/视图变更后跑 Host 顺序 reconcile（失败仅 console.warn，
   插件树仍是显示权威）。
 - 测试姿势：纯函数 node 直接断言；组件 spec 用 jsdom + 真实 store 引擎 +

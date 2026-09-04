@@ -122,3 +122,35 @@ describe('enhanced workspace store', () => {
     expect(after.groupExpansion).toEqual({})
   })
 })
+describe('enhanced workspace store persistence envelope', () => {
+  it('restores the envelope through the action and converges onto the baseline', () => {
+    const instance = createEnhancedWorkspaceStore().create()
+    // Build a durable envelope through the same actions (models a previous
+    // session's state): folder 团队 with w1 inside, dead w2 at root.
+    instance.actions.adoptWorkspace(W('w2'))
+    instance.actions.createFolder(ROOT_FOLDER_ID, '团队')
+    const team = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    instance.actions.adoptWorkspace(W('w1'))
+    instance.actions.moveWorkspaceIn(W('w1'), team)
+    instance.actions.setFolderExpanded(team, true)
+    instance.actions.touchWorkspace(W('w1'))
+    const snapshot = instance.getSnapshot()
+    const envelope = structuredClone(snapshot)
+
+    // A fresh instance starts empty; the envelope lands wholesale.
+    const fresh = createEnhancedWorkspaceStore().create()
+    fresh.actions.restoreEnvelope(envelope, [W('w1'), W('w3')])
+    const after = fresh.getSnapshot()
+    expect(after.folders[team]?.workspaceIds).toEqual([W('w1')])
+    expect(after.folderExpansion[team]).toBe(true)
+    expect(after.recentTouchById[W('w1')]).toBeGreaterThan(0)
+    // W('w2') is no longer live: pruned from the root account, and W('w3')
+    // (live but absent from the envelope) is adopted at the root head.
+    expect(after.folders[ROOT_FOLDER_ID]?.workspaceIds).toEqual([W('w3')])
+  })
+
+  it('rejects a garbage envelope with a TypeError', () => {
+    const instance = createEnhancedWorkspaceStore().create()
+    expect(() => instance.actions.restoreEnvelope({ folders: {}, groupBy: 'nope' }, [W('w1')])).toThrow(TypeError)
+  })
+})

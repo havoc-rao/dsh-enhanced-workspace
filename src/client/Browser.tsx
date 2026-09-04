@@ -295,6 +295,9 @@ function toggled(list: readonly string[], key: string): string[] {
 /** Stable selector identity for the framework hook cache (never re-created). */
 const identity = <T,>(snapshot: T): T => snapshot
 
+/** Debounce of durable envelope writes (coalesces quick toggles/edits into one file write). */
+const PERSIST_DEBOUNCE_MS = 300
+
 /** The enhanced browsing region. @param props - the four-share composed props. */
 export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): ReactNode {
   const {
@@ -302,7 +305,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     startSession, open,
     renameSession, forkSession, archiveSession,
     renameWorkspace, deleteWorkspace,
-    insertWorkspaceBefore, createWorkspace, pickDirectory,
+    insertWorkspaceBefore, createWorkspace, pickDirectory, persistence,
   } = props
   const workspaces = props.useWorkspaces(identity)
   const sessions = props.useSessions(identity)
@@ -321,6 +324,51 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
       }
     }
   }, [workspaces.baselinesReady, workspaces.items, state.folders, actions])
+
+  // Durable restore, once per mount: the desktop app binds its webserver to
+  // an OS-assigned port on every launch, so localStorage could never outlive
+  // a restart — the envelope (folder tree, expansions, recency, orders) comes
+  // from the Host file through the persistence face. A still-pristine tree
+  // (nothing but the init root, checked at RESTORE time — the load promise
+  // may settle after the session already built folders) is replaced; a tree
+  // this session already touched wins, and the baseline convergence above
+  // settles against whatever the restore landed on (restore itself adopts
+  // live workspaces and prunes dead ids, so the two orderings converge).
+  const hydratedRef = useRef(false)
+  const [persistedReady, setPersistedReady] = useState(false)
+  const stateRef = useRef(state)
+  stateRef.current = state
+  useEffect(() => {
+    if (hydratedRef.current) return
+    hydratedRef.current = true
+    void (async () => {
+      try {
+        const envelope = await persistence.load()
+        if (envelope !== null && Object.keys(stateRef.current.folders).length === 1) {
+          actions.restoreEnvelope(envelope, workspaces.items.map(workspace => workspace.workspaceId))
+        }
+      } catch (error) {
+        console.warn('dsh-enhanced-workspace: envelope restore failed', error)
+      } finally {
+        setPersistedReady(true)
+      }
+    })()
+  }, [persistence, actions, workspaces.items])
+
+  // Durable save (debounced, only after the first restore attempt settled):
+  // every viewing-state change — tree edits, expansions, recency stamps,
+  // ordering — lands on the Host file, so the next launch starts where this
+  // one left off. The fallback inside the persistence face degrades to
+  // localStorage when the Host channel is unreachable.
+  useEffect(() => {
+    if (!persistedReady) return
+    const timer = setTimeout(() => {
+      void persistence.save(state).catch(error => {
+        console.warn('dsh-enhanced-workspace: envelope save failed', error)
+      })
+    }, PERSIST_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [persistedReady, state, persistence])
 
   // Recency stamps refresh ONLY on a new query send: the host bumps a
   // session's updatedAt on durable session activity (a send dominates), so a

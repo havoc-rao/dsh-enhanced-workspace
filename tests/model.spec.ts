@@ -13,6 +13,7 @@ import {
   WorkspaceNotInTreeError,
   adoptWorkspaceIn,
   createFolderIn,
+  isPersistedViewState,
   deleteFolderIn,
   depthOf,
   deriveFlat,
@@ -29,6 +30,7 @@ import {
   recentGroupKey,
   relativeTime,
   renameFolderIn,
+  restoredState,
   retainLiveKeys,
   sessionStatusDot,
   treeOrder,
@@ -809,5 +811,165 @@ describe('relativeTime', () => {
     expect(relativeTime(now - 2 * 86_400_000, now)).toEqual({ unit: 'days', n: 2 })
     expect(relativeTime(now - 4 * 30 * 86_400_000, now)).toEqual({ unit: 'months', n: 4 })
     expect(relativeTime(now - 365 * 86_400_000, now)).toEqual({ unit: 'years', n: 1 })
+  })
+})
+
+describe('isPersistedViewState', () => {
+  /** An envelope whose tree is built through the model functions themselves. */
+  function envelope(): Record<string, unknown> {
+    let folders: FolderTree = {
+      root: {
+        folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
+        workspaceIds: [], folderIds: [], createdAt: '0', updatedAt: '0',
+      },
+    }
+    folders = adoptWorkspaceIn(folders, W('w1'), NOW)
+    folders = createFolderIn(folders, ROOT_FOLDER_ID, '团队', F('f1'), NOW).folders
+    folders = createFolderIn(folders, F('f1'), '产品', F('f2'), NOW).folders
+    folders = moveWorkspaceIn(folders, W('w1'), F('f2'), undefined, NOW)
+    return {
+      folders,
+      folderExpansion: { f1: true },
+      recentTouchById: { w1: 1788514153563 },
+      groupBy: 'workspace',
+      orderBy: 'manual',
+      groupExpansion: { w1: true, 'recent:w1': true },
+      sessionOrderByAccount: { w1: ['s1'] },
+      sessionUpdatedAtByAccount: { w1: { s1: 1 } },
+    }
+  }
+
+  it('accepts a model-built envelope', () => {
+    expect(isPersistedViewState(envelope())).toBe(true)
+  })
+
+  it('rejects a missing root and a root with a parent', () => {
+    const orphan = envelope()
+    delete (orphan.folders as FolderTree).root
+    expect(isPersistedViewState(orphan)).toBe(false)
+    const parented = envelope()
+    ;(parented.folders as FolderTree).root = {
+      folderId: 'root' as FolderId, name: 'Root', parentFolderId: F('f1'),
+      workspaceIds: [], folderIds: [], createdAt: '0', updatedAt: '0',
+    }
+    expect(isPersistedViewState(parented)).toBe(false)
+  })
+
+  it('rejects a cycle that the bidirectional account checks pass', () => {
+    const cycle = envelope()
+    const folders = cycle.folders as FolderTree
+    folders.root = {
+      folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
+      workspaceIds: [W('w1')], folderIds: [], createdAt: '0', updatedAt: '0',
+    }
+    const f1 = folders[F('f1')]!
+    const f2 = folders[F('f2')]!
+    // f1 ↔ f2 mutual parenting: both account checks agree, only the
+    // parent-chain walk can reject the loop.
+    folders[F('f1')] = { ...f1, parentFolderId: F('f2') }
+    folders[F('f2')] = { ...f2, parentFolderId: F('f1'), folderIds: [F('f1')] }
+    expect(isPersistedViewState(cycle)).toBe(false)
+  })
+
+  it('rejects nesting deeper than MAX_FOLDER_DEPTH (a bidirectionally sound chain lets the walk reject)', () => {
+    // Root + `count` folders, every parent listing its child: only the
+    // parent-chain walk can reject a chain past the cap.
+    const chain = (count: number): Record<string, unknown> => {
+      const next = envelope()
+      const folders = next.folders as FolderTree
+      // The fixture tree's f1/f2 do not exist in the chain: drop them so
+      // the bidirectional account checks pass and the walk decides.
+      delete folders[F('f1')]
+      delete folders[F('f2')]
+      folders.root = {
+        folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
+        workspaceIds: [], folderIds: [F('d1')], createdAt: '0', updatedAt: '0',
+      }
+      for (let level = 1; level <= count; level++) {
+        const id = F(`d${level}`)
+        folders[id] = {
+          folderId: id, name: `lvl-${level}`,
+          parentFolderId: level === 1 ? ROOT_FOLDER_ID : F(`d${level - 1}`),
+          workspaceIds: [], folderIds: level === count ? [] : [F(`d${level + 1}`)],
+          createdAt: '0', updatedAt: '0',
+        }
+      }
+      return next
+    }
+    // Root + 5 folders = depth 6 (the cap, root included): accepted.
+    expect(isPersistedViewState(chain(MAX_FOLDER_DEPTH - 1))).toBe(true)
+    // One folder deeper than the cap: rejected.
+    expect(isPersistedViewState(chain(MAX_FOLDER_DEPTH))).toBe(false)
+  })
+
+  it('rejects mistyped maps and enums', () => {
+    expect(isPersistedViewState({ ...envelope(), groupBy: 'tree' })).toBe(false)
+    expect(isPersistedViewState({ ...envelope(), orderBy: 'abc' })).toBe(false)
+    expect(isPersistedViewState({ ...envelope(), recentTouchById: { w1: 'yesterday' } })).toBe(false)
+    expect(isPersistedViewState({ ...envelope(), folderExpansion: { f1: 1 } })).toBe(false)
+    expect(isPersistedViewState({ ...envelope(), sessionOrderByAccount: { w1: 42 } })).toBe(false)
+    expect(isPersistedViewState({ ...envelope(), sessionUpdatedAtByAccount: { w1: { s1: 'x' } } })).toBe(false)
+  })
+
+  it('tolerates expansion keys of unknown folders (client-side guard is structural, not strict)', () => {
+    const loose = envelope()
+    ;(loose.folderExpansion as Record<string, boolean>).ghost = true
+    expect(isPersistedViewState(loose)).toBe(true)
+  })
+})
+
+describe('restoredState', () => {
+  /** Envelope with f1 → f2 (w1 inside f2), dead workspace w2 at root, w3 everywhere. */
+  function envelope(): Record<string, unknown> {
+    let folders: FolderTree = {
+      root: {
+        folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
+        workspaceIds: [W('w2')], folderIds: [], createdAt: '0', updatedAt: '0',
+      },
+    }
+    folders = adoptWorkspaceIn(folders, W('w2'), NOW)
+    folders = adoptWorkspaceIn(folders, W('w1'), NOW)
+    folders = createFolderIn(folders, ROOT_FOLDER_ID, '团队', F('f1'), NOW).folders
+    folders = createFolderIn(folders, F('f1'), '产品', F('f2'), NOW).folders
+    folders = moveWorkspaceIn(folders, W('w1'), F('f2'), undefined, NOW)
+    return {
+      folders,
+      folderExpansion: { f1: true, ghost: true },
+      recentTouchById: { w1: 1, w2: 2, w3: 3 },
+      groupBy: 'flat',
+      orderBy: 'manual',
+      groupExpansion: { w1: true, 'recent:w1': true, w3: true },
+      sessionOrderByAccount: { w1: ['s1'], w3: ['s2'] },
+      sessionUpdatedAtByAccount: { w1: { s1: 1 }, w2: { s2: 2 } },
+    }
+  }
+
+  it('restores the tree and viewing maps, adopting live workspaces the envelope lacks', () => {
+    const next = restoredState(envelope(), [W('w1'), W('w2'), W('w3')], NOW)
+    expect(next.folders[F('f2')]?.workspaceIds).toEqual([W('w1')])
+    expect(next.folders[ROOT_FOLDER_ID]?.workspaceIds).toContain(W('w2'))
+    expect(next.folders[ROOT_FOLDER_ID]?.workspaceIds).toContain(W('w3'))
+    expect(next.folderExpansion[F('f1')]).toBe(true)
+    expect(next.groupBy).toBe('flat')
+    expect(next.orderBy).toBe('manual')
+  })
+
+  it('prunes dead workspace ids from every workspace-keyed map and folder account', () => {
+    const next = restoredState(envelope(), [W('w1')], NOW)
+    expect(next.folders[ROOT_FOLDER_ID]?.workspaceIds).toEqual([])
+    expect(next.recentTouchById).toEqual({ w1: 1 })
+    expect(next.groupExpansion).toEqual({ w1: true, 'recent:w1': true })
+    expect(next.sessionOrderByAccount).toEqual({ w1: ['s1'] })
+    expect(next.sessionUpdatedAtByAccount).toEqual({ w1: { s1: 1 } })
+  })
+
+  it('drops expansion keys of folders the envelope does not hold', () => {
+    const next = restoredState(envelope(), [W('w1')], NOW)
+    expect(next.folderExpansion).toEqual({ f1: true })
+    expect(next.folderExpansion.ghost).toBeUndefined()
+  })
+
+  it('throws a TypeError on an invalid envelope', () => {
+    expect(() => restoredState({ folders: {}, groupBy: 'x' }, [W('w1')], NOW)).toThrow(TypeError)
   })
 })
