@@ -1110,9 +1110,11 @@ function FolderRow(props: {
   const { node, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const dropZone = props.drag.dropZoneOf('folder', node.folderId)
-  // Dir-level activity sync (built-in parity): an expanded folder holding
-  // the current session lights its glyph and carries the current-session wash.
-  const active = dirActive(node.expanded, node.containsCurrent)
+  // Dir-level activity sync: a folder holding the current session — expanded
+  // or not — lights its glyph and carries the current-session wash. A
+  // collapsed trail still marks every ancestor dir on the path, so the open
+  // session stays locatable level by level.
+  const active = dirActive(node.containsCurrent)
   // While a guide band is hovered, the ancestor's whole line lights up:
   // every row whose stroke at the hovered column belongs to the same
   // ancestor renders that stroke highlighted — the hovered row included
@@ -1269,10 +1271,11 @@ function LeafRow(props: {
   const depth = props.ancestors.length
   const indentPx = rowIndent(depth)
   const dropZone = hasAccount ? props.drag.dropZoneOf('workspace', leaf.workspaceId as string) : undefined
-  // Dir-level activity sync (built-in parity): an expanded workspace holding
-  // the current session lights its glyph and carries the current-session
-  // wash — recency rows follow the same rule.
-  const active = dirActive(leaf.expanded, leaf.containsCurrent)
+  // Dir-level activity sync: a workspace holding the current session —
+  // expanded or not — lights its glyph and carries the current-session wash
+  // (recency rows follow the same rule), so a collapsed session list still
+  // marks the way to the open session.
+  const active = dirActive(leaf.containsCurrent)
   // See FolderRow: while a guide band is hovered, rows that carry the
   // hovered ancestor's column stroke paint it highlighted.
   const folderColumns = folderGuideColumns(props.ancestors, callbacks.onToggleFolder)

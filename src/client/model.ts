@@ -810,15 +810,15 @@ export function sessionStatusDot(
 }
 
 /**
- * The directory row's activity sync (built-in parity): a workspace or folder
- * row that is expanded AND contains the current session lights its folder
- * glyph in the business color — the dir-level counterpart of the session
- * row's loading dot.
- * @param expanded - whether the row's group is expanded.
+ * The directory row's activity sync: a workspace or folder row holding the
+ * current session lights its folder glyph in the business color — whether
+ * the group is expanded or not. When the session's own rows are collapsed
+ * away, every ancestor dir on the path still carries the mark, so the open
+ * session's trail reads down the tree from any collapsed level.
  * @param containsCurrent - whether the group holds the selected session.
  */
-export function dirActive(expanded: boolean, containsCurrent: boolean): boolean {
-  return expanded && containsCurrent
+export function dirActive(containsCurrent: boolean): boolean {
+  return containsCurrent
 }
 
 /** One top-level session row in a group or the flat list. */

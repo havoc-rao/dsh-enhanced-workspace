@@ -176,8 +176,10 @@
 
 /* The current-session wash ("正在展示 ing"): the row of the session open in
  * the viewer gets a soft blue wash, and — the dir-level sync rule, same as
- * the lit glyph — its expanded workspace row and expanded ancestor folder
- * rows carry the same wash, so the open session's trail reads down the tree.
+ * the lit glyph — its workspace row and every ancestor folder row carry the
+ * same wash whether expanded or not, so the open session's trail reads down
+ * the tree even when its own rows are collapsed away (each collapsed level
+ * still marks the path to the session).
  * The tone is the active glyph's business blue (.folderActive), diluted —
  * the repo's color-mix pattern. Painted with the background-color longhand
  * only, so the inline indent-guide gradients (guideBackground) keep
@@ -347,8 +349,9 @@
   flex: none;
 }
 
-/* Dir-level activity sync (built-in parity): an expanded dir holding the
- * current session lights its folder glyph in the business color. */
+/* Dir-level activity sync: a dir holding the current session — expanded or
+ * not — lights its folder glyph in the business color, keeping a collapsed
+ * trail marked level by level. */
 .folderActive {
   color: var(--dsw-alias-state-business-primary, var(--ds-color-accent, #4c8dff));
 }

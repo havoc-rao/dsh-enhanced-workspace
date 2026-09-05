@@ -59,8 +59,9 @@ DSH 本体包的修改。插件仓库约束（AGENTS.md §0 与外部插件惯�
 - **状态复刻（内置 parity）**：会话行状态点 = ui-primitives `StateDot`
   （pending 交互 warning / 本会话或子代理 running = ongoing 像素追逐
   loading 动画 / completed = done；空闲与 blank 无点）；**dir 级 loading
-  同步** = `expanded && containsCurrent` 的目录 / 工作区行（含最近行，
-  各自展开键独立）图标点亮业务蓝 `folderActive`。优先级与判定纯函数在
+  同步** = `containsCurrent` 的目录 / 工作区行（含最近行，各自展开键独立）
+  —— 展开与否都点亮业务蓝 `folderActive`，会话行被收起时整条 father dir
+  链（工作区行 + 各层目录行）逐层保留标记。优先级与判定纯函数在
   `sessionStatusDot` / `dirActive`（model）。
 
 ---

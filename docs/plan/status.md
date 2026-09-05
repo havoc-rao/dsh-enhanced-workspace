@@ -55,8 +55,11 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
     （Browser.module.css）；
   - 状态复刻（内置 parity）：会话行 `StateDot`（running 像素追逐 loading
     动画 / pending warning / completed done / 空闲与 blank 无点）、dir 级
-    loading 同步（`expanded && containsCurrent` 的目录/工作区/最近行图标
-    点亮业务蓝）。
+    loading 同步（`containsCurrent` 的目录/工作区/最近行图标点亮业务蓝，
+    无论展开与否——会话被收起时 father dir 链逐层保留标记）。
+  - **当前会话高光修复**：`dirActive` 去掉 `expanded` 门——工作区/目录行
+    只要含当前会话即带 wash + 点亮图标，收起整条链时标记逐层不熄灭
+    （`dirActive` 单参；组件 spec 补「收起链逐层标记」用例）。
 - **P4 收尾**：组件 spec（jsdom + 真实 store 引擎 + fixture 快照）、
   `scripts/e2e-mount.sh` + `playwright.config.ts` + `tests/e2e/mount.e2e.ts`
   （scratch DSH_HOME + 官方 CLI 挂载 + 无头渲染断言，需本机 `dsh` +

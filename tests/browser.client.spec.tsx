@@ -503,15 +503,16 @@ describe('enhanced workspace browser', () => {
     renderBrowser()
 
     // 本会话正 loading：s1 行显示 ongoing 像素追逐点 + 屏幕阅读器文案；
-    // dir 级同步：展开且含本会话的「绘画收集」行图标点亮（最近行未展开不亮）。
+    // dir 级同步：含本会话的「绘画收集」行图标点亮（最近行虽未展开，同样
+    // 点亮——收起不熄灭，踪迹靠逐层标记读出）。
     const artRow = treeRowByText('绘画收集')!
     expect(artRow.getAttribute('aria-expanded')).toBe('true') // first-encounter expansion
-    expect(artRow.querySelector('[class*="folderActive"]'), 'expanded workspace holding the current session lights its glyph').not.toBeNull()
-    expect(artRow.className, 'the expanded workspace holding the current session carries the current-session wash').toContain('workspaceRowCurrent')
+    expect(artRow.querySelector('[class*="folderActive"]'), 'workspace holding the current session lights its glyph').not.toBeNull()
+    expect(artRow.className, 'the workspace holding the current session carries the current-session wash').toContain('workspaceRowCurrent')
     const recencySection = [...container.querySelectorAll('section')]
       .find(section => section.querySelector('h3')?.textContent === zh.recents)
-    expect(recencySection?.querySelector('[class*="folderActive"]'), 'the collapsed recency row keeps its glyph unlit').toBeNull()
-    expect(recencySection?.querySelector('[class*="workspaceRowCurrent"]'), 'the collapsed recency row keeps its wash off').toBeNull()
+    expect(recencySection?.querySelector('[class*="folderActive"]'), 'the collapsed recency row holding the current session keeps its glyph lit').not.toBeNull()
+    expect(recencySection?.querySelector('[class*="workspaceRowCurrent"]'), 'the collapsed recency row keeps its wash on').not.toBeNull()
     const sessionRowOf = (text: string): HTMLElement =>
       [...container.querySelectorAll<HTMLElement>('[class*="sessionRow"]')]
         .find(row => row.closest('section')?.querySelector('h3')?.textContent !== zh.recents
@@ -523,6 +524,45 @@ describe('enhanced workspace browser', () => {
     expect(sessionRowOf('配色研究').querySelector('[data-state="done"]'), 'completed session shows the done dot').not.toBeNull()
     expect(sessionRowOf('配色研究').className, 'other session rows keep their plain surface').not.toContain('sessionRowCurrent')
     expect(sessionRowOf('空闲会话').querySelector('[data-state]'), 'idle sessions show no dot').toBeNull()
+  })
+
+  it('marks every collapsed ancestor dir on the path to the current session, level by level', () => {
+    // 本会话 = s1（绘画收集 的会话）；把工作区挪进根目录「产品组」。
+    sessionsState = { ...SESSIONS_STATE, current: 's1' as SessionId } as typeof SESSIONS_STATE
+    renderBrowser()
+    click(buttonByAria('新建目录')!)
+    const input = [...document.body.querySelectorAll<HTMLInputElement>('input')]
+      .filter(field => field.getAttribute('aria-label') === '目录名称').at(-1)
+    typeText(input!, '产品组')
+    click([...document.body.querySelectorAll('button')].find(button => button.textContent === '确认')!)
+    openRowMenu('绘画收集')
+    click(menuItemByText('移动到…')!)
+    click([...document.body.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find(option => option.textContent?.includes('产品组'))!)
+    click([...document.body.querySelectorAll('button')].find(button => button.textContent === '确认')!)
+
+    // 目录收起：工作区行连同会话行全部隐藏，但目录行本身仍带当前会话标记
+    // （wash + 图标点亮）——会话被收起时，father dir 逐层标记不熄灭。
+    const folderRow = treeRowByText('产品组')!
+    expect(folderRow.getAttribute('aria-expanded')).toBe('false')
+    expect(treeRowByText('绘画收集'), 'workspace hides under the collapsed folder').toBeUndefined()
+    expect(sessionRowByText('画布草图'), 'the session hides with the workspace').toBeUndefined()
+    expect(folderRow.className, 'the collapsed ancestor folder keeps the current-session wash').toContain('folderRowCurrent')
+    expect(folderRow.querySelector('[class*="folderActive"]'), 'the collapsed ancestor folder keeps its glyph lit').not.toBeNull()
+
+    // 展开目录，再收起工作区自己的会话列表：工作区行现身但会话行隐藏，该行
+    // 仍带着标记——收起的是「会话」本身，标记留在父亲行上。
+    click(folderRow)
+    click(treeRowByText('绘画收集')!)
+    expect(rowByText('画布草图'), 'collapsed session list hides the rows').toBeUndefined()
+    const artRow = treeRowByText('绘画收集')!
+    expect(artRow.getAttribute('aria-expanded')).toBe('false')
+    expect(artRow.className, 'the collapsed workspace row keeps the current-session wash').toContain('workspaceRowCurrent')
+    expect(artRow.querySelector('[class*="folderActive"]'), 'the collapsed workspace row keeps its glyph lit').not.toBeNull()
+
+    // 展开会话列表：当前会话行才现身，带着自己的 wash。
+    click(artRow)
+    expect(sessionRowByText('画布草图')!.className, 'the viewer-open session row carries the wash').toContain('sessionRowCurrent')
   })
 
   it('drags a workspace onto a folder row: the drop moves it into that folder (appended)', () => {

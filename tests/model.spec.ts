@@ -429,10 +429,11 @@ describe('sessionStatusDot / dirActive', () => {
     expect(sessionStatusDot(node({ completed: true }))).toBe('done')
   })
 
-  it('syncs the dir glyph only for expanded groups holding the current session', () => {
-    expect(dirActive(false, true)).toBe(false)
-    expect(dirActive(true, false)).toBe(false)
-    expect(dirActive(true, true)).toBe(true)
+  it('marks every dir holding the current session, collapsed or expanded', () => {
+    // The mark is the ancestor trail: it must survive collapse, so a hidden
+    // session still leaves every father dir lit level by level.
+    expect(dirActive(true)).toBe(true)
+    expect(dirActive(false)).toBe(false)
   })
 })
 
