@@ -370,6 +370,14 @@
   /* Left 32px insets the indent-guide columns; the right inset comes from
      the scroll container. */
   padding: 2px 0 2px 32px;
+  /* The row's regular height is set by its tallest content — the 24px
+     row-action icon button (.iconButton) plus this row's 2px × 2 padding —
+     so be 28px. The blank "新会话" row (Browser.tsx SessionRow) renders
+     neither the status dot nor the row-action button: without this
+     min-height it would collapse to the text line-height and stand out
+     shorter than the rows around it. Keep 28px in sync with `.iconButton`
+     (24px) and this rule's vertical padding. */
+  min-height: 28px;
   /* relative: anchors the clickable indent-guide bands (.guideHit) to the
      row — session rows carry the workspace column's band too. */
   position: relative;
