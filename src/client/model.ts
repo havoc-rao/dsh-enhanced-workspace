@@ -1396,6 +1396,188 @@ export function deriveRecentWorkspaces(
   return scored.slice(0, limit).map(entry => entry.node)
 }
 
+/** One rendered row of the recent-files directory tree: a path segment at its depth. */
+export interface RecentFileTreeRow {
+  /** Segment depth below the path root; the renderer indents by it. */
+  depth: number
+  /** `dir` rows render with a trailing separator. */
+  kind: 'dir' | 'file'
+  /** The segment's own name (never empty; separators were split off). */
+  name: string
+  /** The row's full path from the root, for the clipped-name tooltip. */
+  path: string
+}
+
+/** One directory node of the recent-files tree: subdirectories and leaf names. */
+interface RecentFileDir {
+  dirs: Map<string, RecentFileDir>
+  files: string[]
+}
+
+/**
+ * Split one path into its non-empty segments on both separators, so POSIX
+ * and Windows roots alike lose their leading separator (a drive letter like
+ * `C:` remains a first segment).
+ */
+function pathSegments(path: string): string[] {
+  return path.split(/[/\\]/).filter(segment => segment !== '')
+}
+
+/**
+ * Shorten one path against the project root: a path under `root` (the
+ * session's project directory) loses the root prefix, a sibling merely
+ * sharing the prefix keeps its full form, and a root-equal path becomes
+ * empty. Omitted root keeps the path verbatim.
+ * @param path - the stored, model-facing path.
+ * @param root - the project directory to shorten.
+ * @returns the display path.
+ */
+function displayPath(path: string, root?: string): string {
+  if (root === undefined) return path
+  const base = root.replace(/[/\\]+$/, '')
+  if (path === base) return ''
+  const separator = path[base.length]
+  if (path.startsWith(base) && (separator === '/' || separator === '\\')) {
+    return path.slice(base.length)
+  }
+  return path
+}
+
+/**
+ * One flat list row: the file's name and its display path (shortened under
+ * `root`), the "name | path" shape the hover card's list mode renders.
+ */
+export interface RecentFileListRow {
+  /** The file's basename. */
+  name: string
+  /** The display path (root-shortened when under it). */
+  path: string
+}
+
+/**
+ * The hover card's flat file list (list mode): every path as one row of
+ * `name | path`, in the recency order the projection served, deduplicated
+ * defensively. No directory scaffolding, no row budget — the scrollable file
+ * box bounds the card instead.
+ * @param paths - recency-ordered distinct paths (exactly one of the
+ *   projection's `recentInputs`/`recentOutputs` lists).
+ * @param root - the project directory to shorten; omitted keeps paths verbatim.
+ * @returns the list rows.
+ */
+export function recentFileList(paths: readonly string[], root?: string): readonly RecentFileListRow[] {
+  const rows: RecentFileListRow[] = []
+  const seen = new Set<string>()
+  for (const path of paths) {
+    if (seen.has(path)) continue
+    const segments = pathSegments(displayPath(path, root))
+    if (segments.length === 0) continue
+    seen.add(path)
+    rows.push({ name: segments.at(-1) as string, path: segments.join('/') })
+  }
+  return rows
+}
+
+/**
+ * The session hover card's recent-files directory tree: the recency-ordered
+ * path list folded into nested segments and rendered depth-first with each
+ * level's directories before its files (both in the order the paths arrived,
+ * which is most-recently-modified first). Two compaction rules keep the card
+ * short: a single file renders as one flat VSCode-style path row (no dir
+ * rows at all), and a run of directories where every level holds exactly one
+ * subdirectory and no file merges into one row — `src/client/rows/` renders
+ * as a single merged row instead of three. Paths inside `root` (the
+ * session's project directory) display relative to it; paths outside keep
+ * their full form. The render budget is `rowLimit` rows — every retained
+ * but unrendered file counts into `hiddenFiles` so the card can report the
+ * exact remainder.
+ * @param paths - recency-ordered distinct paths (exactly one of the
+ *   projection's `recentInputs`/`recentOutputs` lists; deduplicated
+ *   defensively here regardless).
+ * @param rowLimit - maximum rendered `dir` + `file` rows.
+ * @param root - the project directory to shorten; omitted keeps paths verbatim.
+ * @returns the flattened rows and the number of files kept off the card.
+ */
+export function recentFileTree(
+  paths: readonly string[],
+  rowLimit: number,
+  root?: string,
+): { rows: readonly RecentFileTreeRow[]; hiddenFiles: number } {
+  const treeRoot: RecentFileDir = { dirs: new Map(), files: [] }
+  const seen = new Set<string>()
+  let fileCount = 0
+  let singlePath = ''
+  for (const path of paths) {
+    if (seen.has(path)) continue
+    const display = displayPath(path, root)
+    const segments = pathSegments(display)
+    if (segments.length === 0) continue
+    seen.add(path)
+    if (fileCount === 0) singlePath = segments.join('/')
+    fileCount += 1
+    let dir = treeRoot
+    for (const segment of segments.slice(0, -1)) {
+      let child = dir.dirs.get(segment)
+      if (child === undefined) {
+        child = { dirs: new Map(), files: [] }
+        dir.dirs.set(segment, child)
+      }
+      dir = child
+    }
+    const name = segments.at(-1) as string
+    if (!dir.files.includes(name)) dir.files.push(name)
+  }
+  // VSCode-style single-file display: one path, one flat row. The path is
+  // the row's name (shortened under `root`), so a lone deep file needs no
+  // directory scaffolding.
+  if (fileCount === 1) {
+    return { rows: [{ depth: 0, kind: 'file', name: singlePath, path: singlePath }], hiddenFiles: 0 }
+  }
+  const rows: RecentFileTreeRow[] = []
+  let renderedFiles = 0
+  /**
+   * Emit one row for `name` (a directory) merged with any descending
+   * singleton chain — every level that holds exactly one subdirectory and no
+   * file of its own — then recurse into the chain end's children. A file
+   * at any level stops the chain there, so `src/client/` with `tree.ts`
+   * still renders `src` and its chain separately.
+   * @param name - this directory's segment.
+   * @param dir - this directory's node.
+   * @param depth - the row's indent depth.
+   * @param prefix - accumulated path before this directory's segment.
+   */
+  const walk = (name: string, dir: RecentFileDir, depth: number, prefix: string): void => {
+    if (rows.length >= rowLimit) return
+    const chain: string[] = [name]
+    let node = dir
+    let chainPrefix = `${prefix}${name}/`
+    while (node.dirs.size === 1 && node.files.length === 0) {
+      // The size guard means this loop body runs exactly once.
+      for (const [nextName, child] of node.dirs) {
+        chain.push(nextName)
+        chainPrefix += `${nextName}/`
+        node = child
+      }
+    }
+    rows.push({ depth, kind: 'dir', name: chain.join('/'), path: chainPrefix })
+    for (const [childName, child] of node.dirs) {
+      if (rows.length >= rowLimit) return
+      walk(childName, child, depth + 1, chainPrefix)
+    }
+    for (const childName of node.files) {
+      if (rows.length >= rowLimit) return
+      rows.push({ depth: depth + 1, kind: 'file', name: childName, path: `${chainPrefix}${childName}` })
+      renderedFiles += 1
+    }
+  }
+  for (const [name, dir] of treeRoot.dirs) walk(name, dir, 0, '')
+  for (const name of treeRoot.files) {
+    if (rows.length >= rowLimit) return { rows, hiddenFiles: fileCount - renderedFiles }
+    rows.push({ depth: 0, kind: 'file', name, path: name })
+    renderedFiles += 1
+  }
+  return { rows, hiddenFiles: fileCount - renderedFiles }
+}
+
 /** Relative-time bucket of a row's trailing label. */
 export type RelativeTimeUnit = 'now' | 'minutes' | 'hours' | 'days' | 'months' | 'years'
 

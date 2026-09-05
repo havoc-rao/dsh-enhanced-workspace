@@ -34,6 +34,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
+  HoverCard,
   IconArchiveOutline20,
   IconBranchOutline16,
   IconChevronUpOutline14,
@@ -72,6 +73,7 @@ import {
   type InputDialogState,
   type MoveToDialogState,
 } from './Dialogs.tsx'
+import { SessionHoverContent, WorkspaceHoverContent } from './HoverCards.tsx'
 import {
   deriveFlat,
   deriveFolderForest,
@@ -915,6 +917,9 @@ function GroupedView(props: {
   }
   const topLevelLabel = t('moveDestinationTopLevel')
   const toggleOverflow = (key: string): void => setSessionsOverflow(keys => toggled(keys, key))
+  // One relative-time stamp per render pass, shared by every session row's
+  // hover card (the same posture as the built-in tree).
+  const now = Date.now()
   // Collapse-all: every expandable directory row — the folder forest AND the
   // workspace session groups (recency rows included) — folds back to the
   // top-level outline; the per-row "show more" overflows reset with them.
@@ -1028,6 +1033,7 @@ function GroupedView(props: {
                 onToggleOverflow={toggleOverflow}
                 drag={drag}
                 guide={guide}
+                now={now}
               />
             ))}
           </section>
@@ -1078,6 +1084,7 @@ function GroupedView(props: {
                 drag={drag}
                 ancestors={[]}
                 guide={guide}
+                now={now}
               />
             ))}
             <WorkspaceDropRegion
@@ -1096,6 +1103,7 @@ function GroupedView(props: {
                   onToggleOverflow={toggleOverflow}
                   drag={drag}
                   guide={guide}
+                  now={now}
                 />
               ))}
             </WorkspaceDropRegion>
@@ -1109,6 +1117,7 @@ function GroupedView(props: {
                 onToggleOverflow={toggleOverflow}
                 drag={drag}
                 guide={guide}
+                now={now}
               />
             )}
           </section>
@@ -1127,7 +1136,7 @@ function WorkspaceDropRegion(props: {
 }): ReactNode {
   return (
     <div
-      className={props.active ? css.workspaceDropRegion : undefined}
+      className={`${css.dropRegion}${props.active ? ` ${css.workspaceDropRegion}` : ''}`}
       style={props.active ? { backgroundPositionX: `${rowIndent(props.depth)}px` } : undefined}
     >
       {props.children}
@@ -1153,6 +1162,8 @@ function FolderRow(props: {
    *  guides belongs to `ancestors[k]`. Empty for top-level folders. */
   ancestors: readonly FolderId[]
   guide: GuideSeat
+  /** Current epoch ms, forwarded to the subtree's session hover cards. */
+  now: number
 }): ReactNode {
   const { node, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1271,6 +1282,7 @@ function FolderRow(props: {
                 drag={props.drag}
                 ancestors={[...props.ancestors, node.folderId]}
                 guide={props.guide}
+                now={props.now}
               />
             ))}
             <WorkspaceDropRegion
@@ -1289,6 +1301,7 @@ function FolderRow(props: {
                   onToggleOverflow={props.onToggleOverflow}
                   drag={props.drag}
                   guide={props.guide}
+                  now={props.now}
                 />
               ))}
             </WorkspaceDropRegion>
@@ -1312,6 +1325,9 @@ function LeafRow(props: {
   onToggleOverflow: (key: string) => void
   drag: DragSeat
   guide: GuideSeat
+  /** Current epoch ms, injected from the tree render for the session rows'
+   *  hover-card relative times (one stamp per render pass). */
+  now: number
 }): ReactNode {
   const { leaf, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1342,114 +1358,136 @@ function LeafRow(props: {
     ...folderColumns,
     { id: leaf.key, onToggle: () => callbacks.onWorkspaceClick(leaf.key) },
   ]
+  const ownRow = (
+    <div
+      className={`${css.workspaceRow}${active ? ` ${css.workspaceRowCurrent}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
+      role="treeitem"
+      aria-expanded={leaf.expanded}
+      style={{
+        paddingLeft: `${indentPx}px`,
+        ...guideBackground(depth, leaf.expanded, highlightCol),
+      }}
+      draggable={hasAccount}
+      onDragStart={hasAccount ? (event => {
+        const transfer = event.dataTransfer
+        if (transfer !== null) {
+          transfer.effectAllowed = 'move'
+          transfer.setData('text/plain', leaf.workspaceId as string)
+        }
+        props.drag.onDragStart({ kind: 'workspace', id: leaf.workspaceId as string })
+      }) : undefined}
+      onDragOver={hasAccount ? (event => {
+        if (props.drag.dragSource === null) return
+        event.preventDefault()
+        props.drag.onDragOver({
+          kind: 'workspace',
+          id: leaf.workspaceId as string,
+          zone: rowDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
+        })
+      }) : undefined}
+      onDragLeave={hasAccount ? (event => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          props.drag.onDragLeave('workspace', leaf.workspaceId as string)
+        }
+      }) : undefined}
+      onDrop={hasAccount ? (event => {
+        if (props.drag.dragSource === null) return
+        event.preventDefault()
+        props.drag.onDrop(props.drag.dragSource, {
+          kind: 'workspace',
+          id: leaf.workspaceId as string,
+          zone: rowDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
+        })
+      }) : undefined}
+      onDragEnd={hasAccount ? () => props.drag.onDragEnd() : undefined}
+      onClick={() => {
+        if (hasAccount) callbacks.onWorkspaceClick(leaf.key)
+        else callbacks.onToggleGroup(leaf.key)
+      }}
+    >
+      {guideHitBands(leaf.key, folderColumns, props.guide.onHover)}
+      <span className={css.chevron}>
+        <IconTriangleRightFill14 className={leaf.expanded ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+      </span>
+      <span className={`${css.rowGlyph}${active ? ` ${css.folderActive}` : ''}`}>
+        {leaf.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />}
+      </span>
+      <span className={css.rowLabel}>{leaf.label}</span>
+      <span className={css.rowActions}>
+        {hasAccount && (
+          <>
+            <Menu
+              open={menuOpen}
+              onClose={() => { setMenuOpen(false) }}
+              items={[
+                { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
+                { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
+                { type: 'separator' as const, id: 'workspace-actions-separator' },
+                { id: 'delete', label: callbacks.t('deleteWorkspaceTitle'), icon: <IconTrashOutline16 />, danger: true },
+              ]}
+              onSelect={(id) => {
+                setMenuOpen(false)
+                if (id === 'rename') callbacks.openers.onRenameWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
+                else if (id === 'move') callbacks.openers.onMoveWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
+                else if (id === 'delete') callbacks.openers.onDeleteWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
+              }}
+              dense
+              portal
+              closeOnPointerLeave
+              anchor={(
+                <button
+                  type="button"
+                  className={css.iconButton}
+                  aria-label={callbacks.t('rowMenuAria', { name: leaf.label })}
+                  onClick={event => { event.stopPropagation(); setMenuOpen(value => !value) }}
+                >
+                  <IconEllipsisOutline16 />
+                </button>
+              )}
+            />
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={callbacks.t('newSessionAria', { name: leaf.label })}
+              onClick={event => {
+                event.stopPropagation()
+                callbacks.onStartSession(leaf.workspaceId as WorkspaceId, leaf.key)
+              }}
+            >
+              <IconPlusOutline16 />
+            </button>
+          </>
+        )}
+      </span>
+    </div>
+  )
+  // The workspace hover card (built-in parity): real Workspace rows show
+  // their directory and creation time on dwelling, and the whole card is a
+  // copy target for the full path. The ungrouped bucket has no backing
+  // Workspace — no card. An open row menu suppresses the card for the same
+  // hover (the ellipsis menu is the row's only other dwell surface).
+  const rowElement = hasAccount
+    ? (
+      <HoverCard
+        anchor={ownRow}
+        content={(
+          <WorkspaceHoverContent label={leaf.label} cwd={leaf.cwd} createdAt={leaf.createdAt ?? 0} t={callbacks.t} />
+        )}
+        disabled={menuOpen}
+        copyText={leaf.cwd}
+        copyLabel={callbacks.t('copy')}
+        copiedLabel={callbacks.t('hoverCopied')}
+      />
+    )
+    : ownRow
   return (
     <div className={css.leafBranch}>
-      <div
-        className={`${css.workspaceRow}${active ? ` ${css.workspaceRowCurrent}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
-        role="treeitem"
-        aria-expanded={leaf.expanded}
-        style={{
-          paddingLeft: `${indentPx}px`,
-          ...guideBackground(depth, leaf.expanded, highlightCol),
-        }}
-        draggable={hasAccount}
-        onDragStart={hasAccount ? (event => {
-          const transfer = event.dataTransfer
-          if (transfer !== null) {
-            transfer.effectAllowed = 'move'
-            transfer.setData('text/plain', leaf.workspaceId as string)
-          }
-          props.drag.onDragStart({ kind: 'workspace', id: leaf.workspaceId as string })
-        }) : undefined}
-        onDragOver={hasAccount ? (event => {
-          if (props.drag.dragSource === null) return
-          event.preventDefault()
-          props.drag.onDragOver({
-            kind: 'workspace',
-            id: leaf.workspaceId as string,
-            zone: rowDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
-          })
-        }) : undefined}
-        onDragLeave={hasAccount ? (event => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-            props.drag.onDragLeave('workspace', leaf.workspaceId as string)
-          }
-        }) : undefined}
-        onDrop={hasAccount ? (event => {
-          if (props.drag.dragSource === null) return
-          event.preventDefault()
-          props.drag.onDrop(props.drag.dragSource, {
-            kind: 'workspace',
-            id: leaf.workspaceId as string,
-            zone: rowDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
-          })
-        }) : undefined}
-        onDragEnd={hasAccount ? () => props.drag.onDragEnd() : undefined}
-        onClick={() => {
-          if (hasAccount) callbacks.onWorkspaceClick(leaf.key)
-          else callbacks.onToggleGroup(leaf.key)
-        }}
-      >
-        {guideHitBands(leaf.key, folderColumns, props.guide.onHover)}
-        <span className={css.chevron}>
-          <IconTriangleRightFill14 className={leaf.expanded ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
-        </span>
-        <span className={`${css.rowGlyph}${active ? ` ${css.folderActive}` : ''}`}>
-          {leaf.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />}
-        </span>
-        <span className={css.rowLabel}>{leaf.label}</span>
-        <span className={css.rowActions}>
-          {hasAccount && (
-            <>
-              <Menu
-                open={menuOpen}
-                onClose={() => { setMenuOpen(false) }}
-                items={[
-                  { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
-                  { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
-                  { type: 'separator' as const, id: 'workspace-actions-separator' },
-                  { id: 'delete', label: callbacks.t('deleteWorkspaceTitle'), icon: <IconTrashOutline16 />, danger: true },
-                ]}
-                onSelect={(id) => {
-                  setMenuOpen(false)
-                  if (id === 'rename') callbacks.openers.onRenameWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
-                  else if (id === 'move') callbacks.openers.onMoveWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
-                  else if (id === 'delete') callbacks.openers.onDeleteWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
-                }}
-                dense
-                portal
-                closeOnPointerLeave
-                anchor={(
-                  <button
-                    type="button"
-                    className={css.iconButton}
-                    aria-label={callbacks.t('rowMenuAria', { name: leaf.label })}
-                    onClick={event => { event.stopPropagation(); setMenuOpen(value => !value) }}
-                  >
-                    <IconEllipsisOutline16 />
-                  </button>
-                )}
-              />
-              <button
-                type="button"
-                className={css.iconButton}
-                aria-label={callbacks.t('newSessionAria', { name: leaf.label })}
-                onClick={event => {
-                  event.stopPropagation()
-                  callbacks.onStartSession(leaf.workspaceId as WorkspaceId, leaf.key)
-                }}
-              >
-                <IconPlusOutline16 />
-              </button>
-            </>
-          )}
-        </span>
-      </div>
+      {rowElement}
       {leaf.expanded
         ? (
           <div className={css.sessionList}>
             {shownSessions.map(session => (
-              <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx} columns={sessionColumns} guide={props.guide} />
+              <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx} columns={sessionColumns} guide={props.guide} now={props.now} />
             ))}
             {leaf.sessions.length > COLLAPSED_SESSION_LIMIT && (
               <button
@@ -1471,7 +1509,7 @@ function LeafRow(props: {
   )
 }
 
-/** One session row (status dot + title + row action menu). */
+/** One session row (status dot + title + row action menu) with its hover card. */
 function SessionRow(props: {
   session: SessionNode
   seat: SessionRowSeat
@@ -1484,6 +1522,8 @@ function SessionRow(props: {
    *  renders without guides (flat list / search rows). */
   columns?: readonly GuideColumn[]
   guide?: GuideSeat
+  /** Current epoch ms for the hover card's relative-time stamp. */
+  now: number
 }): ReactNode {
   const { session, seat } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1503,7 +1543,7 @@ function SessionRow(props: {
   // every ancestor stroke (folders plus the workspace's own column) and the
   // hovered ancestor's line lights up through them too.
   const highlightCol = guideHighlightColumn(props.guide?.hover ?? null, props.columns ?? [])
-  return (
+  const ownRow = (
     <div
       className={`${css.sessionRow}${session.current ? ` ${css.sessionRowCurrent}` : ''}`}
       role="treeitem"
@@ -1559,6 +1599,17 @@ function SessionRow(props: {
       )}
     </div>
   )
+  // The session hover card (built-in parity): title, relative time, every
+  // live status, and the file domain. An open row menu suppresses it for
+  // the same hover; the plugin's session rows are not draggable, so there
+  // is no drag-active suppression.
+  return (
+    <HoverCard
+      anchor={ownRow}
+      content={<SessionHoverContent node={session} now={props.now} t={seat.t} />}
+      disabled={menuOpen}
+    />
+  )
 }
 
 /** The flat session list ("In one list" mode). */
@@ -1578,10 +1629,13 @@ function FlatList(props: {
     },
     t: props.props.t,
   }
+  // One relative-time stamp per render pass, shared by every session row's
+  // hover card (the same posture as the built-in tree).
+  const now = Date.now()
   return (
     <div className={css.flatList}>
       {props.rows.map(session => (
-        <SessionRow key={session.id} session={session} seat={seat} onOpen={seat.onOpen} />
+        <SessionRow key={session.id} session={session} seat={seat} onOpen={seat.onOpen} now={now} />
       ))}
     </div>
   )

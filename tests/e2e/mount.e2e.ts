@@ -89,6 +89,11 @@ test('the enhanced workspace region shadows the sidebar and renders rows without
   // overlay and the inert flag after the mount assertions below.
   const stripOnboarding = (): Promise<void> => page.evaluate(() => {
     document.querySelector<HTMLElement>('[class*="onboardingOverlay"]')?.remove()
+    // The first-run welcome may also ride a shared Modal (full-viewport mask
+    // + dialog, role="presentation"): remove the whole modal layer too, or
+    // its mask keeps intercepting pointer events for every later hover.
+    const mask = document.querySelector<HTMLElement>('[class*="_mask_"]')
+    mask?.parentElement?.remove()
     const appRoot = document.getElementById('root')
     if (appRoot !== null) appRoot.inert = false
   })
@@ -125,6 +130,17 @@ test('the enhanced workspace region shadows the sidebar and renders rows without
   await expect(region.locator('[class*="searchStatus"]').first()).toBeVisible({ timeout: 15_000 })
   await searchInput.fill('')
   await expect(region.locator('section')).toHaveCount(2, { timeout: 15_000 }) // recents back
+
+  // The workspace hover card (built-in ui-workspace parity): dwelling on a
+  // real workspace row opens the portaled right-side card with the full
+  // directory path (and the creation time), and the card is a copy target.
+  const workspaceRow = region.locator('[role="treeitem"]').filter({ hasText: basename }).first()
+  await workspaceRow.hover()
+  const hoverCard = page.locator('[class*="hoverContent"]').last()
+  await expect(hoverCard).toBeVisible({ timeout: 15_000 })
+  // The full directory path is locale-independent (the created-time line is
+  // dictionary copy and differs by the scratch home's locale).
+  await expect(hoverCard).toContainText(WORKSPACE_PATH)
 
   // No crash markers anywhere on the page.
   expect(pageErrors, `pageerrors: ${pageErrors.map(error => error.message).join(' | ')}`).toEqual([])

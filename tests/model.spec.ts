@@ -27,6 +27,8 @@ import {
   moveWorkspaceIn,
   observeSessionActivity,
   orderDeltas,
+  recentFileList,
+  recentFileTree,
   recentGroupKey,
   relativeTime,
   renameFolderIn,
@@ -972,5 +974,137 @@ describe('restoredState', () => {
 
   it('throws a TypeError on an invalid envelope', () => {
     expect(() => restoredState({ folders: {}, groupBy: 'x' }, [W('w1')], NOW)).toThrow(TypeError)
+  })
+})
+
+describe('recentFileTree', () => {
+  it('folds recency-ordered paths into indented dir rows before file rows', () => {
+    expect(recentFileTree(['src/deep/b.ts', 'src/a.ts', 'README.md'], 20)).toEqual({
+      rows: [
+        { depth: 0, kind: 'dir', name: 'src', path: 'src/' },
+        { depth: 1, kind: 'dir', name: 'deep', path: 'src/deep/' },
+        { depth: 2, kind: 'file', name: 'b.ts', path: 'src/deep/b.ts' },
+        { depth: 1, kind: 'file', name: 'a.ts', path: 'src/a.ts' },
+        { depth: 0, kind: 'file', name: 'README.md', path: 'README.md' },
+      ],
+      hiddenFiles: 0,
+    })
+  })
+
+  it('drops the leading separator of absolute paths and keeps a Windows drive segment', () => {
+    expect(recentFileTree(['/Users/me/proj/main.ts', 'C:\\proj\\win.ts'], 20)).toEqual({
+      rows: [
+        // Each path's singleton directory chain merges into one row.
+        { depth: 0, kind: 'dir', name: 'Users/me/proj', path: 'Users/me/proj/' },
+        { depth: 1, kind: 'file', name: 'main.ts', path: 'Users/me/proj/main.ts' },
+        { depth: 0, kind: 'dir', name: 'C:/proj', path: 'C:/proj/' },
+        { depth: 1, kind: 'file', name: 'win.ts', path: 'C:/proj/win.ts' },
+      ],
+      hiddenFiles: 0,
+    })
+  })
+
+  it('renders paths inside the project root relative to it, and outside paths in full', () => {
+    const root = '/Users/havoc/projects/deepseek-harness/'
+    expect(recentFileTree([
+      '/Users/havoc/projects/deepseek-harness/packages/client/rows/Rows.tsx',
+      '/Users/havoc/projects/deepseek-harness/packages/client/tree.ts',
+      '/Users/havoc/other/notes.md',
+    ], 20, root)).toEqual({
+      rows: [
+        // packages/client merge; tree.ts lives at that level and stops the
+        // chain, so rows stays a separate level under it.
+        { depth: 0, kind: 'dir', name: 'packages/client', path: 'packages/client/' },
+        { depth: 1, kind: 'dir', name: 'rows', path: 'packages/client/rows/' },
+        { depth: 2, kind: 'file', name: 'Rows.tsx', path: 'packages/client/rows/Rows.tsx' },
+        { depth: 1, kind: 'file', name: 'tree.ts', path: 'packages/client/tree.ts' },
+        // Outside the root: the full absolute path stays.
+        { depth: 0, kind: 'dir', name: 'Users/havoc/other', path: 'Users/havoc/other/' },
+        { depth: 1, kind: 'file', name: 'notes.md', path: 'Users/havoc/other/notes.md' },
+      ],
+      hiddenFiles: 0,
+    })
+    // A root with no trailing separator matches too, and a path equal to the
+    // root (no segments after shortening) is skipped entirely.
+    expect(recentFileTree(['/p/src/a.ts', '/p/other/b.ts', '/p'], 20, '/p')).toEqual({
+      rows: [
+        { depth: 0, kind: 'dir', name: 'src', path: 'src/' },
+        { depth: 1, kind: 'file', name: 'a.ts', path: 'src/a.ts' },
+        { depth: 0, kind: 'dir', name: 'other', path: 'other/' },
+        { depth: 1, kind: 'file', name: 'b.ts', path: 'other/b.ts' },
+      ],
+      hiddenFiles: 0,
+    })
+    // A sibling that merely shares the root's prefix is not under it.
+    expect(recentFileTree(['/p/src/a.ts', '/project/x.ts'], 20, '/p')).toEqual({
+      rows: [
+        { depth: 0, kind: 'dir', name: 'src', path: 'src/' },
+        { depth: 1, kind: 'file', name: 'a.ts', path: 'src/a.ts' },
+        { depth: 0, kind: 'dir', name: 'project', path: 'project/' },
+        { depth: 1, kind: 'file', name: 'x.ts', path: 'project/x.ts' },
+      ],
+      hiddenFiles: 0,
+    })
+  })
+
+  it('shortens the single-file flat row under the project root', () => {
+    expect(recentFileTree(['/Users/h/proj/src/client/rows/Rows.tsx'], 20, '/Users/h/proj')).toEqual({
+      rows: [{ depth: 0, kind: 'file', name: 'src/client/rows/Rows.tsx', path: 'src/client/rows/Rows.tsx' }],
+      hiddenFiles: 0,
+    })
+  })
+
+  it('flattens paths into name | path rows, shortened under the root and deduplicated', () => {
+    expect(recentFileList([
+      '/Users/u/proj/packages/client/rows.ts',
+      '/Users/u/proj/packages/client/tree.ts',
+      '/Users/u/elsewhere/notes.md',
+      '/Users/u/proj/packages/client/rows.ts',
+      '/Users/u/proj',
+    ], '/Users/u/proj')).toEqual([
+      { name: 'rows.ts', path: 'packages/client/rows.ts' },
+      { name: 'tree.ts', path: 'packages/client/tree.ts' },
+      { name: 'notes.md', path: 'Users/u/elsewhere/notes.md' },
+    ])
+    // No root: the leading separator is still normalized away, matching the
+    // tree form.
+    expect(recentFileList(['/x/y.ts', '/x/y.ts'])).toEqual([{ name: 'y.ts', path: 'x/y.ts' }])
+    expect(recentFileList(['/p'], '/p')).toEqual([])
+  })
+
+  it('caps rendered rows at the budget and reports the exact hidden file count', () => {
+    expect(recentFileTree(['a/1.ts', 'a/2.ts', 'a/3.ts', 'b.ts', 'c.ts'], 4)).toEqual({
+      rows: [
+        { depth: 0, kind: 'dir', name: 'a', path: 'a/' },
+        { depth: 1, kind: 'file', name: '1.ts', path: 'a/1.ts' },
+        { depth: 1, kind: 'file', name: '2.ts', path: 'a/2.ts' },
+        { depth: 1, kind: 'file', name: '3.ts', path: 'a/3.ts' },
+      ],
+      hiddenFiles: 2,
+    })
+  })
+
+  it('deduplicates defensively and skips separator-only and empty inputs', () => {
+    expect(recentFileTree(['x/y.ts', 'x/y.ts', '/', '', 'src\\'], 20)).toEqual({
+      rows: [
+        { depth: 0, kind: 'dir', name: 'x', path: 'x/' },
+        { depth: 1, kind: 'file', name: 'y.ts', path: 'x/y.ts' },
+        // A trailing separator leaves one segment; nothing nests under it.
+        { depth: 0, kind: 'file', name: 'src', path: 'src' },
+      ],
+      hiddenFiles: 0,
+    })
+  })
+
+  it('keeps one leaf per name inside a directory across separator spellings', () => {
+    expect(recentFileTree(['a/b.ts', 'a\\b.ts'], 20)).toEqual({
+      rows: [
+        { depth: 0, kind: 'dir', name: 'a', path: 'a/' },
+        { depth: 1, kind: 'file', name: 'b.ts', path: 'a/b.ts' },
+      ],
+      // Both paths arrived; the second leaf shares the first's row, so it
+      // counts as kept off the card.
+      hiddenFiles: 1,
+    })
   })
 })

@@ -48,6 +48,15 @@ pnpm test:mount    # scripts/e2e-mount.sh：真实 DSH 挂载冒烟（需 PATH �
   展开键：树行用 workspaceId，最近行用 `recent:<id>` 前缀键（
   `recentGroupKey`）——两区各自记忆展开状态，**互不联动**；前缀键随工作区
   生死清账（`retainLiveKeys` 的 `isLiveKey`）。
+- Hover 卡片（内置 ui-workspace 复刻）：`HoverCard` 原语（平台模块表内）
+  包 LeafRow/SessionRow 的行；内容组件在 `src/client/HoverCards.tsx`
+  （工作区卡 = 标题+路径+创建时间+点击复制；会话卡 = 标题+相对时间+状态行+
+  文件域列表/树双模+文件行标记）。纯派生 `recentFileList`/`recentFileTree`
+  在 model.ts（卡片文件树的 12px 缩进指南是 `hoverIndentGuides`，与树行的
+  8px `guideBackground` 无关）。`now` 由 GroupedView/FlatList 每轮渲染计算
+  下传（一行一戳）；打开的行菜单（disabled）抑制卡片；卡片复制测试要 stub
+  `navigator.clipboard`，打开卡片用 `pointerover`/`pointerout` 事件
+  （React 从它们合成 pointerenter/leave）。
 
 ## 测试姿势
 

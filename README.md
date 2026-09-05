@@ -17,6 +17,12 @@ Harness 本体**：以 `priority: -1` 遮蔽 `sidebar.workspaces` 槽位，替�
   会话组内排序策略：按活动（默认）或手动顺序
 - **内置状态复刻**：会话行状态点（running = 像素追逐 loading 动画 /
   等待处理 / 已完成），所在目录与工作区行（含最近使用行）同步点亮图标
+- **Hover 卡片（内置 ui-workspace 复刻）**：悬停真实工作区行 → 右侧弹出
+  卡片（标题 + 完整目录路径 + 绝对创建时间，点击卡片复制路径）；悬停会话行
+  → 卡片（标题 + 相对时间 + 实时状态 + 读写文件域，列表 <-> 目录树切换，
+  文件行点击标记观察）。复用 `dsh-client-ui-primitives` 的 `HoverCard`
+  原语（右侧定位 / 悬停驻留 / 复制反馈），内容与纯派生函数从内置 rows /
+  tree 复刻。
 - **持久化**：目录树 / 展开状态 / 最近触摸 / 视图字段全部在插件 store
   （localStorage `dsh.enhanced-workspace.v1`）；Host 平铺顺序经
   `ctx.workspaces.insertBefore` 最小移动集 reconcile
@@ -46,6 +52,10 @@ pnpm build && pnpm pack && pnpm test:mount
 
 - 遮蔽形态下 workspace-logo 插件的行内 logo 槽位（`sidebar.workspaces.
   workspaceIcon/Menu/HoverIcon`）不可渲染（ui-slots 子槽位单声明者冲突）。
+- Hover 卡片两处与内置的差异：卡片宽度用 `HoverCard` 原语默认 244px（内置
+  会话卡片 300px 的 `width` 彩蛋要 ui-primitives 0.1.2 才发布，0.1.1-rc.1
+  无此 prop）；路径不做 `~` 缩写（插件没有 host-description 注入钩子，
+  未知 $HOME）。文件域若有长路径，卡片内文件盒横向滚动可达。
 - 目录树为插件本地权威：跨标签页并发编辑 last-writer-wins，不做冲突合并；
   reconcile 失败仅 `console.warn`（插件树仍是显示权威）。
 - 目录与工作区的**拖拽已实现**（目录行 = 移入末尾；工作区行间 = 锚点插入，

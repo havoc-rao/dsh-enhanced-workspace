@@ -71,6 +71,21 @@ export const zh = {
   sessionStatusOngoing: '运行中',
   sessionStatusWarning: '等待处理',
   sessionStatusDone: '已完成',
+  sessionStatusIdle: '空闲',
+  sessionStatusSubagentsOne: '{n} 个子代理运行中',
+  sessionStatusSubagentsOther: '{n} 个子代理运行中',
+  sessionStatusWaitingApproval: '等待审批',
+  sessionStatusPlanReview: '计划待审',
+  sessionStatusWaitingAnswer: '等待回答',
+  copy: '复制',
+  hoverCopied: '已复制',
+  hoverCreated: '创建于 {time}',
+  dateYmd: '{y}年{m}月{d}日',
+  hoverRecentInputs: '输入源',
+  hoverRecentOutputs: '输出源',
+  hoverRecentFilesMore: '其余 {n} 个文件',
+  hoverViewTree: '树形',
+  hoverViewList: '列表',
 } as const
 
 /** English dictionary (same key union as {@link zh}). */
@@ -135,6 +150,21 @@ export const en: Record<EnhancedWorkspaceKey, string> = {
   sessionStatusOngoing: 'Running',
   sessionStatusWarning: 'Awaiting action',
   sessionStatusDone: 'Completed',
+  sessionStatusIdle: 'Idle',
+  sessionStatusSubagentsOne: '{n} subagent running',
+  sessionStatusSubagentsOther: '{n} subagents running',
+  sessionStatusWaitingApproval: 'Waiting for approval',
+  sessionStatusPlanReview: 'Plan awaiting review',
+  sessionStatusWaitingAnswer: 'Waiting for answer',
+  copy: 'Copy',
+  hoverCopied: 'Copied',
+  hoverCreated: 'Created {time}',
+  dateYmd: '{y}-{m}-{d}',
+  hoverRecentInputs: 'Input sources',
+  hoverRecentOutputs: 'Output sources',
+  hoverRecentFilesMore: '{n} more files',
+  hoverViewTree: 'Tree',
+  hoverViewList: 'List',
 }
 
 /** Dictionary key union (drives the locale namespace merge and the `t` seat). */

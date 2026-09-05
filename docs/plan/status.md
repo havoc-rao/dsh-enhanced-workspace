@@ -60,20 +60,35 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   - **当前会话高光修复**：`dirActive` 去掉 `expanded` 门——工作区/目录行
     只要含当前会话即带 wash + 点亮图标，收起整条链时标记逐层不熄灭
     （`dirActive` 单参；组件 spec 补「收起链逐层标记」用例）。
+  - **Hover 卡片（内置 ui-workspace 复刻）**：复用 `HoverCard` 原语（右侧
+    定位/驻留延迟/复制反馈，平台模块表内，purity gate 放行）。工作区行卡片
+    = 标题 + 完整路径 + 绝对创建时间 + 点击卡片复制路径（复制标签走字典）；
+    会话行卡片 = 标题 + 相对时间 + 实时状态行（pending 明细/子代理计数/
+    running/completed/idle）+ 文件域（输入源/输出源，列表 `name | path`
+    与目录树双模切换、「其余 {n} 个文件」展开、文件行点击标记观察）。
+    纯派生 `recentFileList` / `recentFileTree` 从内置 tree.ts 移植入
+    model.ts（8 例单测）；内容组件入 `src/client/HoverCards.tsx`；
+    行菜单打开时 disabled 抑制卡片（内置 parity）。组件 spec 4 例 +
+    e2e hover 断言（顺手修了 e2e：新版首启欢迎是 Modal mask，老
+    onboardingOverlay 选择器已删不掉）。已知差异（README Known
+    Limitations 已记）：卡片宽度用原语默认 244px（内置会话卡片 300px 依赖
+    ui-primitives 0.1.2 未发布的 `width` prop）；无 host-description 注入，
+    路径不做 `~` 缩写。
 - **P4 收尾**：组件 spec（jsdom + 真实 store 引擎 + fixture 快照）、
   `scripts/e2e-mount.sh` + `playwright.config.ts` + `tests/e2e/mount.e2e.ts`
   （scratch DSH_HOME + 官方 CLI 挂载 + 无头渲染断言，需本机 `dsh` +
   chromium）、`.agents/notes/enhanced-workspace.md`、README/设计文档同步。
-- **质量门**：`pnpm typecheck` 全绿；`pnpm test` 119/119（model 63 + drag 9 +
-  store 10 + browser 12 + host-storage 25）；`pnpm build` 双通道通过（purity gate）。
+- **质量门**：`pnpm typecheck` 全绿；`pnpm test` 151/151（model 68 + drag 10 +
+  store 10 + browser 37 + host-storage 19 + persistence 7）；`pnpm build`
+  双通道通过（purity gate）；`pnpm test:mount` 实测通过（scratch DSH_HOME +
+  官方 CLI 挂载 + 无头渲染，含 hover 卡片断言）。
 
 ### 后续任务目标
 
 - **P3 剩余**：会话拖拽（手动顺序编辑入口，`setSessionOrder` /
   `insertSessionBefore` 已就绪未接线）；rail 模式（窄宽度）两图标 +
   expandSidebar 请求。
-- **P4 剩余**：逐文件覆盖率门；`pnpm test:mount` 实测（需有网络的本机/CI
-  装 chromium）；README 双语补全。
+- **P4 剩余**：逐文件覆盖率门；README 双语补全（en 版目前缺 Hover 卡片条目）。
 - **发布准备**：`pnpm pack` + 挂载到现有 profile 手测（遮蔽生效、最近模块
   与目录树交互、拖拽、状态点、Host 顺序 reconcile、搜索/添加流程）。
 

@@ -241,7 +241,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  act(() => { root.unmount() })
+  act(() => { root?.unmount() })
   container?.remove()
   document.body.querySelectorAll('[data-testid]').forEach(node => node.remove())
   // Portal seats (menus/dialogs) mount on document.body; drop them between tests.
@@ -1069,5 +1069,168 @@ describe('durable envelope persistence', () => {
     // A steady state writes ONCE — the debounce coalesces.
     await act(async () => { await sleep(400) })
     expect(persistence.save).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('hover cards (built-in ui-workspace parity)', () => {
+  /** Point into an element (React onPointerEnter derives from pointerover). */
+  function pointerEnter(target: Element): void {
+    act(() => { target.dispatchEvent(new Event('pointerover', { bubbles: true })) })
+  }
+
+  /** Point out of an element (React onPointerLeave derives from pointerout). */
+  function pointerLeave(target: Element): void {
+    act(() => { target.dispatchEvent(new Event('pointerout', { bubbles: true })) })
+  }
+
+  /** The open hover card's body (portaled to document.body), or undefined. */
+  function cardContent(): HTMLElement | undefined {
+    return [...document.body.querySelectorAll<HTMLElement>('[class*="hoverContent"]')].at(-1)
+  }
+
+  /** The hover card anchor wrapper of a row (HoverCard wraps the row itself). */
+  function cardAnchor(row: HTMLElement): HTMLElement {
+    return row.parentElement as HTMLElement
+  }
+
+  /** A role="button" element (the copyable card is a div, not a button tag). */
+  function roleButtonByAria(label: string): HTMLElement | undefined {
+    return [...document.body.querySelectorAll<HTMLElement>('[role="button"]')]
+      .find(element => element.getAttribute('aria-label') === label)
+  }
+
+  /** Install the async browser clipboard and restore its prior host shape. */
+  function installClipboard(writeText: (text: string) => Promise<void>): () => void {
+    const prior = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    })
+    return () => {
+      if (prior === undefined) Reflect.deleteProperty(navigator, 'clipboard')
+      else Object.defineProperty(navigator, 'clipboard', prior)
+    }
+  }
+
+  it('workspace hover card shows the directory and creation time and copies the full path', async () => {
+    vi.useFakeTimers()
+    const writeText = vi.fn(async () => {})
+    const restoreClipboard = installClipboard(writeText)
+    try {
+      await renderBrowser()
+      const row = treeRowByText('绘画收集')!
+      pointerEnter(cardAnchor(row))
+      act(() => { vi.advanceTimersByTime(500) })
+      // Card body: full title + cwd + absolute creation time.
+      const card = cardContent()
+      expect(card).toBeDefined()
+      expect(card!.textContent).toContain('绘画收集')
+      expect(card!.textContent).toContain('/projects/w-art')
+      expect(card!.textContent).toMatch(/创建于 \d+年\d+月\d+日 \d{2}:\d{2}/)
+      // The whole card is a copy target for the full path.
+      const copyButton = roleButtonByAria('复制: /projects/w-art')
+      expect(copyButton).toBeDefined()
+      click(copyButton!)
+      await act(async () => {})
+      expect(writeText).toHaveBeenCalledWith('/projects/w-art')
+      // The copied label replaces the card body and the wrapper's visually
+      // hidden status seat reports it (both live on document.body).
+      expect(document.querySelector('[role="status"]')?.textContent).toBe('已复制')
+      expect(cardContent()).toBeUndefined()
+    } finally {
+      restoreClipboard()
+      vi.useRealTimers()
+    }
+  })
+
+  it('session hover card shows title, relative time, and the live status line after the dwell', async () => {
+    vi.useFakeTimers()
+    try {
+      await renderBrowser()
+      click(treeRowByText('绘画收集')!)
+      const row = sessionRowByText('画布草图')!
+      pointerEnter(cardAnchor(row))
+      act(() => { vi.advanceTimersByTime(500) })
+      const card = cardContent()
+      expect(card).toBeDefined()
+      expect(card!.textContent).toContain('画布草图')
+      // The activity stamp is 1s old: the now bucket, bare (no "前").
+      expect(card!.textContent).toContain('现在')
+      // The fixture session is completed: the green done line reads.
+      expect(card!.textContent).toContain('已完成')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('suppresses the session hover card while the row menu is open', async () => {
+    vi.useFakeTimers()
+    try {
+      await renderBrowser()
+      click(treeRowByText('绘画收集')!)
+      const row = sessionRowByText('画布草图')!
+      const anchor = cardAnchor(row)
+      pointerEnter(anchor)
+      act(() => { vi.advanceTimersByTime(500) })
+      expect(cardContent()).toBeDefined()
+      pointerLeave(anchor)
+      // Menu open (disabled) suppresses the card for the same dwell.
+      openRowMenu('画布草图')
+      pointerEnter(anchor)
+      act(() => { vi.advanceTimersByTime(1000) })
+      expect(cardContent()).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the session file domain as a flat name | path list, switchable to the directory tree with clickable marks', async () => {
+    vi.useFakeTimers()
+    try {
+      sessionsState = {
+        ...SESSIONS_STATE,
+        byId: {
+          ...SESSIONS_BY_ID,
+          s7: {
+            ...SESSIONS_BY_ID.s7,
+            projectionValues: {
+              sessionStats: {
+                recentInputs: ['docs/readme.md'],
+                recentOutputs: ['docs/notes.md', 'docs/plan.md'],
+              },
+            },
+          } as SessionSummary,
+        },
+      }
+      await renderBrowser()
+      click(treeRowByText('文档')!)
+      const row = sessionRowByText('README 整理')!
+      pointerEnter(cardAnchor(row))
+      act(() => { vi.advanceTimersByTime(500) })
+      const card = cardContent()!
+      // Default list mode: every file as one `name | path` row, laid out flat
+      // (the flex gap is visual — no spaces around the divider).
+      expect(card.querySelector('[data-hover-files-scroll]')).toBeTruthy()
+      expect(card.textContent).toContain('输入源')
+      expect(card.textContent).toContain('输出源')
+      expect(card.textContent).toContain('readme.md|docs/readme.md')
+      expect(card.textContent).toContain('notes.md|docs/notes.md')
+      expect(card.textContent).toContain('plan.md|docs/plan.md')
+      // The toolbar toggle switches to the merged directory tree.
+      click(buttonByAria('树形')!)
+      expect(cardContent()!.textContent).toContain('docs/')
+      expect(card.textContent).toContain('readme.md')
+      // File rows are clickable observation targets: clicking marks the row
+      // (the aria-label carries the full path; the row text the basename).
+      const fileButton = buttonByAria('docs/readme.md')
+      expect(fileButton).toBeDefined()
+      click(fileButton!)
+      expect(buttonByAria('docs/readme.md')?.getAttribute('aria-pressed')).toBe('true')
+      // Clicking the marked row clears the mark.
+      click(buttonByAria('docs/readme.md')!)
+      expect(buttonByAria('docs/readme.md')?.getAttribute('aria-pressed')).toBe('false')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

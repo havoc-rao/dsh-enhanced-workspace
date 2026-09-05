@@ -100,16 +100,26 @@
 .grouped,
 .flatList,
 .folderBranch,
+.folderChildren,
+.dropRegion,
 .leafBranch {
   display: flex;
   flex-direction: column;
 }
 
-/* With rounded 8px row pills, adjacent rows touch corner-to-corner — a 1px
-   hairline gap between the workspace row and its session list (and, via
-   .sessionList, between the session rows themselves) keeps each row's fill
-   reading as its own pill. */
-.leafBranch {
+/* With rounded 8px row pills, adjacent rows touch corner-to-corner — the 1px
+   hairline gap applies to EVERY row-stack level of the tree: leaf branches
+   (workspace row ↔ its session list, and via .sessionList between the session
+   rows themselves), folder branches (folder row ↔ its children), folder
+   children (sibling folder/workspace rows inside a folder), the workspace
+   drop region (a folder's workspace-leaf group), and the tree sections
+   (top-level folder rows ↔ root-level leaves ↔ the ungrouped bucket) — so
+   each row's fill keeps reading as its own pill. */
+.leafBranch,
+.folderBranch,
+.folderChildren,
+.dropRegion,
+.section {
   gap: 1px;
 }
 
@@ -164,6 +174,15 @@
   /* The right inset comes from the scroll container (padding-right), not
      per row; the left inset is inline (rowIndent). */
   padding: 3px 0 3px 12px;
+  /* The row's regular height is set by its tallest content — the 24px
+     row-action icon button (.iconButton) plus this row's 3px × 2 padding —
+     so be 30px. The ungrouped bucket row (Browser.tsx LeafRow) renders
+     neither the row menu nor the new-session button: without this
+     min-height it would collapse to the 16px folder glyph and stand out
+     shorter than the workspace/folder rows with icons around it. Keep
+     30px in sync with `.iconButton` (24px) and this rule's vertical
+     padding. */
+  min-height: 30px;
   /* relative: anchors the clickable indent-guide bands (.guideHit) to the row. */
   position: relative;
 }
@@ -557,4 +576,254 @@
   border: 1px solid color-mix(in srgb, var(--workspace-drop-accent) 18%, transparent);
   border-radius: 6px;
   background: color-mix(in srgb, var(--workspace-drop-accent) 6%, transparent);
+}
+
+/* ---- Hover cards (replicated from the built-in ui-workspace rows) ----
+ * The card surface itself comes from the shared HoverCard primitive (dark
+ * #2C2C2E in both themes); these classes shape the card body content only.
+ * Fixed light-on-dark colors match the built-in cards exactly. */
+
+.hoverContent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hoverHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.hoverTitle {
+  font-size: 14px;
+  line-height: 20px;
+  color: #FFFFFF;
+  overflow-wrap: break-word;
+}
+
+.hoverPath {
+  font-size: 12px;
+  line-height: 16px;
+  color: #CFD3D6;
+  word-break: break-all;
+}
+
+.hoverTime {
+  font-size: 12px;
+  line-height: 16px;
+  color: #CFD3D6;
+}
+
+.hoverStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 20px;
+  color: #ADB2B8;
+}
+
+/* The whole file domain scrolls as one box: a bounded, slim-scrollbar panel
+   holding both side sections. It scrolls vertically for tall lists and
+   horizontally for long unclipped path rows, so the card never stretches
+   past the viewport and paths never ellipsize. */
+.hoverFilesScroll {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 232px;
+  overflow-x: auto;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+/* File-box toolbar: the quiet list/tree mode toggle, right-aligned above the
+   scroll box. */
+.hoverFilesToolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.hoverModeButton {
+  margin: 0;
+  padding: 0 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  color: #8E9399;
+  cursor: pointer;
+}
+
+.hoverModeButton:hover {
+  color: #D6D9DC;
+}
+
+.hoverModeButton:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, var(--ds-color-border, rgba(128, 128, 128, 0.35)));
+}
+
+.hoverFilesScroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.hoverFilesScroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.hoverFilesScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Recent-files sections inside the session hover card: a hairline-separated
+   block per side, caption heading + file count over an icon-led code-face
+   tree. Rows truncate; the full accumulated path is the title tooltip. */
+.hoverFiles {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+}
+
+.hoverFilesHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.hoverFilesLabel {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #9BA1A6;
+}
+
+.hoverFilesCount {
+  font-size: 11px;
+  line-height: 16px;
+  color: #6E7378;
+}
+
+.hoverFilesTree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Rows keep their full content width: long names/paths overflow the box
+     and are reached by its horizontal scrollbar, never ellipsis-clipped. */
+  width: max-content;
+  min-width: 100%;
+}
+
+.hoverFileRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  /* File rows render as buttons: reset the browser chrome. */
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  /* background-color, never the shorthand: tree rows carry their indent
+     guides as background-image, which the shorthand would wipe out. */
+  background-color: transparent;
+  color: inherit;
+  font: inherit;
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 17px;
+  text-align: left;
+}
+
+.hoverFileRowSelectable {
+  cursor: pointer;
+}
+
+.hoverFileRowSelectable:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* The marked file row: a soft tint so the user can keep an eye on one file. */
+.hoverFileRowSelected,
+.hoverFileRowSelected:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.hoverFileRowSelectable:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, var(--ds-color-border, rgba(128, 128, 128, 0.35)));
+}
+
+.hoverFileGlyph {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #7C8288;
+}
+
+.hoverFileDirName,
+.hoverFileName {
+  white-space: nowrap;
+}
+
+.hoverFileDirName {
+  color: #B4B9BE;
+}
+
+.hoverFileName {
+  color: #D6D9DC;
+}
+
+.hoverFilesMore {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  color: #8E9399;
+  cursor: pointer;
+}
+
+.hoverFilesMore:hover {
+  color: #D6D9DC;
+  text-decoration: underline;
+}
+
+.hoverFilesMore:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, var(--ds-color-border, rgba(128, 128, 128, 0.35)));
+}
+
+/* Flat-list rows (list mode): bright `name` | dim `path`, both kept in full
+   on the one line — a long row is reached by the box's horizontal scroll. */
+.hoverFileListName {
+  flex: none;
+  white-space: nowrap;
+  color: #D6D9DC;
+  font-weight: 600;
+}
+
+.hoverFileListDivider {
+  flex: none;
+  color: #6E7378;
+}
+
+.hoverFileListPath {
+  white-space: nowrap;
+  color: #8E9399;
 }
