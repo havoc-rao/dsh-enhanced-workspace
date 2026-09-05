@@ -7,12 +7,17 @@
  * (cycle / depth / root / sibling names) and fail non-fatally.
  *
  * Drop semantics follow the design doc FR-1: a workspace dragged onto a
- * folder row moves INTO that folder (appended); a workspace dragged onto a
- * workspace row anchors before/after it inside that row's owning folder; a
- * folder dragged onto a folder row moves under it ('on') or reorders
- * relative to it ('before'/'after'). Interleaving folders and workspaces at
- * one level is not representable, so folder targets never serve as workspace
- * anchors and vice versa. Dropping a row onto itself is a no-op.
+ * folder row's MIDDLE ('on') moves INTO that folder (appended); the row's
+ * BOTTOM edge ('after') also moves INTO it; the row's TOP EDGE / the gap
+ * above it ('before') anchors the workspace BEFORE the folder row — folders
+ * and workspaces cannot interleave at one level, so the anchor is
+ * represented as the workspace account of the folder's PARENT (the outer
+ * level, appended). A workspace dragged onto a workspace row anchors
+ * before/after it inside that row's owning folder. A folder dragged onto a
+ * folder row moves under it ('on') or reorders relative to it
+ * ('before'/'after'). Interleaving folders and workspaces at one level is
+ * not representable, so folder targets never serve as workspace anchors and
+ * vice versa. Dropping a row onto itself is a no-op.
  * @module dsh-enhanced-workspace/client/drag
  */
 
@@ -69,8 +74,14 @@ export function folderDropZone(rect: Pick<DOMRect, 'top' | 'height'>, clientY: n
 
 /**
  * Resolve dropping a workspace onto a target row:
- * - folder target: move into that folder, appended ("拖到目录行 = 移入该目录
- *   末尾");
+ * - folder target, 'on' or 'after': move into that folder, appended
+ *   ("拖到目录行 = 移入该目录末尾");
+ * - folder target, 'before': the gap above the folder row — the workspace
+ *   anchors BEFORE the folder, i.e. at the OUTER level: the folder's parent
+ *   folder's workspace account, appended (interleaving folders and
+ *   workspaces at one level is not representable, so "before this folder
+ *   row" becomes "into its parent"); a top-level folder's parent is the
+ *   root, so the workspace lands at the browser's top level;
  * - workspace target: anchor-insert inside the target's owning folder —
  *   'before' inserts right before it, 'after' right after it (or appends when
  *   the target is the folder's last workspace). Dropping onto the workspace's
@@ -91,6 +102,11 @@ export function resolveWorkspaceDrop(
   zone: DropZone,
 ): DropResolution {
   if (targetKind === 'folder') {
+    if (zone === 'before') {
+      const parentId = folders[targetId as FolderId]?.parentFolderId
+      if (parentId === null || parentId === undefined) return { kind: 'noop' }
+      return { kind: 'move-workspace', folderId: parentId }
+    }
     return { kind: 'move-workspace', folderId: FolderId(targetId) }
   }
   if (targetId === workspaceId) return { kind: 'noop' }

@@ -46,6 +46,25 @@ describe('resolveWorkspaceDrop', () => {
     expect(result).toEqual({ kind: 'move-workspace', folderId: F('团队') })
   })
 
+  it('anchors a workspace in the gap ABOVE a folder row at the OUTER level, and same-level zones still move in', () => {
+    let tree = rootTree(['w1'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, '团队', F('团队'), NOW).folders
+    tree = moveWorkspaceIn(tree, W('w1'), F('团队'), undefined, NOW)
+    // 偏上（行间）：锚点到该目录行之前 → 外层 = 父目录的 workspace 账户。
+    expect(resolveWorkspaceDrop(tree, W('w1'), 'folder', '团队', 'before'))
+      .toEqual({ kind: 'move-workspace', folderId: ROOT_FOLDER_ID })
+    // Nested target: the outer level is the nesting folder.
+    tree = createFolderIn(tree, F('团队'), '子组', F('子组'), NOW).folders
+    tree = moveWorkspaceIn(tree, W('w1'), F('子组'), undefined, NOW)
+    expect(resolveWorkspaceDrop(tree, W('w1'), 'folder', '子组', 'before'))
+      .toEqual({ kind: 'move-workspace', folderId: F('团队') })
+    // 正中 / 偏下：仍移入目录（追加）。
+    expect(resolveWorkspaceDrop(tree, W('w1'), 'folder', '子组', 'on'))
+      .toEqual({ kind: 'move-workspace', folderId: F('子组') })
+    expect(resolveWorkspaceDrop(tree, W('w1'), 'folder', '子组', 'after'))
+      .toEqual({ kind: 'move-workspace', folderId: F('子组') })
+  })
+
   it('anchors before/after a workspace row inside its owning folder', () => {
     let tree = rootTree(['w1', 'w2', 'w3'])
     tree = createFolderIn(tree, ROOT_FOLDER_ID, '团队', F('团队'), NOW).folders

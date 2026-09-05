@@ -542,6 +542,27 @@ describe('enhanced workspace browser', () => {
     expect(instance.getSnapshot().folders[ROOT_FOLDER_ID]?.workspaceIds).toEqual([W('w-docs')])
   })
 
+  it('drags a workspace to a folder row\'s TOP EDGE: the drop anchors it at the OUTER level, not inside', () => {
+    renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '产品组') })
+    const team = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-art'), team) })
+    act(() => { instance.actions.setFolderExpanded(team, true) }) // reveal the nested workspace row
+    const folderRow = treeRowByText('产品组')!
+    const sourceRow = treeRowByText('绘画收集')!
+    stubRect(folderRow, 0, 48)
+
+    dragStart(sourceRow)
+    dragOver(folderRow, 8) // above the mid band → 'before' (the gap above the folder row)
+    expect(folderRow.matches('[class*="dropBefore"]'), 'the top edge shows the outer-anchor line').toBe(true)
+    dropOn(folderRow, 8)
+
+    // The workspace lands in the folder's PARENT account (外层), not inside.
+    expect(new Set(instance.getSnapshot().folders[ROOT_FOLDER_ID]!.workspaceIds))
+      .toEqual(new Set([W('w-art'), W('w-docs')]))
+    expect(instance.getSnapshot().folders[team]?.workspaceIds, 'the folder itself stays empty').toEqual([])
+  })
+
   it('drags a workspace before another workspace row: anchored insert inside the same folder', () => {
     const props = renderBrowser()
     const docs = treeRowByText('文档')!
