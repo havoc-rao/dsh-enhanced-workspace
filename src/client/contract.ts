@@ -29,7 +29,7 @@ import type { NS } from './locales.ts'
  * a localStorage fallback; the browser never touches storage directly.
  */
 export interface EnhancedWorkspacePersistence {
-  /** Load the stored envelope; null when nothing durable is stored (or the value is unusable). */
+  /** Load the stored envelope; null only when storage is confirmed empty; failures reject. */
   load(): Promise<EnhancedWorkspaceState | null>
   /** Store the current envelope wholesale (the caller owns debouncing). */
   save(state: EnhancedWorkspaceState): Promise<void>

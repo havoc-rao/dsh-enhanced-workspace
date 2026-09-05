@@ -220,14 +220,16 @@ describe('envelope file round-trip', () => {
     expect(await readEnvelopeFile(join(dir, 'absent.json'))).toBeNull()
   })
 
-  it('reads null for corrupt or invalid JSON', async () => {
+  it('rejects corrupt or invalid JSON without changing the file', async () => {
     const dir = await tempDir()
     const corrupt = join(dir, 'corrupt.json')
     await writeFile(corrupt, '{not json')
-    expect(await readEnvelopeFile(corrupt)).toBeNull()
+    await expect(readEnvelopeFile(corrupt)).rejects.toThrow()
+    expect(await readFile(corrupt, 'utf8')).toBe('{not json')
     const invalid = join(dir, 'invalid.json')
     await writeFile(invalid, JSON.stringify({ folders: {}, groupBy: 'bogus' }))
-    expect(await readEnvelopeFile(invalid)).toBeNull()
+    await expect(readEnvelopeFile(invalid)).rejects.toThrow('invalid persisted workspace envelope')
+    expect(JSON.parse(await readFile(invalid, 'utf8'))).toEqual({ folders: {}, groupBy: 'bogus' })
   })
 
   it('writes atomically (parent dirs created, no temp leftovers) and round-trips', async () => {

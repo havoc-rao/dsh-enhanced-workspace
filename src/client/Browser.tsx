@@ -298,6 +298,10 @@ const identity = <T,>(snapshot: T): T => snapshot
 /** Debounce of durable envelope writes (coalesces quick toggles/edits into one file write). */
 const PERSIST_DEBOUNCE_MS = 300
 
+// A slot can remount over the same store. Hydration belongs to that store's
+// action identity, not its React mount; weak keys do not retain disposed stores.
+const hydratedStores = new WeakSet<EnhancedWorkspaceBrowserProps['actions']>()
+
 /** The enhanced browsing region. @param props - the four-share composed props. */
 export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): ReactNode {
   const {
@@ -312,63 +316,72 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   const state = useStore(identity)
   const [query, setQuery] = useState('')
 
-  // Baseline convergence: adopt Host workspaces the tree does not know yet
-  // (newest first at the root account head) and prune ids the Host no longer
-  // lists. Both are idempotent, so re-runs after every tree change settle.
+  // Read once per mount, independently of baseline arrival. Cancellation
+  // detaches obsolete effects (including StrictMode's setup/cleanup replay).
+  const loadRef = useRef<ReturnType<typeof persistence.load> | null>(null)
+  const [loaded, setLoaded] = useState<{ envelope: Awaited<ReturnType<typeof persistence.load>> } | null>(null)
+  const [restoreStatus, setRestoreStatus] = useState<'unknown' | 'restored' | 'empty' | 'failed'>(() => hydratedStores.has(actions) ? 'restored' : 'unknown')
+  const hydratedRef = useRef(hydratedStores.has(actions))
   useEffect(() => {
-    if (!workspaces.baselinesReady) return
+    if (hydratedStores.has(actions)) return
+    let cancelled = false
+    loadRef.current ??= Promise.resolve().then(() => persistence.load())
+    void loadRef.current.then(envelope => {
+      if (!cancelled) setLoaded({ envelope })
+    }, error => {
+      if (cancelled) return
+      console.warn('dsh-enhanced-workspace: envelope load failed; writes disabled', error)
+      setRestoreStatus('failed')
+    })
+    return () => { cancelled = true }
+  }, [persistence, actions])
+
+  // Restore only with the CURRENT authoritative baseline. An empty list
+  // before baselinesReady is not evidence that every saved workspace died.
+  useEffect(() => {
+    if (hydratedRef.current || loaded === null || !workspaces.baselinesReady) return
+    hydratedRef.current = true
+    try {
+      if (loaded.envelope !== null) {
+        // A tree edited while loading cannot safely replace the disk tree.
+        // Keep the in-memory edit, but do not silently overwrite durable data.
+        const root = state.folders[ROOT_FOLDER_ID]
+        if (Object.keys(state.folders).length !== 1 || root === undefined
+          || root.workspaceIds.length !== 0 || root.folderIds.length !== 0) {
+          throw new Error('tree changed before restore completed')
+        }
+        actions.restoreEnvelope(loaded.envelope, workspaces.items.map(workspace => workspace.workspaceId))
+      }
+      hydratedStores.add(actions)
+      setRestoreStatus(loaded.envelope === null ? 'empty' : 'restored')
+    } catch (error) {
+      console.warn('dsh-enhanced-workspace: envelope restore failed; writes disabled', error)
+      setRestoreStatus('failed')
+    }
+  }, [loaded, workspaces.baselinesReady, workspaces.items, state.folders, actions])
+  const persistedReady = restoreStatus === 'restored' || restoreStatus === 'empty'
+
+  // No adoption or pruning may race durable restore.
+  useEffect(() => {
+    if (!persistedReady || !workspaces.baselinesReady) return
     actions.retainLiveKeys(workspaces.items.map(workspace => workspace.workspaceId))
     for (const workspace of workspaces.items) {
       if (folderOfWorkspace(state.folders, workspace.workspaceId) === undefined) {
         actions.adoptWorkspace(workspace.workspaceId)
       }
     }
-  }, [workspaces.baselinesReady, workspaces.items, state.folders, actions])
+  }, [persistedReady, workspaces.baselinesReady, workspaces.items, state.folders, actions])
 
-  // Durable restore, once per mount: the desktop app binds its webserver to
-  // an OS-assigned port on every launch, so localStorage could never outlive
-  // a restart — the envelope (folder tree, expansions, recency, orders) comes
-  // from the Host file through the persistence face. A still-pristine tree
-  // (nothing but the init root, checked at RESTORE time — the load promise
-  // may settle after the session already built folders) is replaced; a tree
-  // this session already touched wins, and the baseline convergence above
-  // settles against whatever the restore landed on (restore itself adopts
-  // live workspaces and prunes dead ids, so the two orderings converge).
-  const hydratedRef = useRef(false)
-  const [persistedReady, setPersistedReady] = useState(false)
-  const stateRef = useRef(state)
-  stateRef.current = state
+  // Failed reads never authorize a write, including a later edit or reconnect.
   useEffect(() => {
-    if (hydratedRef.current) return
-    hydratedRef.current = true
-    void (async () => {
-      try {
-        const envelope = await persistence.load()
-        if (envelope !== null && Object.keys(stateRef.current.folders).length === 1) {
-          actions.restoreEnvelope(envelope, workspaces.items.map(workspace => workspace.workspaceId))
-        }
-      } catch (error) {
-        console.warn('dsh-enhanced-workspace: envelope restore failed', error)
-      } finally {
-        setPersistedReady(true)
-      }
-    })()
-  }, [persistence, actions, workspaces.items])
-
-  // Durable save (debounced, only after the first restore attempt settled):
-  // every viewing-state change — tree edits, expansions, recency stamps,
-  // ordering — lands on the Host file, so the next launch starts where this
-  // one left off. The fallback inside the persistence face degrades to
-  // localStorage when the Host channel is unreachable.
-  useEffect(() => {
-    if (!persistedReady) return
+    if (!persistedReady || !workspaces.baselinesReady) return
     const timer = setTimeout(() => {
       void persistence.save(state).catch(error => {
         console.warn('dsh-enhanced-workspace: envelope save failed', error)
       })
     }, PERSIST_DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [persistedReady, state, persistence])
+  }, [persistedReady, workspaces.baselinesReady, state, persistence])
 
   // Recency stamps refresh ONLY on a new query send: the host bumps a
   // session's updatedAt on durable session activity (a send dominates), so a
@@ -400,7 +413,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   // registry order onto the tree's depth-first order with the minimal move
   // set, so every other surface (picker, rail, flat lists) follows the tree.
   useEffect(() => {
-    if (!workspaces.baselinesReady || workspaces.items.length === 0) return
+    if (!persistedReady || !workspaces.baselinesReady || workspaces.items.length === 0) return
     const current = workspaces.items.map(workspace => workspace.workspaceId)
     const desired = treeOrder(state.folders)
     const deltas = orderDeltas(current, desired)
@@ -416,7 +429,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
         }
       }
     })()
-  }, [workspaces.baselinesReady, workspaces.items, state.folders, insertWorkspaceBefore])
+  }, [persistedReady, workspaces.baselinesReady, workspaces.items, state.folders, insertWorkspaceBefore])
 
   // First-encounter expansion (built-in parity): the group holding the
   // selected session opens unless the user already recorded a choice, so the

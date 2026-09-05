@@ -6,7 +6,7 @@
  * behavior — the original workspace-collects-sessions interaction and the
  * multi-level folder management on top of it.
  */
-import { useSyncExternalStore } from 'react'
+import { StrictMode, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -101,7 +101,7 @@ let root: ReturnType<typeof createRoot>
 let instance: ReturnType<ReturnType<typeof createEnhancedWorkspaceStore>['create']>
 
 /** Render the browser over a fresh real store engine instance. */
-function renderBrowser(persistence: EnhancedWorkspaceBrowserProps['persistence'] = defaultPersistence()): EnhancedWorkspaceBrowserProps {
+async function renderBrowser(persistence: EnhancedWorkspaceBrowserProps['persistence'] = defaultPersistence(), strict = false): Promise<EnhancedWorkspaceBrowserProps> {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -127,7 +127,10 @@ function renderBrowser(persistence: EnhancedWorkspaceBrowserProps['persistence']
     pickDirectory: vi.fn(async () => null),
     persistence,
   } as unknown as EnhancedWorkspaceBrowserProps
-  act(() => { root.render(<EnhancedWorkspaceBrowser {...props} />) })
+  await act(async () => {
+    const browser = <EnhancedWorkspaceBrowser {...props} />
+    root.render(strict ? <StrictMode>{browser}</StrictMode> : browser)
+  })
   return props
 }
 
@@ -248,8 +251,8 @@ afterEach(() => {
 })
 
 describe('enhanced workspace browser', () => {
-  it('keeps the built-in workspace behavior: the row collects its sessions (click toggles, plus starts a session, overflow bounds the list)', () => {
-    const props = renderBrowser()
+  it('keeps the built-in workspace behavior: the row collects its sessions (click toggles, plus starts a session, overflow bounds the list)', async () => {
+    const props = await renderBrowser()
     // Baseline adoption puts every workspace at the root account.
     expect(treeitemRows().map(row => row.textContent?.trim())).toEqual(
       expect.arrayContaining([expect.stringContaining('绘画收集'), expect.stringContaining('文档')]),
@@ -288,8 +291,8 @@ describe('enhanced workspace browser', () => {
     expect(rowByText('画布草图')).toBeDefined()
   })
 
-  it('wraps workspaces into multi-level directories: root folder, subfolder, and a move into the folder', () => {
-    renderBrowser()
+  it('wraps workspaces into multi-level directories: root folder, subfolder, and a move into the folder', async () => {
+    await renderBrowser()
 
     // Root-level "New folder" icon button (tooltip-seated) opens the input dialog.
     click(buttonByAria('新建目录')!)
@@ -334,8 +337,8 @@ describe('enhanced workspace browser', () => {
     expect(folderBranch!.textContent).toContain('产品组')
   })
 
-  it('deleting a folder promotes its workspaces back to the top level', () => {
-    const props = renderBrowser()
+  it('deleting a folder promotes its workspaces back to the top level', async () => {
+    const props = await renderBrowser()
     // Create 归档 at the root, move 绘画收集 into it.
     click(buttonByAria('新建目录')!)
     const input = [...document.body.querySelectorAll<HTMLInputElement>('input')]
@@ -365,7 +368,7 @@ describe('enhanced workspace browser', () => {
     expect(treeRowByText('绘画收集')!.closest('[class*="folderBranch"]')).toBeNull()
   })
 
-  it('renders recency rows as workspace-style rows: capped at five, expandable, and count-free', () => {
+  it('renders recency rows as workspace-style rows: capped at five, expandable, and count-free', async () => {
     // Six dirs total — the recency section must show exactly the five most
     // recent ones; the sixth stays in the tree below the bottom border.
     workspacesState = {
@@ -378,7 +381,7 @@ describe('enhanced workspace browser', () => {
         workspace('w-x4', '丁组', []),
       ],
     }
-    renderBrowser()
+    await renderBrowser()
     const section = container.querySelector('section')
     expect(section, 'recency section should render with workspaces present').toBeDefined()
     const recentRows = [...section!.querySelectorAll<HTMLElement>('[class*="workspaceRow"]')]
@@ -399,8 +402,8 @@ describe('enhanced workspace browser', () => {
     expect(treeRowByText('绘画收集')!.getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('collapses every expandable dir row from either section header: folders, workspace lists, and recency lists fold back', () => {
-    renderBrowser()
+  it('collapses every expandable dir row from either section header: folders, workspace lists, and recency lists fold back', async () => {
+    await renderBrowser()
     // A folder holding the art workspace.
     click(buttonByAria('新建目录')!)
     const input = [...document.body.querySelectorAll<HTMLInputElement>('input')]
@@ -448,8 +451,8 @@ describe('enhanced workspace browser', () => {
     expect(instance.getSnapshot().groupExpansion).toEqual({})
   })
 
-  it('refreshes the recency stamp only when a new query lands; browsing gestures never touch', () => {
-    const props = renderBrowser()
+  it('refreshes the recency stamp only when a new query lands; browsing gestures never touch', async () => {
+    const props = await renderBrowser()
     // Mount baseline-seeds the observer: no query has been sent, no stamps.
     expect(instance.getSnapshot().recentTouchById).toEqual({})
 
@@ -479,7 +482,7 @@ describe('enhanced workspace browser', () => {
     expect(instance.getSnapshot().recentTouchById['w-docs']).toBeUndefined()
   })
 
-  it('renders the built-in status presentation: the loading dot on the running session and dir-level sync on its workspace', () => {
+  it('renders the built-in status presentation: the loading dot on the running session and dir-level sync on its workspace', async () => {
     // 本会话 = s1（绘画收集 工作区的会话）且正在运行；s2 已完成；s8 空闲。
     const byId = {
       ...SESSIONS_BY_ID,
@@ -500,7 +503,7 @@ describe('enhanced workspace browser', () => {
         WORKSPACES[1]!,
       ],
     } as typeof WORKSPACES_STATE
-    renderBrowser()
+    await renderBrowser()
 
     // 本会话正 loading：s1 行显示 ongoing 像素追逐点 + 屏幕阅读器文案；
     // dir 级同步：含本会话的「绘画收集」行图标点亮（最近行虽未展开，同样
@@ -526,10 +529,10 @@ describe('enhanced workspace browser', () => {
     expect(sessionRowOf('空闲会话').querySelector('[data-state]'), 'idle sessions show no dot').toBeNull()
   })
 
-  it('marks every collapsed ancestor dir on the path to the current session, level by level', () => {
+  it('marks every collapsed ancestor dir on the path to the current session, level by level', async () => {
     // 本会话 = s1（绘画收集 的会话）；把工作区挪进根目录「产品组」。
     sessionsState = { ...SESSIONS_STATE, current: 's1' as SessionId } as typeof SESSIONS_STATE
-    renderBrowser()
+    await renderBrowser()
     click(buttonByAria('新建目录')!)
     const input = [...document.body.querySelectorAll<HTMLInputElement>('input')]
       .filter(field => field.getAttribute('aria-label') === '目录名称').at(-1)
@@ -565,8 +568,8 @@ describe('enhanced workspace browser', () => {
     expect(sessionRowByText('画布草图')!.className, 'the viewer-open session row carries the wash').toContain('sessionRowCurrent')
   })
 
-  it('drags a workspace onto a folder row: the drop moves it into that folder (appended)', () => {
-    renderBrowser()
+  it('drags a workspace onto a folder row: the drop moves it into that folder (appended)', async () => {
+    await renderBrowser()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '产品组') })
     const folderRow = treeRowByText('产品组')!
     const sourceRow = treeRowByText('绘画收集')!
@@ -582,8 +585,8 @@ describe('enhanced workspace browser', () => {
     expect(instance.getSnapshot().folders[ROOT_FOLDER_ID]?.workspaceIds).toEqual([W('w-docs')])
   })
 
-  it('drags a workspace to a folder row\'s TOP EDGE: the drop anchors it at the OUTER level, not inside', () => {
-    renderBrowser()
+  it('drags a workspace to a folder row\'s TOP EDGE: the drop anchors it at the OUTER level, not inside', async () => {
+    await renderBrowser()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '产品组') })
     const team = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
     act(() => { instance.actions.moveWorkspaceIn(W('w-art'), team) })
@@ -603,8 +606,8 @@ describe('enhanced workspace browser', () => {
     expect(instance.getSnapshot().folders[team]?.workspaceIds, 'the folder itself stays empty').toEqual([])
   })
 
-  it('drags a workspace before another workspace row: anchored insert inside the same folder', () => {
-    const props = renderBrowser()
+  it('drags a workspace before another workspace row: anchored insert inside the same folder', async () => {
+    const props = await renderBrowser()
     const docs = treeRowByText('文档')!
     const art = treeRowByText('绘画收集')!
     stubRect(art, 0, 48)
@@ -618,9 +621,9 @@ describe('enhanced workspace browser', () => {
     expect(props.startSession).not.toHaveBeenCalled()
   })
 
-  it('guards folder drops: a cycle into its own descendant fails non-fatally and the tree stays', () => {
+  it('guards folder drops: a cycle into its own descendant fails non-fatally and the tree stays', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    renderBrowser()
+    await renderBrowser()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
     const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
     act(() => { instance.actions.createFolder(alpha, 'beta') })
@@ -650,8 +653,8 @@ describe('search: in-place filter of the original dirs list', () => {
   /** The region's section blocks (recents + all), in render order. */
   const sections = (): HTMLElement[] => [...container.querySelectorAll('section')]
 
-  it('dir-level match: the tree filters in place, the recency section hides, and clearing restores everything', () => {
-    const props = renderBrowser()
+  it('dir-level match: the tree filters in place, the recency section hides, and clearing restores everything', async () => {
+    const props = await renderBrowser()
     const input = searchInput()
     expect(input.placeholder).toBe(zh.searchPlaceholder)
     expect(sections()).toHaveLength(2) // recents + all (seeded workspaces are recent by creation)
@@ -671,8 +674,8 @@ describe('search: in-place filter of the original dirs list', () => {
     expect(treeRowByText('文档')).toBeDefined()
   })
 
-  it('session-level match keeps the owning dir visible, and the row still expands to its sessions', () => {
-    renderBrowser()
+  it('session-level match keeps the owning dir visible, and the row still expands to its sessions', async () => {
+    await renderBrowser()
     typeText(searchInput(), '构图')
     expect(treeRowByText('绘画收集'), 'the dir holding the matching session stays').toBeDefined()
     expect(treeRowByText('文档'), 'non-matching dirs hide').toBeUndefined()
@@ -683,8 +686,8 @@ describe('search: in-place filter of the original dirs list', () => {
     expect(treeRowByText('绘画收集')!.getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('a match inside a subfolder keeps the folder path and opens it', () => {
-    renderBrowser()
+  it('a match inside a subfolder keeps the folder path and opens it', async () => {
+    await renderBrowser()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '产品组') })
     const team = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
     act(() => { instance.actions.moveWorkspaceIn(W('w-art'), team) })
@@ -697,15 +700,15 @@ describe('search: in-place filter of the original dirs list', () => {
     expect(sessionRowByText('README 整理'), 'the sibling dir‘s sessions are gone too').toBeUndefined()
   })
 
-  it('a query matching nothing shows the no-match hint instead of a blank area', () => {
-    renderBrowser()
+  it('a query matching nothing shows the no-match hint instead of a blank area', async () => {
+    await renderBrowser()
     typeText(searchInput(), '不存在的关键词')
     expect(container.querySelector('[class*="searchStatus"]')?.textContent).toContain(zh.searchNoMatches)
     expect(container.querySelectorAll('[role="treeitem"]')).toHaveLength(0)
   })
 
-  it('flat mode filters the session rows by title', () => {
-    renderBrowser()
+  it('flat mode filters the session rows by title', async () => {
+    await renderBrowser()
     act(() => { instance.actions.setGroupBy('flat') })
     typeText(searchInput(), '构图')
     expect(sessionRowByText('构图笔记')).toBeDefined()
@@ -717,7 +720,7 @@ describe('search: in-place filter of the original dirs list', () => {
 })
 
 describe('indent guides (better-sidebar FileTree parity)', () => {
-  it('paints one 1px stroke per ancestor-folder column, a corner on expanded folder rows, and the bright 2px hover stroke', () => {
+  it('paints one 1px stroke per ancestor-folder column, a corner on expanded folder rows, and the bright 2px hover stroke', async () => {
     // No ancestors → no guide layers at all.
     expect(guideBackground(0, false)).toEqual({})
     expect(guideBackground(0, true)).toEqual({})
@@ -749,8 +752,8 @@ describe('indent guides (better-sidebar FileTree parity)', () => {
     expect(highlighted.backgroundImage).not.toContain('transparent 17px')
   })
 
-  it('quick-collapse from any descendant row: hovering a band lights the ancestor line, clicking folds the folder', () => {
-    renderBrowser()
+  it('quick-collapse from any descendant row: hovering a band lights the ancestor line, clicking folds the folder', async () => {
+    await renderBrowser()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
     const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
     act(() => { instance.actions.createFolder(alpha, 'beta') })
@@ -808,8 +811,8 @@ describe('indent guides (better-sidebar FileTree parity)', () => {
     expect(treeRowByText('beta')).toBeUndefined()
   })
 
-  it('hangs session rows off their workspace column: aligned strokes through the folder levels, hover lights the whole line, and the deepest band collapses the session list', () => {
-    renderBrowser()
+  it('hangs session rows off their workspace column: aligned strokes through the folder levels, hover lights the whole line, and the deepest band collapses the session list', async () => {
+    await renderBrowser()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
     const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
     act(() => { instance.actions.moveWorkspaceIn(W('w-art'), alpha) })
@@ -863,7 +866,7 @@ describe('durable envelope persistence', () => {
   it('restores the saved directory tree when the store is pristine, then saves it back', async () => {
     const persistence = defaultPersistence()
     vi.mocked(persistence.load).mockResolvedValue(envelopeFor('团队'))
-    renderBrowser(persistence)
+    await renderBrowser(persistence)
     await act(async () => {}) // flush the load promise
     expect(persistence.load).toHaveBeenCalledTimes(1)
     expect(treeRowByText('团队'), 'the folder row restores').toBeDefined()
@@ -888,12 +891,112 @@ describe('durable envelope persistence', () => {
       load: vi.fn(() => new Promise<EnhancedWorkspaceState | null>(resolved => { resolveLoad = resolved })),
       save: vi.fn(async () => undefined),
     }
-    renderBrowser(persistence)
+    await renderBrowser(persistence)
     // The session creates a folder before the durable envelope lands.
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '会话组') })
     await act(async () => { resolveLoad(envelopeFor('团队')) })
     expect(treeRowByText('会话组')).toBeDefined()
     expect(treeRowByText('团队'), 'the stale envelope stays out').toBeUndefined()
+    await act(async () => { await sleep(400) })
+    expect(persistence.save).not.toHaveBeenCalled()
+  })
+
+  it.each(['load-first', 'baseline-first'])('preserves folder membership across refresh when %s', async arrival => {
+    workspacesState = { ...WORKSPACES_STATE, baselinesReady: false, items: [] }
+    let resolveLoad!: (value: EnhancedWorkspaceState | null) => void
+    const persistence = {
+      load: vi.fn(() => new Promise<EnhancedWorkspaceState | null>(resolve => { resolveLoad = resolve })),
+      save: vi.fn(async () => undefined),
+    }
+    const envelope = envelopeFor('团队')
+    const team = envelope.folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const props = await renderBrowser(persistence)
+    const baseline = async (): Promise<void> => {
+      workspacesState = WORKSPACES_STATE
+      await act(async () => { root.render(<EnhancedWorkspaceBrowser {...props} />) })
+    }
+    if (arrival === 'load-first') await act(async () => { resolveLoad(envelope) })
+    else await baseline()
+    await act(async () => { await sleep(400) })
+    expect(instance.getSnapshot().folders[ROOT_FOLDER_ID]!.workspaceIds).toEqual([])
+    expect(persistence.save).not.toHaveBeenCalled()
+    expect(props.insertWorkspaceBefore).not.toHaveBeenCalled()
+    if (arrival === 'load-first') await baseline()
+    else await act(async () => { resolveLoad(envelope) })
+    expect(instance.getSnapshot().folders[team]!.workspaceIds).toEqual([W('w-art')])
+    expect(instance.getSnapshot().folders[ROOT_FOLDER_ID]!.workspaceIds).toEqual([W('w-docs')])
+    await act(async () => { await sleep(400) })
+    expect(persistence.load).toHaveBeenCalledTimes(1)
+    expect(persistence.save).toHaveBeenLastCalledWith(expect.objectContaining({
+      folders: expect.objectContaining({ [team]: expect.objectContaining({ workspaceIds: [W('w-art')] }) }),
+    }))
+  })
+
+  it('keeps writes and host reconciliation disabled after load fails, even after edits', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const persistence = {
+      load: vi.fn(async () => { throw new Error('RPC unavailable') }),
+      save: vi.fn(async () => undefined),
+    }
+    const props = await renderBrowser(persistence)
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '本地目录') })
+    await act(async () => { await sleep(400) })
+    expect(persistence.save).not.toHaveBeenCalled()
+    expect(props.insertWorkspaceBefore).not.toHaveBeenCalled()
+    expect(instance.getSnapshot().folders[ROOT_FOLDER_ID]!.workspaceIds).toEqual([])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('writes disabled'), expect.any(Error))
+    warn.mockRestore()
+  })
+
+  it('restores once under StrictMode effect replay', async () => {
+    const saved = envelopeFor('团队')
+    const team = saved.folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const persistence = { load: vi.fn(async () => saved), save: vi.fn(async () => undefined) }
+    await renderBrowser(persistence, true)
+    expect(persistence.load).toHaveBeenCalledTimes(1)
+    expect(instance.getSnapshot().folders[team]!.workspaceIds).toEqual([W('w-art')])
+    await act(async () => { await sleep(400) })
+    expect(persistence.save).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an already hydrated store writable after the sidebar remounts', async () => {
+    const saved = envelopeFor('团队')
+    const team = saved.folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const persistence = { load: vi.fn(async () => saved), save: vi.fn(async () => undefined) }
+    const props = await renderBrowser(persistence)
+    act(() => { root.render(null) })
+    await act(async () => { root.render(<EnhancedWorkspaceBrowser {...props} />) })
+    act(() => { instance.actions.renameFolder(team, '重命名') })
+    await act(async () => { await sleep(400) })
+    expect(persistence.load).toHaveBeenCalledTimes(1)
+    expect(persistence.save).toHaveBeenLastCalledWith(expect.objectContaining({
+      folders: expect.objectContaining({ [team]: expect.objectContaining({ name: '重命名', workspaceIds: [W('w-art')] }) }),
+    }))
+  })
+
+  it('ignores a load that settles after the browser unmounts', async () => {
+    let resolveLoad!: (value: EnhancedWorkspaceState | null) => void
+    const persistence = {
+      load: vi.fn(() => new Promise<EnhancedWorkspaceState | null>(resolve => { resolveLoad = resolve })),
+      save: vi.fn(async () => undefined),
+    }
+    await renderBrowser(persistence)
+    const initial = instance.getSnapshot()
+    act(() => { root.render(null) })
+    await act(async () => { resolveLoad(envelopeFor('团队')); await sleep(400) })
+    expect(instance.getSnapshot()).toBe(initial)
+    expect(persistence.save).not.toHaveBeenCalled()
+  })
+
+  it('uses a confirmed empty baseline to prune genuinely deleted workspaces', async () => {
+    workspacesState = { ...WORKSPACES_STATE, items: [] }
+    const envelope = envelopeFor('团队')
+    const team = envelope.folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const persistence = { load: vi.fn(async () => envelope), save: vi.fn(async () => undefined) }
+    await renderBrowser(persistence)
+    expect(instance.getSnapshot().folders[team]!.workspaceIds).toEqual([])
+    await act(async () => { await sleep(400) })
+    expect(persistence.save).toHaveBeenCalledTimes(1)
   })
 
   it('holds writes until the first load settles, then writes the tree', async () => {
@@ -902,7 +1005,7 @@ describe('durable envelope persistence', () => {
       load: vi.fn(() => new Promise<EnhancedWorkspaceState | null>(resolved => { resolveLoad = resolved })),
       save: vi.fn(async () => undefined),
     }
-    renderBrowser(persistence)
+    await renderBrowser(persistence)
     // No durable value yet: however long we wait, nothing is written.
     await act(async () => { await sleep(400) })
     expect(persistence.save).not.toHaveBeenCalled()

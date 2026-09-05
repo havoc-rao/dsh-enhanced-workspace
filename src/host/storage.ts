@@ -19,7 +19,7 @@
  * so the persisted shape is re-declared here and coupled to
  * `EnhancedWorkspaceState` by construction. Every function is pure except
  * the two file functions; validation is strict so a hand-edited or corrupt
- * file can never poison the browser (a rejected file is simply dropped).
+ * file can never poison the browser (a rejected file remains untouched).
  * @module dsh-enhanced-workspace/host/storage
  */
 
@@ -198,12 +198,11 @@ export function envelopeFilePath(dshHome: string): string {
 }
 
 /**
- * Read and validate the envelope file. A missing file, an unreadable file,
- * or a file whose content fails validation all read as `null` (the caller
- * treats null as "nothing durable yet"); any other I/O error propagates so
- * the RPC handler can report it.
+ * Read and validate the envelope file. Only ENOENT means empty storage.
+ * Corruption and I/O failures propagate to the RPC error branch so a client
+ * cannot treat an unreadable existing envelope as permission to replace it.
  * @param filePath - absolute envelope file path.
- * @returns the validated envelope, or null when nothing usable is stored.
+ * @returns the validated envelope, or null when the file does not exist.
  */
 export async function readEnvelopeFile(filePath: string): Promise<PersistedEnvelope | null> {
   let raw: string
@@ -213,13 +212,9 @@ export async function readEnvelopeFile(filePath: string): Promise<PersistedEnvel
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw error
   }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    return null
-  }
-  return validateEnvelope(parsed) ? parsed : null
+  const parsed: unknown = JSON.parse(raw)
+  if (!validateEnvelope(parsed)) throw new TypeError('invalid persisted workspace envelope')
+  return parsed
 }
 
 /**

@@ -81,3 +81,7 @@ pnpm test:mount          # 挂载冒烟：真实 DSH 无头渲染（需 PATH 上
   localStorage 仅作同源兜底。宿主与客户端共用 `src/shared/persistence.ts`
   的通道字面量防漂移；改信封结构需同步 `src/host/storage.ts` 的
   `validateEnvelope` 与 `src/client/model.ts` 的 `isPersistedViewState`。
+- 恢复时序：Host load 成功且 `baselinesReady` 后才用最新工作区基线恢复；
+  此前禁止 adopt / prune、Host 顺序同步和 save。load 失败（含损坏信封）
+  禁止本次挂载写盘；只有明确无文件才视为空存储。localStorage 仅在 Host
+  确认无信封时参与迁移，不能用来掩盖 Host 读取失败。

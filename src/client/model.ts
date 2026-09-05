@@ -580,8 +580,8 @@ export function isPersistedViewState(value: unknown): value is PersistedViewStat
  * then prune every dead workspace id from the workspace-keyed maps exactly
  * like the store's `retainLiveKeys` action does. Expansion keys of folders
  * the stored tree does not hold are dropped as well. Ordering converges
- * regardless of when this runs relative to the browser's own baseline
- * effect: both paths only add live ids and prune dead ones.
+ * once the Host baseline is ready: callers must never pass a loading or
+ * stale baseline here, because an empty list authoritatively prunes all ids.
  * @param envelope - the persisted envelope (validated by
  *   {@link isPersistedViewState}; anything else throws `TypeError`).
  * @param liveWorkspaceIds - workspaces the Host baseline lists.
