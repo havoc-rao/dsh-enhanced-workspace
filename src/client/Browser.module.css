@@ -452,6 +452,10 @@
   align-items: center;
   justify-content: space-between;
   background: var(--dsw-specific-sidebar-fill);
+  /* Breathing room under the title before the first row pill: the sticky
+     band carries the same fill, so extending it reads as the section's own
+     padding rather than a gap a hover fill could swallow. */
+  padding-bottom: 4px;
 }
 
 /* Dialog seats (input / confirm / move-to). */
