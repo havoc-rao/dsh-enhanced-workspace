@@ -141,10 +141,16 @@
   gap: 6px;
   width: 100%;
   box-sizing: border-box;
-  /* Item radius in the sidebar's new-session pill style (SidebarRoot
-     .newSession: 12px) — hover/selection fills and the indent-guide
-     background layers clip to the rounded row. */
-  border-radius: 12px;
+  /* Unified tree fillet: folder/workspace/session rows share one 8px
+     radius (folder rows no longer follow the sidebar's 12px new-session
+     pill — folder hover/current/drop corners are synced to the workspace
+     row's regular hover). The row's regular hover fill, the
+     current-session wash, the drag-hover indicators, and the indent-guide
+     background layers all clip to this same radius (the wash and drop
+     classes read --dsw-row-radius), so no row state ever shows a fillet
+     that differs from the regular hover's. */
+  --dsw-row-radius: 8px;
+  border-radius: var(--dsw-row-radius);
   border: none;
   background: transparent;
   color: inherit;
@@ -160,14 +166,6 @@
   padding: 3px 0 3px 12px;
   /* relative: anchors the clickable indent-guide bands (.guideHit) to the row. */
   position: relative;
-}
-
-/* Workspace and session rows use a tighter corner than the shared 12px
-   pill radius above — they're the widest entries in the tree, so their
-   hover/selection fill reads better with a smaller fillet. */
-.workspaceRow,
-.sessionRow {
-  border-radius: 8px;
 }
 
 .folderRow:hover,
@@ -188,6 +186,9 @@
 .folderRowCurrent,
 .workspaceRowCurrent,
 .sessionRowCurrent {
+  /* Same pill as the row's regular hover fill (--dsw-row-radius), so the
+     current-session wash never changes the row's corner size. */
+  border-radius: var(--dsw-row-radius);
   background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, var(--ds-color-accent, #4c8dff)) 14%, transparent);
 }
 
@@ -290,7 +291,15 @@
 }
 
 /* Drag & drop indicators: a top/bottom accent line for anchor inserts, a
- * selection fill for folder targets ("move into"). */
+ * selection fill for folder targets ("move into"). All three keep the
+ * row's own pill radius (--dsw-row-radius — the same corner the regular
+ * hover fill draws), so a drop-target row never changes fillet. */
+.dropBefore,
+.dropAfter,
+.dropOn {
+  border-radius: var(--dsw-row-radius);
+}
+
 .dropBefore {
   box-shadow: inset 0 2px 0 0 var(--ds-color-accent, #4c8dff);
 }

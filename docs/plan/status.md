@@ -49,6 +49,10 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   - 会话排序策略：`orderBy` updated（活动倒序，默认）/ manual（账号顺序）；
   - 拖拽状态机（`drag.ts` 纯函数 + HTML5 DnD 接线：目录行 = 移入末尾、
     行间 = 锚点插入、自拖 noop、环/深度守卫非致命）；
+  - 圆角同步：行的 current-session wash 与拖拽指示器（dropBefore/After/On）
+    统一读取行级 `--dsw-row-radius`（全树统一 8px，folder 行同步为
+    workspace·session 常规 hover 的圆角），任何状态不改变行的 fillet
+    （Browser.module.css）；
   - 状态复刻（内置 parity）：会话行 `StateDot`（running 像素追逐 loading
     动画 / pending warning / completed done / 空闲与 blank 无点）、dir 级
     loading 同步（`expanded && containsCurrent` 的目录/工作区/最近行图标
