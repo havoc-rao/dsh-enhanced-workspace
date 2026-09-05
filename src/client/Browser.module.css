@@ -503,3 +503,58 @@
   flex: none;
   color: var(--ds-color-accent, inherit);
 }
+
+/* Parent workspace destination for a workspace dragged over a folder top edge. */
+.workspaceDropRegion {
+  --workspace-drop-accent: var(--ds-color-accent, #4c8dff);
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--workspace-drop-accent) 7%, transparent),
+    color-mix(in srgb, var(--workspace-drop-accent) 3%, transparent)
+  );
+  background-repeat: no-repeat;
+  border-radius: var(--dsw-row-radius, 8px);
+}
+
+.workspaceAppendHint {
+  position: relative;
+  padding: 10px 8px 8px;
+  color: var(--workspace-drop-accent);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+/* The endpoint marks the insertion depth; the stroke follows the row width. */
+.workspaceAppendHint::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--workspace-drop-accent);
+}
+
+.workspaceAppendHint::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--workspace-drop-accent), color-mix(in srgb, var(--workspace-drop-accent) 45%, transparent));
+}
+
+.workspaceAppendLabel {
+  display: inline-block;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--workspace-drop-accent) 18%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--workspace-drop-accent) 6%, transparent);
+}

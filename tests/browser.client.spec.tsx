@@ -597,13 +597,66 @@ describe('enhanced workspace browser', () => {
 
     dragStart(sourceRow)
     dragOver(folderRow, 8) // above the mid band → 'before' (the gap above the folder row)
-    expect(folderRow.matches('[class*="dropBefore"]'), 'the top edge shows the outer-anchor line').toBe(true)
+    expect(folderRow.matches('[class*="dropBefore"]')).toBe(false)
+    const hint = container.querySelector('[role="status"]')!
+    expect(hint.textContent).toBe('移至顶层工作区末尾')
+    expect(hint.parentElement!.contains(treeRowByText('文档')!)).toBe(true)
+    expect(hint.parentElement!.contains(folderRow)).toBe(false)
+    expect(hint.parentElement!.lastElementChild).toBe(hint)
     dropOn(folderRow, 8)
 
     // The workspace lands in the folder's PARENT account (外层), not inside.
     expect(new Set(instance.getSnapshot().folders[ROOT_FOLDER_ID]!.workspaceIds))
       .toEqual(new Set([W('w-art'), W('w-docs')]))
     expect(instance.getSnapshot().folders[team]?.workspaceIds, 'the folder itself stays empty').toEqual([])
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
+
+  it.each([false, true])('previews the parent workspace append position (empty: %s)', async (empty) => {
+    await renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '父目录') })
+    const parent = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    act(() => {
+      instance.actions.createFolder(parent, '子目录')
+      instance.actions.setFolderExpanded(parent, true)
+      if (!empty) instance.actions.moveWorkspaceIn(W('w-docs'), parent)
+    })
+    const childRow = treeRowByText('子目录')!
+    const source = treeRowByText('绘画收集')!
+    stubRect(childRow, 0, 48)
+    dragStart(source)
+    dragOver(childRow, 8)
+    expect(childRow.matches('[class*="dropBefore"]')).toBe(false)
+    const hint = container.querySelector('[role="status"]')!
+    expect(hint.textContent).toBe('移至『父目录』的工作区末尾')
+    const region = hint.parentElement!
+    expect(region.contains(childRow)).toBe(false)
+    expect(region.lastElementChild).toBe(hint)
+    expect(region.contains(treeRowByText('文档')!)).toBe(!empty)
+    dropOn(childRow, 8)
+    expect(instance.getSnapshot().folders[parent]!.workspaceIds)
+      .toEqual(empty ? [W('w-art')] : [W('w-docs'), W('w-art')])
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
+
+  it('clears the append preview on drag end and keeps folder reorder lines', async () => {
+    await renderBrowser()
+    act(() => {
+      instance.actions.createFolder(ROOT_FOLDER_ID, '甲目录')
+      instance.actions.createFolder(ROOT_FOLDER_ID, '乙目录')
+    })
+    const target = treeRowByText('乙目录')!
+    const source = treeRowByText('绘画收集')!
+    stubRect(target, 0, 48)
+    dragStart(source)
+    dragOver(target, 8)
+    expect(container.querySelector('[role="status"]')).not.toBeNull()
+    act(() => { source.dispatchEvent(dragEvent('dragend', 0)) })
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    dragStart(treeRowByText('甲目录')!)
+    dragOver(target, 8)
+    expect(target.matches('[class*="dropBefore"]')).toBe(true)
+    expect(container.querySelector('[role="status"]')).toBeNull()
   })
 
   it('drags a workspace before another workspace row: anchored insert inside the same folder', async () => {

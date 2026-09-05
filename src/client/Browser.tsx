@@ -855,6 +855,7 @@ interface RowCallbacks {
 /** Drag & drop seat shared by every workspace and folder row. */
 interface DragSeat {
   dragSource: DragSource | null
+  appendWorkspaceFolderId: FolderId | null
   onDragStart: (source: DragSource) => void
   onDragOver: (target: DropTarget) => void
   onDragLeave: (kind: DropTarget['kind'], id: string) => void
@@ -948,6 +949,9 @@ function GroupedView(props: {
   }
   const drag: DragSeat = {
     dragSource,
+    appendWorkspaceFolderId: dragSource?.kind === 'workspace' && dropTarget?.kind === 'folder' && dropTarget.zone === 'before'
+      ? state.folders[dropTarget.id as FolderId]?.parentFolderId ?? null
+      : null,
     onDragStart: source => setDragSource(source),
     onDragOver: target => setDropTarget(current =>
       current !== null && current.kind === target.kind && current.id === target.id && current.zone === target.zone
@@ -960,10 +964,12 @@ function GroupedView(props: {
       setDropTarget(null)
     },
     onDrop: handleRowDrop,
-    dropZoneOf: (kind, id) =>
-      dragSource !== null && dropTarget !== null && dropTarget.kind === kind && dropTarget.id === id
-        ? dropTarget.zone
-        : undefined,
+    dropZoneOf: (kind, id) => {
+      if (dragSource === null || dropTarget === null || dropTarget.kind !== kind || dropTarget.id !== id) return undefined
+      // Workspace top-edge drops append to the parent; only that region gets a preview.
+      if (kind === 'folder' && dragSource.kind === 'workspace' && dropTarget.zone === 'before') return undefined
+      return dropTarget.zone
+    },
   }
   /** The indent-guide band under the pointer (null = none): while set, the
    *  whole vertical line of the hovered ancestor lights up across its
@@ -1074,19 +1080,25 @@ function GroupedView(props: {
                 guide={guide}
               />
             ))}
-            {props.topLevel.map(leaf => (
-              <LeafRow
-                key={leaf.key}
-                leaf={leaf}
-                ancestors={[]}
-                callbacks={callbacks}
-                sessionSeat={sessionSeat}
-                sessionsOverflow={sessionsOverflow}
-                onToggleOverflow={toggleOverflow}
-                drag={drag}
-                guide={guide}
-              />
-            ))}
+            <WorkspaceDropRegion
+              active={drag.appendWorkspaceFolderId === ROOT_FOLDER_ID}
+              label={t('dropWorkspaceTopLevelEnd')}
+              depth={0}
+            >
+              {props.topLevel.map(leaf => (
+                <LeafRow
+                  key={leaf.key}
+                  leaf={leaf}
+                  ancestors={[]}
+                  callbacks={callbacks}
+                  sessionSeat={sessionSeat}
+                  sessionsOverflow={sessionsOverflow}
+                  onToggleOverflow={toggleOverflow}
+                  drag={drag}
+                  guide={guide}
+                />
+              ))}
+            </WorkspaceDropRegion>
             {props.ungrouped !== undefined && (
               <LeafRow
                 leaf={props.ungrouped}
@@ -1102,6 +1114,28 @@ function GroupedView(props: {
           </section>
         )
         : null}
+    </div>
+  )
+}
+
+/** Preview the actual append destination without changing row indentation. */
+function WorkspaceDropRegion(props: {
+  active: boolean
+  label: string
+  depth: number
+  children: ReactNode
+}): ReactNode {
+  return (
+    <div
+      className={props.active ? css.workspaceDropRegion : undefined}
+      style={props.active ? { backgroundPositionX: `${rowIndent(props.depth)}px` } : undefined}
+    >
+      {props.children}
+      {props.active && (
+        <div role="status" className={css.workspaceAppendHint} style={{ marginLeft: `${rowIndent(props.depth)}px` }}>
+          <span className={css.workspaceAppendLabel}>{props.label}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -1239,19 +1273,25 @@ function FolderRow(props: {
                 guide={props.guide}
               />
             ))}
-            {node.workspaceGroups.map(leaf => (
-              <LeafRow
-                key={leaf.key}
-                leaf={leaf}
-                ancestors={[...props.ancestors, node.folderId]}
-                callbacks={callbacks}
-                sessionSeat={props.sessionSeat}
-                sessionsOverflow={props.sessionsOverflow}
-                onToggleOverflow={props.onToggleOverflow}
-                drag={props.drag}
-                guide={props.guide}
-              />
-            ))}
+            <WorkspaceDropRegion
+              active={props.drag.appendWorkspaceFolderId === node.folderId}
+              label={callbacks.t('dropWorkspaceFolderEnd', { name: node.name })}
+              depth={props.ancestors.length + 1}
+            >
+              {node.workspaceGroups.map(leaf => (
+                <LeafRow
+                  key={leaf.key}
+                  leaf={leaf}
+                  ancestors={[...props.ancestors, node.folderId]}
+                  callbacks={callbacks}
+                  sessionSeat={props.sessionSeat}
+                  sessionsOverflow={props.sessionsOverflow}
+                  onToggleOverflow={props.onToggleOverflow}
+                  drag={props.drag}
+                  guide={props.guide}
+                />
+              ))}
+            </WorkspaceDropRegion>
           </div>
         )
         : null}
