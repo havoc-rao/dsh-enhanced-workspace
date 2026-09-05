@@ -23,6 +23,14 @@ Harness 本体**：以 `priority: -1` 遮蔽 `sidebar.workspaces` 槽位，替�
   文件行点击标记观察）。复用 `dsh-client-ui-primitives` 的 `HoverCard`
   原语（右侧定位 / 悬停驻留 / 复制反馈），内容与纯派生函数从内置 rows /
   tree 复刻。
+- **Cmd/Ctrl+N 新建会话快捷键**：与工作区行内 `+` 按钮同效——命中
+  Cmd/Ctrl+N（无 Shift/Alt 修饰、忽略自动重复）时**在当前工作区新建会话**：
+  目标优先取**当前会话所在工作区**、其次**最近使用工作区**（与内置
+  `startSession` 的回退链一致）；命中即展开该工作区的会话组并显式定向
+  `startSession(workspaceId)`（组件 spec 覆盖三态目标与噪声键不触发）；
+  没有任何工作区时退化为无参 `startSession()`（内置 New Session 视图）。
+  监听器挂在浏览器区根组件（mount 一次注册 / 卸载清理），因此仅在侧边栏
+  展开（浏览器区挂载）期间生效；收成 rail 时由 shell 的 rail 新建按钮兜底。
 - **持久化**：目录树 / 展开状态 / 最近触摸 / 视图字段全部在插件 store
   （localStorage `dsh.enhanced-workspace.v1`）；Host 平铺顺序经
   `ctx.workspaces.insertBefore` 最小移动集 reconcile
@@ -61,10 +69,8 @@ pnpm build && pnpm pack && pnpm test:mount
 - 目录与工作区的**拖拽已实现**（目录行 = 移入末尾；工作区行间 = 锚点插入，
   跨目录亦可）；**会话行的拖拽排序（手动顺序编辑）尚未实现**（数据面与
   `insertSessionBefore` 已就绪），留待后续迭代。
-- **Cmd/Ctrl+N 新建会话快捷键**在浏览器区挂载期间生效（侧边栏展开态；
-  收成 rail 时由 shell 的 rail 新建按钮兜底）。按下时优先当前会话所在
-  工作区、其次最近工作区，与工作区行内 + 按钮同效（展开会话组 + 显式
-  目标 `startSession`）；无任何工作区时退化为内置 New Session 视图。
+- **Cmd/Ctrl+N 快捷键**只在浏览器区挂载期间生效（侧边栏展开态；收成
+  rail 时由 shell 的 rail 新建按钮兜底）——机制描述见上方功能列表。
 - 挂载冒烟 `pnpm test:mount` 需要 PATH 上有 `dsh` CLI 且已
   `pnpm exec playwright install chromium`（脚本使用 scratch DSH_HOME，
   不触碰真实 `~/.dsh`）。
