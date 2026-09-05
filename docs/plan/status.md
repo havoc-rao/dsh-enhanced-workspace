@@ -78,8 +78,16 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   `scripts/e2e-mount.sh` + `playwright.config.ts` + `tests/e2e/mount.e2e.ts`
   （scratch DSH_HOME + 官方 CLI 挂载 + 无头渲染断言，需本机 `dsh` +
   chromium）、`.agents/notes/enhanced-workspace.md`、README/设计文档同步。
-- **质量门**：`pnpm typecheck` 全绿；`pnpm test` 151/151（model 68 + drag 10 +
-  store 10 + browser 37 + host-storage 19 + persistence 7）；`pnpm build`
+- **交互补充：Cmd/Ctrl+N 新建会话快捷键**：与工作区行内 + 按钮同效——
+  命中键（meta/ctrl + N、无修饰键、非自动重复）时，取当前会话所在工作区
+  （无则最近工作区，再无可回退内置 New Session 视图），展开该会话组并
+  `startSession(workspaceId)`。监听器挂浏览器根组件（`window` keydown，
+  ref 持最新闭包、mount 一次注册/卸载清理）；作用域即浏览器区挂载期
+  （侧边栏收成 rail 时由 shell 的 rail 新建按钮兜底）。组件 spec 1 例
+  覆盖：命中三态目标（当前会话工作区 → 最近工作区 → 无参），噪声键
+  （裸 n / Cmd+Shift+N / Cmd+Alt+N / Cmd+J / repeat）不触发。
+- **质量门**：`pnpm typecheck` 全绿；`pnpm test` 152/152（model 68 + drag 10 +
+  store 10 + browser 38 + host-storage 19 + persistence 7）；`pnpm build`
   双通道通过（purity gate）；`pnpm test:mount` 实测通过（scratch DSH_HOME +
   官方 CLI 挂载 + 无头渲染，含 hover 卡片断言）。
 

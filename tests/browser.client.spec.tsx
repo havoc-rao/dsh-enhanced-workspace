@@ -74,7 +74,7 @@ const WORKSPACES_STATE = {
   state: 'ready',
   phase: 'ready',
   baselinesReady: true,
-  recentWorkspaceId: undefined,
+  recentWorkspaceId: undefined as WorkspaceId | undefined,
 }
 
 /**
@@ -289,6 +289,70 @@ describe('enhanced workspace browser', () => {
     click(plus!)
     expect(props.startSession).toHaveBeenCalledWith('w-art')
     expect(rowByText('画布草图')).toBeDefined()
+  })
+
+  it('Cmd/Ctrl+N is the plus-button effect, keyboarded: new session in the current workspace (then the recent workspace, then the plain New Session view) and the group opens', async () => {
+    sessionsState = { ...SESSIONS_STATE, current: 's2' as SessionId } as typeof SESSIONS_STATE
+    const props = await renderBrowser()
+
+    // s2 属「绘画收集」；先收起该组再按 Cmd+N —— 与行内 + 按钮完全同效：
+    // 会话组被展开、startSession 显式带上当前会话所在的工作区。
+    click(treeRowByText('绘画收集')!)
+    expect(rowByText('画布草图')).toBeUndefined()
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true, bubbles: true }))
+    })
+    expect(props.startSession).toHaveBeenCalledWith('w-art')
+    expect(rowByText('画布草图'), 'Cmd+N opens the workspace group like the plus button').toBeDefined()
+
+    // 没有当前会话时落到「最近工作区」（Ctrl+N 同义）——目标是它的行，
+    // 同样展开其会话组。
+    vi.mocked(props.startSession).mockClear()
+    act(() => {
+      sessionsState = { ...SESSIONS_STATE, current: undefined }
+      workspacesState = {
+        ...WORKSPACES_STATE,
+        recentWorkspaceId: W('w-docs'),
+      } as typeof WORKSPACES_STATE
+      root.render(<EnhancedWorkspaceBrowser {...props} />)
+    })
+    expect(rowByText('README 整理')).toBeUndefined()
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true }))
+    })
+    expect(props.startSession).toHaveBeenCalledWith('w-docs')
+    expect(rowByText('README 整理'), 'the recent workspace group opens too').toBeDefined()
+
+    // 既无当前会话也无最近工作区：无参 startSession（内置 New Session 视图）。
+    vi.mocked(props.startSession).mockClear()
+    act(() => {
+      sessionsState = { ...SESSIONS_STATE, current: undefined }
+      workspacesState = {
+        ...WORKSPACES_STATE,
+        recentWorkspaceId: undefined,
+        items: [],
+      } as typeof WORKSPACES_STATE
+      root.render(<EnhancedWorkspaceBrowser {...props} />)
+    })
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true, bubbles: true }))
+    })
+    expect(props.startSession).toHaveBeenCalledWith()
+
+    // 变体与噪声键不触发：裸 n、Cmd+Shift+N、Cmd+Alt+N、Cmd+J、按键重复。
+    vi.mocked(props.startSession).mockClear()
+    for (const init of [
+      { key: 'n' },
+      { key: 'n', metaKey: true, shiftKey: true },
+      { key: 'n', metaKey: true, altKey: true },
+      { key: 'j', metaKey: true },
+    ]) {
+      act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true })) })
+    }
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true, repeat: true, bubbles: true }))
+    })
+    expect(props.startSession).not.toHaveBeenCalled()
   })
 
   it('wraps workspaces into multi-level directories: root folder, subfolder, and a move into the folder', async () => {

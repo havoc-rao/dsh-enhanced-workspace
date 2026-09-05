@@ -61,6 +61,10 @@ pnpm build && pnpm pack && pnpm test:mount
 - 目录与工作区的**拖拽已实现**（目录行 = 移入末尾；工作区行间 = 锚点插入，
   跨目录亦可）；**会话行的拖拽排序（手动顺序编辑）尚未实现**（数据面与
   `insertSessionBefore` 已就绪），留待后续迭代。
+- **Cmd/Ctrl+N 新建会话快捷键**在浏览器区挂载期间生效（侧边栏展开态；
+  收成 rail 时由 shell 的 rail 新建按钮兜底）。按下时优先当前会话所在
+  工作区、其次最近工作区，与工作区行内 + 按钮同效（展开会话组 + 显式
+  目标 `startSession`）；无任何工作区时退化为内置 New Session 视图。
 - 挂载冒烟 `pnpm test:mount` 需要 PATH 上有 `dsh` CLI 且已
   `pnpm exec playwright install chromium`（脚本使用 scratch DSH_HOME，
   不触碰真实 `~/.dsh`）。

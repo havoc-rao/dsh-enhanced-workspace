@@ -446,6 +446,41 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     actions.setGroupExpanded(currentGroup, true)
   }, [currentGroup, state.groupExpansion, actions])
 
+  // Cmd/Ctrl+N — New Session in the CURRENT workspace: the row plus-button
+  // effect (expand the workspace's session group, then start) applied to the
+  // workspace of the session in focus, or the recent workspace without one —
+  // the same fallback chain the runtime's startSession resolves. The handler
+  // rides a ref so the listener is installed exactly once per mount while
+  // every keystroke sees the latest selection (navigation re-renders never
+  // re-register it). Scope: a browser-region mechanism — it lives while this
+  // region is mounted; the shell's rail New Session button covers the
+  // collapsed-sidebar case. Unknown chords and already-handled events pass
+  // through untouched.
+  const newSessionRef = useRef<(event: KeyboardEvent) => void>(() => {})
+  newSessionRef.current = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented || event.repeat) return
+    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+    if (event.key.toLowerCase() !== 'n') return
+    event.preventDefault()
+    event.stopPropagation()
+    const currentWorkspaceId = sessions.current === undefined
+      ? undefined
+      : workspaceIdBySession.get(sessions.current)
+    const workspaceId = currentWorkspaceId ?? workspaces.recentWorkspaceId
+    if (workspaceId !== undefined) {
+      actions.setGroupExpanded(workspaceId, true)
+      startSession(workspaceId)
+    } else {
+      // No workspace anywhere: the runtime clears into the New Session view.
+      startSession()
+    }
+  }
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => { newSessionRef.current(event) }
+    window.addEventListener('keydown', onKeyDown)
+    return () => { window.removeEventListener('keydown', onKeyDown) }
+  }, [])
+
   // Content search input: while the query is non-blank the browser filters
   // the original dirs list in place (see `filterForestByQuery`), hides the
   // recency module, and restores everything on an empty query.
