@@ -37,6 +37,22 @@ import type { UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
 import { codeFinderTsdown } from '@havocrao/dsh-code-finder/tsdown'
 
+/**
+ * This repo's build intent, decided HERE — never inherited from the ambient
+ * shell. mise/dotfiles commonly export `NODE_ENV=development` globally, which
+ * used to silently flip production `pnpm build` into a dev bundle: the
+ * code-finder transform then stamped `data-locatorjs` onto every element
+ * (Fragments included, flooding React with prop warnings) and rewrote the
+ * index.tsx dev-only block into an unconditional runtime hook — and the
+ * mounted plugin's dialog confirm buttons went dead in the real app (the
+ * 2026-09 "删除不了" regression). `pnpm build` is therefore production unless
+ * `DSH_ENHANCED_WORKSPACE_DEV=1` opts into the dev build explicitly
+ * (`pnpm build:dev`); `DSH_ENHANCED_WORKSPACE_DEV=0` in the build script
+ * overrides any ambient `NODE_ENV=development` leak.
+ */
+const DEV_BUILD = process.env.DSH_ENHANCED_WORKSPACE_DEV === '1'
+const BUILD_MODE = DEV_BUILD ? 'development' : 'production'
+
 /** Node builtins must never survive into the browser module-loader factory. */
 const NODE_BUILTINS = new Set([
   ...builtinModules,
@@ -181,9 +197,9 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
     clean: false,
     external: [...CLIENT_EXTERNALS],
     define: {
-      'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
-      'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
-      'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
+      'process.env.NODE_ENV': JSON.stringify(BUILD_MODE),
+      'import.meta.env.MODE': JSON.stringify(BUILD_MODE),
+      'import.meta.env': JSON.stringify({ MODE: BUILD_MODE }),
     },
     // CJS output otherwise makes some transitive packages resolve their
     // Node entry even though this bundle runs in the browser. Keep browser
@@ -196,7 +212,7 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
     },
     // External wins for module-table entries; every other dependency inlines.
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
-    plugins: [codeFinderTsdown(), purityGatePlugin(), makeCssPlugin(pluginId)],
+    plugins: [codeFinderTsdown({ enabled: DEV_BUILD }), purityGatePlugin(), makeCssPlugin(pluginId)],
     outputOptions: {
       entryFileNames: entryFile,
       sourcemapPathTransform: browserSourcePath,

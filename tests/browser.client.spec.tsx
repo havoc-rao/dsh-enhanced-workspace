@@ -464,6 +464,33 @@ describe('enhanced workspace browser', () => {
     expect(treeRowByText('绘画收集')!.closest('[class*="folderBranch"]')).toBeNull()
   })
 
+  it('workspace delete confirm commits the host delete and closes the dialog (regression: dead confirm button)', async () => {
+    const props = await renderBrowser()
+
+    // Row menu → 删除工作区 opens the browser's confirm dialog.
+    openRowMenu('绘画收集')
+    click(menuItemByText('删除工作区')!)
+    const dialog = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)
+    expect(dialog, 'confirm dialog should open').toBeDefined()
+
+    // Confirm via the footer's danger button. Before the fix, the seat's
+    // confirm closure captured the PRE-dialog `deleteWorkspaceTarget` (null)
+    // forever, so this click silently did nothing: no host call, no busy
+    // latch, no error, dialog stayed open — the reported "删除不了" hang.
+    const confirmButton = [...dialog!.querySelectorAll('button')]
+      .find(button => button.textContent === '删除工作区')
+    expect(confirmButton, 'danger confirm button').toBeDefined()
+    click(confirmButton!)
+
+    // The host delete fires exactly once, for the row's workspace id.
+    expect(props.deleteWorkspace).toHaveBeenCalledTimes(1)
+    expect(props.deleteWorkspace).toHaveBeenCalledWith(W('w-art'))
+
+    // The resolved delete closes the dialog (microtask flush inside act).
+    await act(async () => { await Promise.resolve() })
+    expect(document.querySelector('[role="dialog"]'), 'dialog closes after the committed delete').toBeNull()
+  })
+
   it('renders recency rows as workspace-style rows: capped at five, expandable, and count-free', async () => {
     // Six dirs total — the recency section must show exactly the five most
     // recent ones; the sixth stays in the tree below the bottom border.

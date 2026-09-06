@@ -692,10 +692,21 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     }
   }
   const confirmRenameWorkspace = (workspaceId: WorkspaceId, draft: string): void => {
-    if (renameWorkspaceTarget === null || renameWorkspaceTarget.workspaceId !== workspaceId) return
-    setRenameWorkspaceTarget({ ...renameWorkspaceTarget, busy: true, error: null })
+    // The dialog seats carry the ids and the confirm closures are built at
+    // menu-click time — a guard reading this render frame's seat state would
+    // see the PRE-dialog value (null) forever after, silently swallowing the
+    // confirm. The functional updater owns the freshness check; the RPC fires
+    // unconditionally because a visible confirm button implies a live seat
+    // (same posture as the synchronous folder actions).
+    setRenameWorkspaceTarget(current => current === null || current.workspaceId !== workspaceId
+      ? current
+      : { ...current, busy: true, error: null })
     void renameWorkspace(workspaceId, draft.trim())
-      .then(() => { setRenameWorkspaceTarget(null) })
+      .then(() => {
+        setRenameWorkspaceTarget(current => current === null || current.workspaceId !== workspaceId
+          ? current
+          : null)
+      })
       .catch((error: unknown) => {
         setRenameWorkspaceTarget(current => current === null || current.workspaceId !== workspaceId
           ? current
@@ -703,10 +714,22 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
       })
   }
   const confirmDeleteWorkspace = (workspaceId: WorkspaceId): void => {
-    if (deleteWorkspaceTarget === null || deleteWorkspaceTarget.workspaceId !== workspaceId) return
-    setDeleteWorkspaceTarget({ ...deleteWorkspaceTarget, busy: true, error: null })
+    // Same frame-capture trap as renameWorkspace above: the confirmation
+    // closure lives on the seat object built before the dialog rendered, so
+    // the old `deleteWorkspaceTarget` guard returned on the pre-dialog null
+    // forever — the confirm button appeared dead (no busy, no RPC, no error).
+    // Freshness now lives in the functional updater; the delete fires
+    // unconditionally (a live dialog seat is guaranteed while the button is
+    // on screen; unknown ids are idempotent on the host side).
+    setDeleteWorkspaceTarget(current => current === null || current.workspaceId !== workspaceId
+      ? current
+      : { ...current, busy: true, error: null })
     void deleteWorkspace(workspaceId)
-      .then(() => { setDeleteWorkspaceTarget(null) })
+      .then(() => {
+        setDeleteWorkspaceTarget(current => current === null || current.workspaceId !== workspaceId
+          ? current
+          : null)
+      })
       .catch((error: unknown) => {
         setDeleteWorkspaceTarget(current => current === null || current.workspaceId !== workspaceId
           ? current
@@ -724,10 +747,19 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     }
   }
   const confirmRenameSession = (sessionId: SessionId, draft: string): void => {
-    if (renameSessionTarget === null || renameSessionTarget.sessionId !== sessionId) return
-    setRenameSessionTarget({ ...renameSessionTarget, busy: true, error: null })
+    // Frame-capture trap shared with rename/delete workspace: the seat's
+    // confirm closure predates the dialog render, so a guard on this frame's
+    // seat state would see the pre-dialog null forever. Functional updater
+    // owns freshness; the RPC fires unconditionally.
+    setRenameSessionTarget(current => current === null || current.sessionId !== sessionId
+      ? current
+      : { ...current, busy: true, error: null })
     void renameSession(sessionId, draft.trim())
-      .then(() => { setRenameSessionTarget(null) })
+      .then(() => {
+        setRenameSessionTarget(current => current === null || current.sessionId !== sessionId
+          ? current
+          : null)
+      })
       .catch((error: unknown) => {
         setRenameSessionTarget(current => current === null || current.sessionId !== sessionId
           ? current

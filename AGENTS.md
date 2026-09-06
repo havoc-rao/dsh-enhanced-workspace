@@ -53,12 +53,16 @@ pnpm test:mount          # 挂载冒烟：真实 DSH 无头渲染（需 PATH 上
 ```
 
 - **开发模式的构建节奏**：本地开发联调时，每**完全完成一个功能点**后，就用
-  `NODE_ENV=development pnpm build` 构建一次，再继续下一个功能点——不攒
-  功能点、不跳过构建。`NODE_ENV=development` 会被 tsdown 烘焙进 bundle
-  （见 `tsdown.config.ts` 的 `define`），使 `src/client/index.tsx` 中
-  dev-only 的 code-finder 定位块（Opt+Shift 悬停显示组件源码位置）随包
-  生效，方便在真实 DSH 里对照源码核对当前功能点；对外发布仍走默认
-  `pnpm build`（production）。
+  `pnpm build:dev` 构建一次，再继续下一个功能点——不攒功能点、不跳过构建。
+  dev 构建由 `DSH_ENHANCED_WORKSPACE_DEV=1` 显式开启（见 `tsdown.config.ts`
+  的 `DEV_BUILD`），使 `src/client/index.tsx` 中 dev-only 的 code-finder
+  定位块（Opt+Shift 悬停显示组件源码位置）随包生效，方便在真实 DSH 里对照
+  源码核对当前功能点；**不要**用全局 `NODE_ENV=development` 环境变量代替
+  （mise/dotfiles 常全局注入它，会让 `pnpm build` 无声变成 dev 构建——
+  code-finder 的 `data-locatorjs` 会注入每个元素并改写 dev-only 定位块为
+  无条件执行，导致 production 插件出现 React 警告风暴、对话框确认按钮失效；
+  详见 2026-09 删除回归）。对外发布一律走 `pnpm build`（production，
+  脚本内显式 `DSH_ENHANCED_WORKSPACE_DEV=0` 防环境泄漏）。
 
 ## 3. 测试姿势
 

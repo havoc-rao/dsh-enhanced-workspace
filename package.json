@@ -45,8 +45,8 @@
     }
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && tsdown",
-    "build:dev": "NODE_ENV=development tsdown",
+    "build": "DSH_ENHANCED_WORKSPACE_DEV=0 node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && DSH_ENHANCED_WORKSPACE_DEV=0 tsc -p tsconfig.build.json && DSH_ENHANCED_WORKSPACE_DEV=0 tsdown",
+    "build:dev": "DSH_ENHANCED_WORKSPACE_DEV=1 tsdown",
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit",
     "bundle": "tsdown",
