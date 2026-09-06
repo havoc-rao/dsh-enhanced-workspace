@@ -12,6 +12,7 @@
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
 import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
 import {
+  RECENT_GROUP_KEY_PREFIX,
   adoptWorkspaceIn,
   createFolderIn,
   deleteFolderIn,
@@ -47,11 +48,20 @@ type EnhancedWorkspaceActions = {
   setGroupExpanded: (draft: EnhancedWorkspaceState, key: string, expanded: boolean) => void
   setFolderExpanded: (draft: EnhancedWorkspaceState, folderId: FolderId, expanded: boolean) => void
   /**
-   * Collapse every expandable directory row: expanded folders AND workspace
-   * session groups (recency rows included) fold back to the top-level
-   * outline. The tree and the recency stamps themselves stay untouched.
+   * Collapse every expandable row of the workspace-list section (“全部”):
+   * expanded folders AND the tree/ungrouped workspace session groups fold
+   * back to the top-level outline. The recency rows keep their expansion —
+   * their `recent:`-prefixed keys are owned by {@link collapseRecents}. The
+   * tree and the recency stamps themselves stay untouched.
    */
   collapseAll: (draft: EnhancedWorkspaceState) => void
+  /**
+   * Collapse only the recency module's rows (近期项目): every
+   * `recent:`-prefixed session group folds back. Folders and tree-row
+   * expansion stay untouched — the workspace-list header owns them
+   * ({@link collapseAll}).
+   */
+  collapseRecents: (draft: EnhancedWorkspaceState) => void
   /**
    * Record a recency stamp at Date.now() — written only when a new query was
    * sent in the workspace (observed via {@link observeSessionActivity}; clicks
@@ -144,7 +154,14 @@ export function createEnhancedWorkspaceStore(): EngineStoreHandle<EnhancedWorksp
       setFolderExpanded: (draft, folderId, expanded) => { draft.folderExpansion[folderId] = expanded },
       collapseAll: draft => {
         draft.folderExpansion = {}
-        draft.groupExpansion = {}
+        for (const key of Object.keys(draft.groupExpansion)) {
+          if (!key.startsWith(RECENT_GROUP_KEY_PREFIX)) delete draft.groupExpansion[key]
+        }
+      },
+      collapseRecents: draft => {
+        for (const key of Object.keys(draft.groupExpansion)) {
+          if (key.startsWith(RECENT_GROUP_KEY_PREFIX)) delete draft.groupExpansion[key]
+        }
       },
       touchWorkspace: (draft, workspaceId) => {
         draft.recentTouchById[workspaceId] = Date.now()

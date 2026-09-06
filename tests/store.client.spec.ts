@@ -91,7 +91,7 @@ describe('enhanced workspace store', () => {
     expect(after.folders[ROOT_FOLDER_ID]).toBeDefined()
   })
 
-  it('collapses every expandable row through the action', () => {
+  it('collapses only the workspace-list rows through the all action', () => {
     const instance = createEnhancedWorkspaceStore().create()
     instance.actions.adoptWorkspace(W('w1'))
     instance.actions.createFolder(ROOT_FOLDER_ID, 'a')
@@ -101,11 +101,27 @@ describe('enhanced workspace store', () => {
     instance.actions.setGroupExpanded('recent:w1', true)
     instance.actions.collapseAll()
     const after = instance.getSnapshot()
-    // Folders and workspace session groups (recency rows included) all fold
-    // back to the top-level outline; the tree itself stays intact.
+    // The "all" section folds — folder and tree-row session groups — while
+    // the recency rows keep their expansion; the tree itself stays intact.
     expect(after.folderExpansion).toEqual({})
-    expect(after.groupExpansion).toEqual({})
+    expect(after.groupExpansion).toEqual({ 'recent:w1': true })
     expect(after.folders[ROOT_FOLDER_ID]?.folderIds).toEqual([a])
+  })
+
+  it('collapses only the recency rows through the recents action', () => {
+    const instance = createEnhancedWorkspaceStore().create()
+    instance.actions.adoptWorkspace(W('w1'))
+    instance.actions.createFolder(ROOT_FOLDER_ID, 'a')
+    const a = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    instance.actions.setFolderExpanded(a, true)
+    instance.actions.setGroupExpanded(W('w1'), true)
+    instance.actions.setGroupExpanded('recent:w1', true)
+    instance.actions.collapseRecents()
+    const after = instance.getSnapshot()
+    // Only the prefixed recency-row keys fold; the folder and the tree-row
+    // keys stay expanded.
+    expect(after.groupExpansion).toEqual({ [W('w1')]: true })
+    expect(after.folderExpansion).toEqual({ [a]: true })
   })
 
   it('keeps prefixed recency-row expansion keys in step with their workspace on the baseline', () => {

@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
 import { DIRECTORY_FLOW_SLOT, type EnhancedDirectoryFlowOwnerProps, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
-import { ROOT_FOLDER_ID } from '../src/client/model.ts'
+import { ROOT_FOLDER_ID, recentGroupKey } from '../src/client/model.ts'
 import { zh } from '../src/client/locales.ts'
 import type { EnhancedWorkspaceState } from '../src/client/store.ts'
 import { createEnhancedWorkspaceStore } from '../src/client/store.ts'
@@ -498,7 +498,7 @@ describe('enhanced workspace browser', () => {
     expect(treeRowByText('绘画收集')!.getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('collapses every expandable dir row from either section header: folders, workspace lists, and recency lists fold back', async () => {
+  it('collapses each section from its own header: the all-button folds folders and tree rows only, the recents-button only the recency rows', async () => {
     await renderBrowser()
     // A folder holding the art workspace.
     click(buttonByAria('新建目录')!)
@@ -517,13 +517,13 @@ describe('enhanced workspace browser', () => {
     click(rowByText('产品组')!)
     expect(treeRowByText('绘画收集'), 'nested workspace reveals once the folder opens').toBeDefined()
     click(treeRowByText('绘画收集')!)
-    expect(rowByText('画布草图')).toBeDefined()
+    expect(sessionRowByText('画布草图'), 'tree workspace row expands its session list').toBeDefined()
     const recencySection = [...container.querySelectorAll('section')]
       .find(section => section.querySelector('h3')?.textContent === zh.recents)!
     click([...recencySection.querySelectorAll<HTMLElement>('[class*="workspaceRow"]')][0]!)
     expect(recencySection.querySelector('[class*="sessionRow"]')).not.toBeNull()
 
-    // The collapse-all icon button sits in BOTH section headers.
+    // The collapse icon button sits in BOTH section headers.
     const allSection = [...container.querySelectorAll('section')]
       .find(section => section.querySelector('h3')?.textContent === zh.all)!
     const allCollapse = [...allSection.querySelectorAll<HTMLButtonElement>('button')]
@@ -533,17 +533,24 @@ describe('enhanced workspace browser', () => {
       .find(button => button.getAttribute('aria-label') === zh.collapseAll)
     expect(recentsCollapse, 'collapse-all button sits in the recents header too').toBeDefined()
 
-    // One click on the "all" header's button folds the whole outline back.
+    // The "all" header's button folds only its own section: the folder and
+    // the tree session rows collapse, while the recency rows stay open.
     click(allCollapse!)
-    expect(rowByText('画布草图')).toBeUndefined()
-    expect(recencySection.querySelector('[class*="sessionRow"]')).toBeNull()
+    expect(sessionRowByText('画布草图'), 'tree session rows fold back').toBeUndefined()
     expect(rowByText('产品组')!.getAttribute('aria-expanded')).toBe('false')
     // The nested workspace row is hidden again under the collapsed folder;
     // the tree itself keeps the membership intact.
     expect(treeRowByText('绘画收集'), 'workspace hides with its collapsed folder').toBeUndefined()
+    expect(recencySection.querySelector('[class*="sessionRow"]'), 'recency rows keep their expansion').not.toBeNull()
     const folderId = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
     expect(instance.getSnapshot().folders[folderId]?.workspaceIds).toContain(W('w-art'))
     expect(instance.getSnapshot().folderExpansion).toEqual({})
+    expect(instance.getSnapshot().groupExpansion).toEqual({ [recentGroupKey(W('w-art'))]: true })
+
+    // The recents header's button then folds only the recency rows; the
+    // already-collapsed tree stays untouched.
+    click(recentsCollapse!)
+    expect(recencySection.querySelector('[class*="sessionRow"]'), 'recency rows fold on their own button').toBeNull()
     expect(instance.getSnapshot().groupExpansion).toEqual({})
   })
 

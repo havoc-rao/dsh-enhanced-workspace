@@ -88,6 +88,7 @@ import {
   folderOfWorkspace,
   observeSessionActivity,
   orderDeltas,
+  RECENT_GROUP_KEY_PREFIX,
   sessionStatusDot,
   treeOrder,
   ROOT_FOLDER_ID,
@@ -1069,12 +1070,19 @@ function GroupedView(props: {
   // One relative-time stamp per render pass, shared by every session row's
   // hover card (the same posture as the built-in tree).
   const now = Date.now()
-  // Collapse-all: every expandable directory row — the folder forest AND the
-  // workspace session groups (recency rows included) — folds back to the
-  // top-level outline; the per-row "show more" overflows reset with them.
+  // The recents header's collapse: only the recency module's rows fold (its
+  // `recent:` keyspace) — the workspace list below keeps its expansion, and
+  // only the recency rows' "show more" overflows reset with them.
+  const collapseRecents = (): void => {
+    actions.collapseRecents()
+    setSessionsOverflow(keys => keys.filter(key => !key.startsWith(RECENT_GROUP_KEY_PREFIX)))
+  }
+  // The "all" header's collapse: only this section's expandable rows — the
+  // folder forest and the tree/ungrouped session groups — fold back; recency
+  // rows keep their expansion, and only this section's overflows reset.
   const collapseAll = (): void => {
     actions.collapseAll()
-    setSessionsOverflow([])
+    setSessionsOverflow(keys => keys.filter(key => key.startsWith(RECENT_GROUP_KEY_PREFIX)))
   }
 
   // Drag & drop seat: source + highlighted target live here; drops resolve
@@ -1163,7 +1171,7 @@ function GroupedView(props: {
                   type="button"
                   className={css.iconButton}
                   aria-label={t('collapseAll')}
-                  onClick={collapseAll}
+                  onClick={collapseRecents}
                 >
                   <IconChevronUpOutline14 />
                 </button>
