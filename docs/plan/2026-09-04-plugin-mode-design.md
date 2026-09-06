@@ -29,7 +29,7 @@ DSH 本体包的修改。插件仓库约束（AGENTS.md §0 与外部插件惯�
 | 工作区归属/顺序对齐 | Host order = 树 | 插件树为显示权威，Host 平铺顺序经 `workspace.insertBefore` **reconcile**（最小移动集） |
 | 最近使用 | 派生 + 客户端触摸（store v6） | 插件 store 触摸点 + 派生合并（语义同 F2.2） |
 | 拖拽 | 新 wire 参数 | 纯客户端：`ctx.workspaces.insertBefore`（同目录内）+ 树数据移动（跨目录） |
-| 添加工作区 | directory-flow 子槽位 | 插件自持：`ctx.workspaces.pickDirectory()` + `create()`（无子槽位依赖） |
+| 添加工作区 | directory-flow 子槽位 | 插件自持 + 自有 hole：`enhanced-workspace.workspace.directoryFlow` 占用时渲染 occupant（flowOwner 契约同内置），未占用回退 `ctx.workspaces.pickDirectory()` + `create()` |
 | 错误码 | 新 wire 错误码 | 客户端回显（`console.warn` + 行上非致命提示，同 NFR-5） |
 
 ### 1.3 保留的目标（对照原 FR）
@@ -78,8 +78,9 @@ DSH 本体包的修改。插件仓库约束（AGENTS.md §0 与外部插件惯�
 - **子槽位冲突**：`children` 声明与已声明 key 冲突会抛错；内置浏览器条目常驻
   ledger（遮蔽 ≠ 卸载），其 4 个子槽位（directoryFlow / workspaceIcon /
   workspaceMenu / workspaceHoverIcon）**已被其声明** —— 插件不能再声明。
-  后果：logo 三槽位与 directory-flow 组合包在遮蔽形态下不可由插件渲染
-  （Known Limitation，见 §7.1）。添加流程改由插件自持（`pickDirectory`）。
+  后果：logo 三槽位与官方 directory-flow 组合包在遮蔽形态下不可由插件渲染
+  （Known Limitation，见 §7.1）。添加流程改由插件自持 + 自有 hole
+  （`enhanced-workspace.workspace.directoryFlow`，`pickDirectory` 兜底）。
 - **数据与动作**：`ctx.workspaces`（IWorkspaces：list / startSession / create /
   pickDirectory / listDirectory / createDirectory / openPath / rename / setLogo /
   delete / insertBefore / insertSessionBefore / archiveSession）、
@@ -190,6 +191,14 @@ tests/
   HoverIcon` 由内置浏览器条目声明，插件再声明即冲突（ui-slots 单声明者）。
   遮蔽形态下 workspace-logo 插件的行内 logo 不渲染（目录图标回退不变）。
   若后续需要，可行路径：Host 侧支持「条目可接管已声明子槽位」后再说。
+- **官方 directory-flow 子槽位同样不可声明/渲染**（同一单声明者规则，实测
+  register 抛 `already declared`）：本插件以自有 key
+  `enhanced-workspace.workspace.directoryFlow` 声明同契约 hole（flowOwner：
+  open / busy / onPicked / onCancel / onError，与内置信道一致），+ 按钮在
+  hole 占用时渲染 occupant、未占用回退原生 `pickDirectory`。协议 key 见
+  `src/client/contract.ts` 的 `DIRECTORY_FLOW_SLOT`（跨插件字符串协议，
+  两端各自持有字面量；dsh-remote 侧以构建期 ENV `DSH_REMOTE_DIRECTORY_FLOW_SLOT`
+  设定，默认官方 key）。
 - **跨标签页一致性 best-effort**：目录树是插件本地权威；两标签页并发改树
   为 last-writer-wins，不做冲突合并（Host 顺序 reconcile 双向可能打架，
   失败仅 console.warn）。文档化：同 profile 建议单标签页整理目录。

@@ -70,8 +70,14 @@ pnpm test:mount          # 挂载冒烟：真实 DSH 无头渲染（需 PATH 上
 
 ## 4. 已知限制（维护时同步更新）
 
-- 遮蔽形态下 `sidebar.workspaces.workspaceIcon/Menu/HoverIcon`（logo 插件
-  子槽位）不可渲染：子槽位由内置浏览器条目声明，冲突即抛错。见
+- 遮蔽形态下内置条目的子槽位不可由插件声明或渲染（单声明者 + 声明 = 渲染
+  授权 + 遮蔽 ≠ 卸载）：logo 三槽位（`sidebar.workspaces.workspaceIcon/Menu/
+  HoverIcon`）与官方 `sidebar.workspaces.directoryFlow` 均不可用，冲突即抛
+  错。添加工作区走插件自有 hole `enhanced-workspace.workspace.directoryFlow`
+  （`src/client/contract.ts` 的 `DIRECTORY_FLOW_SLOT`，字符串协议与
+  dsh-remote 等 picker 包共享；组合 profile 由 picker 包构建期 ENV
+  `DSH_REMOTE_DIRECTORY_FLOW_SLOT` 指向它，默认官方 key），hole 未占用时
+  回退 `ctx.workspaces.pickDirectory()`。见
   `docs/plan/2026-09-04-plugin-mode-design.md` §7。
 - 目录树为插件本地权威，跨标签页并发编辑 last-writer-wins；Host 平铺顺序
   reconcile（`ctx.workspaces.insertBefore`）失败仅 console.warn。

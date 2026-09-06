@@ -12,7 +12,7 @@ import { act } from 'react-dom/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
-import type { EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
+import { DIRECTORY_FLOW_SLOT, type EnhancedDirectoryFlowOwnerProps, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { ROOT_FOLDER_ID } from '../src/client/model.ts'
 import { zh } from '../src/client/locales.ts'
 import type { EnhancedWorkspaceState } from '../src/client/store.ts'
@@ -86,6 +86,11 @@ const WORKSPACES_STATE = {
 let workspacesState: typeof WORKSPACES_STATE = WORKSPACES_STATE
 let sessionsState: typeof SESSIONS_STATE = SESSIONS_STATE
 
+/** Directory-flow hole fixture: occupancy of the plugin-owned slot key plus
+ *  the recorded owner conversation of every `renderSlot` call. */
+let directoryFlowOccupied = false
+let flowOwners: EnhancedDirectoryFlowOwnerProps[] = []
+
 /** Minimal locale seat over the zh dictionary (the en translation shares the key union). */
 const t = ((key: string, params?: Record<string, string | number>): string => {
   const template = zh[key as keyof typeof zh]
@@ -122,6 +127,15 @@ async function renderBrowser(
       useSyncExternalStore(instance.store.subscribe, () => selector(instance.store.getSnapshot())),
     actions: instance.actions,
     t,
+    useDirectoryFlow: (selector: (occupied: boolean) => unknown) => selector(directoryFlowOccupied),
+    renderSlot: ((key: string, owner: unknown) => {
+      expect(key).toBe(DIRECTORY_FLOW_SLOT)
+      const flowOwner = owner as EnhancedDirectoryFlowOwnerProps
+      flowOwners.push(flowOwner)
+      // A visible occupant only while the owner requests the interaction —
+      // mirroring the real occupant's `if (!open) return null` posture.
+      return flowOwner.open ? <div data-testid="flow-marker" /> : null
+    }) as unknown as EnhancedWorkspaceBrowserProps['renderSlot'],
     startSession: vi.fn(),
     open: vi.fn(),
     renameSession: vi.fn(async () => undefined),
@@ -253,6 +267,8 @@ beforeEach(() => {
   localStorage.clear()
   workspacesState = WORKSPACES_STATE
   sessionsState = SESSIONS_STATE
+  directoryFlowOccupied = false
+  flowOwners = []
   ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 })
 
@@ -930,6 +946,77 @@ describe('rail fold (shell collapse parity)', () => {
     // Clearing the restored input restores the whole tree.
     typeText(container.querySelector<HTMLInputElement>('input[type="search"]')!, '')
     expect(treeRowByText('文档'), 'clearing restores the full list').toBeDefined()
+  })
+})
+
+describe('the add entry and the plugin-owned directory-flow hole', () => {
+  it('unoccupied hole: the add entry opens the native directory picker (self-owned fallback)', async () => {
+    const props = await renderBrowser()
+    click(buttonByAria(zh.addWorkspace)!)
+    expect(flowOwners, 'the hole stays unrendered while unoccupied').toHaveLength(0)
+    expect(props.pickDirectory).toHaveBeenCalled()
+    expect(props.createWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('occupied hole: clicking add renders the occupant with the flow owner conversation', async () => {
+    directoryFlowOccupied = true
+    const props = await renderBrowser()
+    // The hole stays mounted from the first render (the built-in posture);
+    // every owner published before the click is closed.
+    expect(flowOwners.length, 'the occupant mounts with the browser').toBeGreaterThan(0)
+    expect(flowOwners.every(owner => !owner.open)).toBe(true)
+    expect(container.querySelector('[data-testid="flow-marker"]'), 'closed occupants hide themselves').toBeNull()
+
+    click(buttonByAria(zh.addWorkspace)!)
+    const opened = flowOwners.at(-1)!
+    expect(opened.open).toBe(true)
+    expect(container.querySelector('[data-testid="flow-marker"]'), 'the occupant renders').not.toBeNull()
+    expect(props.pickDirectory, 'occupied hole never falls back to the native picker').not.toHaveBeenCalled()
+
+    // Cancel withdraws the request: the SAME conversation flips `open` off.
+    act(() => { opened.onCancel() })
+    expect(flowOwners.at(-1)!.open).toBe(false)
+    expect(container.querySelector('[data-testid="flow-marker"]'), 'the occupant hides again').toBeNull()
+  })
+
+  it('occupied hole: a picked path is adopted through createWorkspace and lands in the tree', async () => {
+    directoryFlowOccupied = true
+    await renderBrowser(defaultPersistence(), false, true)
+    // The Host baseline gains the picked workspace (the adoption only re-homes
+    // registry ids; the tree renders the Host list).
+    workspacesState = { ...WORKSPACES_STATE, items: [...WORKSPACES, workspace('w-new', '远程镜像', [])] }
+    const createWorkspace = vi.fn(async () => workspace('w-new', '远程镜像', []))
+    await rerenderWith({ createWorkspace })
+
+    click(buttonByAria(zh.addWorkspace)!)
+    act(() => { flowOwners.at(-1)!.onPicked('/mirror/remote-project') })
+    expect(createWorkspace).toHaveBeenCalledWith({ path: '/mirror/remote-project' })
+    expect(flowOwners.at(-1)!.open, 'the flow closes once the path is picked').toBe(false)
+    expect(treeRowByText('远程镜像'), 'the adopted workspace joins the tree').toBeDefined()
+  })
+
+  it('the occupant unloads while the flow is open: the request is withdrawn, not leaked to the next occupant', async () => {
+    directoryFlowOccupied = true
+    await renderBrowser()
+    click(buttonByAria(zh.addWorkspace)!)
+    expect(flowOwners.at(-1)!.open).toBe(true)
+    // The occupant goes away — the hole unmounts entirely; a stale `open`
+    // must not resurface when a new occupant arrives later.
+    directoryFlowOccupied = false
+    await rerenderWith({})
+    expect(container.querySelector('[data-testid="flow-marker"]'), 'the flow unmounts with its occupant').toBeNull()
+    directoryFlowOccupied = true
+    await rerenderWith({})
+    expect(flowOwners.at(-1)!.open, 'the next occupant starts closed').toBe(false)
+  })
+
+  it('rail add uses the same entry: an occupied hole opens the flow from the rail', async () => {
+    directoryFlowOccupied = true
+    const props = await renderBrowser(defaultPersistence(), false, false)
+    click(buttonByAria(zh.addWorkspace)!)
+    expect(flowOwners.at(-1)!.open).toBe(true)
+    expect(container.querySelector('[data-testid="flow-marker"]')).not.toBeNull()
+    expect(props.pickDirectory).not.toHaveBeenCalled()
   })
 })
 

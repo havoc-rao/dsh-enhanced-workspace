@@ -54,7 +54,11 @@ import {
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { EnhancedWorkspaceBrowserProps } from './contract.ts'
+import {
+  DIRECTORY_FLOW_SLOT,
+  type EnhancedDirectoryFlowOwnerProps,
+  type EnhancedWorkspaceBrowserProps,
+} from './contract.ts'
 import {
   folderDropZone,
   resolveFolderDrop,
@@ -319,6 +323,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     // the full browser, the 56px rail renders the two icon controls.
     wide, expandSidebar,
     useStore, actions, t,
+    useDirectoryFlow, renderSlot,
     startSession, open,
     renameSession, forkSession, archiveSession,
     renameWorkspace, deleteWorkspace,
@@ -511,15 +516,51 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   // recency module, and restores everything on an empty query.
   const searching = query.trim() !== ''
 
-  const addWorkspace = async (): Promise<void> => {
+  const addWorkspace = async (path: string): Promise<void> => {
     try {
-      const path = await pickDirectory()
-      if (path === null) return
       const created = await createWorkspace({ path })
       actions.adoptWorkspace(created.workspaceId)
     } catch (error) {
       console.warn('dsh-enhanced-workspace: add workspace failed', error)
     }
+  }
+
+  // ── Directory-flow hole (plugin-owned key) ───────────────────────────────
+  // The official `sidebar.workspaces.directoryFlow` hole is declared by the
+  // built-in browser entry, which stays on the ledger under shadowing — a
+  // declaration-less shadowing entry can neither re-declare nor render it
+  // (SlotOwnershipError). So the add entry renders THIS plugin's own hole,
+  // with the same owner conversation as the built-in flow contract
+  // (`EnhancedDirectoryFlowOwnerProps`): the occupant owns everything between
+  // `open` and the picked path; the owner adopts. Unoccupied → the native
+  // `pickDirectory()` fallback keeps the entry fully self-owned.
+  const directoryFlowAvailable = useDirectoryFlow(identity)
+  const [flowOpen, setFlowOpen] = useState(false)
+  const [flowBusy, setFlowBusy] = useState(false)
+  // Withdraw an open flow whose occupant unloaded mid-interaction (nobody is
+  // left to cancel) — the built-in picker's posture.
+  useEffect(() => {
+    if (flowOpen && !directoryFlowAvailable) setFlowOpen(false)
+  }, [flowOpen, directoryFlowAvailable])
+  const flowOwner: EnhancedDirectoryFlowOwnerProps = {
+    open: flowOpen,
+    busy: flowBusy,
+    onPicked: (path: string) => {
+      setFlowBusy(true)
+      void addWorkspace(path).finally(() => { setFlowBusy(false) })
+      setFlowOpen(false)
+    },
+    onCancel: () => { setFlowOpen(false) },
+    onError: (message: string) => {
+      console.warn('dsh-enhanced-workspace: add workspace flow failed', message)
+      setFlowOpen(false)
+    },
+  }
+  /** The region's Add entry: occupied hole → hand the picking interaction to
+   *  the hole's occupant; unoccupied → open the native directory picker. */
+  const openAddEntry = (): void => {
+    if (directoryFlowAvailable) setFlowOpen(true)
+    else void pickDirectory().then(path => { if (path !== null) void addWorkspace(path) })
   }
 
   const view = useMemo(
@@ -755,7 +796,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 type="button"
                 className={css.iconButton}
                 aria-label={t('addWorkspace')}
-                onClick={() => void addWorkspace()}
+                onClick={openAddEntry}
               >
                 <IconProjectAddOutline16 />
               </button>
@@ -788,7 +829,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 type="button"
                 className={css.railButton}
                 aria-label={t('addWorkspace')}
-                onClick={() => void addWorkspace()}
+                onClick={openAddEntry}
               >
                 <IconProjectAddOutline16 size={18} />
               </button>
@@ -808,6 +849,11 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
             </Tooltip>
           </div>
         )}
+      {/* The directory-flow hole stays mounted while occupied (the built-in
+          posture): the occupant owns everything between `open` and the picked
+          path and hides itself while `open` is false, so its in-progress
+          state survives open/close cycles. */}
+      {directoryFlowAvailable && renderSlot(DIRECTORY_FLOW_SLOT, flowOwner)}
       {/* Always-mounted seat keeps the region's flex slot while the tree
           itself is wide-only. */}
       <div className={css.scroll}>

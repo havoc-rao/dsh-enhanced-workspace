@@ -15,11 +15,65 @@ import type {
 import type {
   InjectFace,
   PropsLocale,
+  PropsRenderSlots,
   PropsRuntime,
   PropsStore,
+  HostObservable,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type { createEnhancedWorkspaceStore, EnhancedWorkspaceState } from './store.ts'
 import type { NS } from './locales.ts'
+
+/**
+ * The enhanced browser's own directory-flow hole. The official holes
+ * (`sidebar.workspaces.directoryFlow` / `conversation.hero.workspace.directoryFlow`)
+ * are declared by the built-in ui-workspace entries, which stay on the ledger
+ * forever under shadowing (shadow ≠ unload); ui-slots allows exactly ONE
+ * declarer per slot key, so a shadowing entry can neither re-declare them
+ * (register throws → plugin boot fails) nor render them (its `renderSlot`
+ * face is narrowed to its own children declaration; anything else throws
+ * `SlotOwnershipError`). This plugin therefore exposes its OWN hole under a
+ * plugin-owned key; the add entry renders it exactly like the built-in
+ * browser renders the official hole. Picker packages (e.g. dsh-remote) point
+ * at this key in combined profiles via their build-time slot-key setting
+ * (dsh-remote defaults to the official keys and switches on
+ * `DSH_REMOTE_DIRECTORY_FLOW_SLOT`). The key string is the cross-plugin
+ * protocol — both sides keep the literal in sync, and the local typecheck
+ * enforces it here (register children + renderSlot are both constrained to
+ * `SlotMap` keys).
+ */
+export const DIRECTORY_FLOW_SLOT = 'enhanced-workspace.workspace.directoryFlow' as const
+
+/**
+ * Owner share of the enhanced directory-flow hole: the complete conversation
+ * between the trigger surface and the picking interaction. This mirrors the
+ * official hole's contract verbatim (ui-workspace `DirectoryFlowOwnerProps`,
+ * redeclared here because ui-workspace is not a dependency of this package):
+ * the occupant owns everything between `open` and the picked path, the owner
+ * owns adoption — an occupant written against either hole works against both.
+ */
+export interface EnhancedDirectoryFlowOwnerProps {
+  /** True while a picking interaction is requested; flipping back to false withdraws the request. */
+  open: boolean
+  /** True while the owner adopts a picked path (`createWorkspace` in flight); occupants disable their commit affordances. */
+  busy: boolean
+  /** The operator picked a directory (absolute host path); the owner adopts it. */
+  onPicked: (path: string) => void
+  /** The operator dismissed the interaction; the owner just closes the flow. */
+  onCancel: () => void
+  /** The interaction itself failed (chooser missing, listing denied); the owner reports the failure. */
+  onError: (message: string) => void
+}
+
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMap {
+    /** Directory-flow hole under the enhanced sidebar browser (declared by the shadowing entry). */
+    [DIRECTORY_FLOW_SLOT]: {
+      kind: 'single'
+      scope: 'root'
+      owner: EnhancedDirectoryFlowOwnerProps
+    }
+  }
+}
 
 /**
  * Origin-independent persistence face of the enhanced browser: loading and
@@ -40,6 +94,12 @@ export interface EnhancedWorkspacePersistence {
  * the framework hooks; these are the Host actions the region drives.
  */
 export interface EnhancedWorkspaceInjected {
+  /** Picking-share hooks compartment: the renderer binds each source into a
+   *  `use<Name>` selector hook on the component props. */
+  hooks: {
+    /** True while the enhanced directory-flow hole is occupied by a picker package. */
+    directoryFlow: HostObservable<boolean>
+  }
   /** Start a New Session in a Workspace (reuse-or-create its blank session and open it). */
   startSession: (workspaceId?: WorkspaceId) => void
   /** Open a real Session. */
@@ -70,9 +130,12 @@ export interface EnhancedWorkspaceInjected {
   persistence: EnhancedWorkspacePersistence
 }
 
-/** Full browser props: sidebar owner share + viewing store + injected actions + the locale seat. */
+/** Full browser props: sidebar owner share + child-render share (the
+ *  enhanced directory-flow hole) + viewing store + injected actions + the
+ *  locale seat. */
 export type EnhancedWorkspaceBrowserProps =
   PropsRuntime<'sidebar.workspaces'>
+  & PropsRenderSlots<typeof DIRECTORY_FLOW_SLOT>
   & PropsStore<ReturnType<typeof createEnhancedWorkspaceStore>>
   & InjectFace<EnhancedWorkspaceInjected>
   & PropsLocale<typeof NS>

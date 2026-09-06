@@ -3,10 +3,15 @@
  * `sidebar.workspaces` region (priority -1 — "lowest renders" wins the
  * single slot cell over ui-workspace's default 0) with the recency module,
  * the folder tree, and the flat list. The registration declares its own
- * store seat, inject face, and locale namespace; it deliberately declares NO
- * child slots — the built-in entry keeps its declarations, and re-declaring
- * them would throw (one declarer per slot), which is also why the logo
- * plugin's row holes are unavailable in shadow mode (see the design doc §7).
+ * store seat, inject face, locale namespace — and ONE child slot, the
+ * plugin-owned directory-flow hole (`enhanced-workspace.workspace.directoryFlow`)
+ * the add entry renders when a picker package occupies it (native
+ * `pickDirectory` fallback otherwise). It deliberately does NOT re-declare
+ * the built-in entry's sub-slots (`directoryFlow` / `workspaceIcon` /
+ * `workspaceMenu` / `workspaceHoverIcon`): they stay declared by the built-in
+ * entry — which shadows ≠ unloads, so re-declaring them would throw (one
+ * declarer per slot key), and a declaration-less entry has no render
+ * authorization for them (see the design doc §7).
  * @module dsh-enhanced-workspace/client
  */
 
@@ -24,7 +29,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // LocaleRuntime registering this plugin's dictionary) is declared there.
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { EnhancedWorkspaceBrowser } from './Browser.tsx'
-import type { EnhancedWorkspaceInjected, EnhancedWorkspacePersistence } from './contract.ts'
+import {
+  DIRECTORY_FLOW_SLOT,
+  type EnhancedWorkspaceInjected,
+  type EnhancedWorkspacePersistence,
+} from './contract.ts'
 import { NS, en, zh, type EnhancedWorkspaceKey } from './locales.ts'
 import { createPersistence } from './persistence.ts'
 import { createEnhancedWorkspaceStore } from './store.ts'
@@ -75,6 +84,16 @@ export function apply(ctx: ClientContext): void {
   )
 
   const injected = (): EnhancedWorkspaceInjected => ({
+    // Picking-share hooks compartment: the renderer binds `directoryFlow`
+    // into the `useDirectoryFlow` selector hook on the browser props, so the
+    // add entry reacts to the hole's occupancy (hide nothing, but switch
+    // between the occupant's picking interaction and the native fallback).
+    hooks: {
+      directoryFlow: {
+        getSnapshot: () => ctx.slots.entries(DIRECTORY_FLOW_SLOT).length > 0,
+        subscribe: listener => ctx.slots.subscribe(DIRECTORY_FLOW_SLOT, listener),
+      },
+    },
     startSession: (workspaceId) => { ctx.workspaces.startSession(workspaceId) },
     open: (sessionId) => { ctx.sessions.open(sessionId) },
     renameSession: async (sessionId, title) => {
@@ -108,6 +127,15 @@ export function apply(ctx: ClientContext): void {
     {
       name: 'sidebar.workspaces',
       priority: -1,
+      // The enhanced browser declares its OWN directory-flow hole (plugin
+      // namespace). The official `sidebar.workspaces.directoryFlow` key is
+      // declared by the built-in entry, which stays on the ledger under
+      // shadowing — re-declaring it throws (one declarer per slot key) and a
+      // declaration-less entry has no render authorization for it; the logo
+      // sub-slots share the same fate (design doc §7.1).
+      children: {
+        [DIRECTORY_FLOW_SLOT]: { kind: 'single', scope: 'root' },
+      },
       store: createEnhancedWorkspaceStore(),
       inject: injected,
       locale: NS,
