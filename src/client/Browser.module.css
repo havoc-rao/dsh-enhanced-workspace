@@ -97,6 +97,59 @@
   height: 6px;
 }
 
+/* Rail variant (own .rail class from the shell's `wide` owner share — the
+   region never reads the shell's class names): the collapsed 56px rail keeps
+   only the two 36x36 icon controls, centered in the shell's 10px side
+   padding, 12px vertical rhythm, primary ink — the shell's rail spec. The
+   list seat stays mounted (flex slot preserved, the header/foot never move);
+   its wide-only insets are neutralized. */
+.region.rail {
+  justify-content: flex-start;
+}
+
+.railActions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+}
+
+.railButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  margin: 0 0 12px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, var(--ds-color-text-primary, inherit));
+  cursor: pointer;
+}
+
+.railButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover, var(--ds-color-hover, rgba(128, 128, 128, 0.15)));
+}
+
+.rail .scroll {
+  margin-right: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+/* Wide-only content fades back in on expand remount (mirrors the shell). */
+.region.wide {
+  animation: wide-in 200ms var(--ds-ease-in-out, ease-in-out);
+}
+
+@keyframes wide-in {
+  from { opacity: 0; }
+}
+
 .grouped,
 .flatList,
 .folderBranch,

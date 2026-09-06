@@ -100,6 +100,9 @@ import css from './Browser.module.css'
 const RECENTS_LIMIT = 5
 /** Session rows visible per Workspace before the local overflow control. */
 const COLLAPSED_SESSION_LIMIT = 5
+/** Rail→wide slide duration (the shell's AppFrame track transition); a rail
+ *  search click lands the input focus only after the slide completes. */
+const EXPAND_SLIDE_MS = 300
 /** Folder-tree indent: 8px base (built-in 8px row-cell parity) + 8px per level. */
 const FOLDER_INDENT_BASE_PX = 8
 const FOLDER_INDENT_STEP_PX = 8
@@ -304,9 +307,17 @@ const PERSIST_DEBOUNCE_MS = 300
 // action identity, not its React mount; weak keys do not retain disposed stores.
 const hydratedStores = new WeakSet<EnhancedWorkspaceBrowserProps['actions']>()
 
-/** The enhanced browsing region. @param props - the four-share composed props. */
+/** The enhanced browsing region. Folds with the shell: `wide` renders the
+ *  full browser (header, search, tree); the collapsed 56px rail renders only
+ *  the search (expands the shell and lands focus in the input) and add
+ *  controls (built-in ui-workspace parity). The queried tree state outlives
+ *  the fold so collapsing never drops a filter in progress.
+ *  @param props - the four-share composed props. */
 export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): ReactNode {
   const {
+    // Shell owner share: the region folds with the sidebar — `wide` renders
+    // the full browser, the 56px rail renders the two icon controls.
+    wide, expandSidebar,
     useStore, actions, t,
     startSession, open,
     renameSession, forkSession, archiveSession,
@@ -317,6 +328,20 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   const sessions = props.useSessions(identity)
   const state = useStore(identity)
   const [query, setQuery] = useState('')
+
+  // Rail search = expand + land in the search box: the flag arms before the
+  // expand request; once the shell flips wide the input mounts and takes
+  // focus after the slide (the built-in browser's gesture).
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const [searchOnExpand, setSearchOnExpand] = useState(false)
+  useEffect(() => {
+    if (!wide || !searchOnExpand) return
+    const timer = window.setTimeout(() => {
+      searchInputRef.current?.focus({ preventScroll: true })
+      setSearchOnExpand(false)
+    }, EXPAND_SLIDE_MS)
+    return () => { window.clearTimeout(timer) }
+  }, [wide, searchOnExpand])
 
   // Read once per mount, independently of baseline arrival. Cancellation
   // detaches obsolete effects (including StrictMode's setup/cleanup replay).
@@ -709,41 +734,84 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   }
 
   return (
-    <div className={css.region} data-dsh-enhanced-workspace="browser">
-      <header className={css.header}>
-        <span className={css.title}>{t('workspaces')}</span>
-        <div className={css.headerActions}>
-          <ViewOptionsMenu
-            groupBy={state.groupBy}
-            orderBy={state.orderBy}
-            onGroupPick={mode => actions.setGroupBy(mode)}
-            onOrderPick={mode => actions.setOrderBy(mode)}
-            t={t}
-          />
-          <Tooltip label={t('addWorkspace')} side="bottom" delayMs={500}>
-            <button
-              type="button"
-              className={css.iconButton}
-              aria-label={t('addWorkspace')}
-              onClick={() => void addWorkspace()}
-            >
-              <IconProjectAddOutline16 />
-            </button>
-          </Tooltip>
-        </div>
-      </header>
-      <div className={css.searchBar}>
-        <IconSearchOutline16 className={css.searchIcon} />
-        <input
-          className={css.searchInput}
-          type="search"
-          placeholder={t('searchPlaceholder')}
-          value={query}
-          onChange={event => setQuery(event.target.value)}
-        />
-      </div>
+    // The region folds with the shell: `wide` renders the full browser, the
+    // 56px rail (`css.rail`) only the two icon controls below. The wide
+    // chrome unmounts at the collapse settle (the shell fades it out while
+    // it is still `wide`) and remounts with the fade-in animation on expand.
+    <div className={`${css.region} ${wide ? css.wide : css.rail}`} data-dsh-enhanced-workspace="browser">
+      {wide && (
+        <header className={css.header}>
+          <span className={css.title}>{t('workspaces')}</span>
+          <div className={css.headerActions}>
+            <ViewOptionsMenu
+              groupBy={state.groupBy}
+              orderBy={state.orderBy}
+              onGroupPick={mode => actions.setGroupBy(mode)}
+              onOrderPick={mode => actions.setOrderBy(mode)}
+              t={t}
+            />
+            <Tooltip label={t('addWorkspace')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('addWorkspace')}
+                onClick={() => void addWorkspace()}
+              >
+                <IconProjectAddOutline16 />
+              </button>
+            </Tooltip>
+          </div>
+        </header>
+      )}
+      {wide
+        ? (
+          <div className={css.searchBar}>
+            <IconSearchOutline16 className={css.searchIcon} />
+            <input
+              ref={searchInputRef}
+              className={css.searchInput}
+              type="search"
+              placeholder={t('searchPlaceholder')}
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+            />
+          </div>
+        )
+        : (
+          // The collapsed rail: search expands the shell and lands in the
+          // input (built-in gesture); add opens the directory picker right
+          // from the rail. 36px boxes, primary ink, 12px rhythm — the shell's
+          // rail spec.
+          <div className={css.railActions}>
+            <Tooltip label={t('addWorkspace')} delayMs={500}>
+              <button
+                type="button"
+                className={css.railButton}
+                aria-label={t('addWorkspace')}
+                onClick={() => void addWorkspace()}
+              >
+                <IconProjectAddOutline16 size={18} />
+              </button>
+            </Tooltip>
+            <Tooltip label={t('searchAria')} delayMs={500}>
+              <button
+                type="button"
+                className={css.railButton}
+                aria-label={t('searchAria')}
+                onClick={() => {
+                  setSearchOnExpand(true)
+                  expandSidebar()
+                }}
+              >
+                <IconSearchOutline16 size={18} />
+              </button>
+            </Tooltip>
+          </div>
+        )}
+      {/* Always-mounted seat keeps the region's flex slot while the tree
+          itself is wide-only. */}
       <div className={css.scroll}>
-        {searching
+        {wide && (searching
           ? searchEmpty
             ? (
               // The filtered tree is fully empty — a quiet hint instead of a
@@ -771,7 +839,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
               recents={recents}
               ungrouped={forest.ungrouped}
               openers={openers}
-            />}
+            />)}
       </div>
       {createFolderTarget !== null && (
         <InputDialog
@@ -1406,7 +1474,8 @@ function LeafRow(props: {
       onDragStart={hasAccount ? (event => {
         const transfer = event.dataTransfer
         if (transfer !== null) {
-          transfer.effectAllowed = 'move'
+          transfer.effectAllowed = 'copyMove'
+          transfer.setData('application/x-dsh-reference+json', JSON.stringify({ version: 1, kind: 'workspace', id: leaf.workspaceId }))
           transfer.setData('text/plain', leaf.workspaceId as string)
         }
         props.drag.onDragStart({ kind: 'workspace', id: leaf.workspaceId as string })
@@ -1586,6 +1655,13 @@ function SessionRow(props: {
         ...(props.indent === undefined ? undefined : { paddingLeft: `${props.indent + SESSION_INDENT_OFFSET_PX}px` }),
         ...(props.columns === undefined ? undefined : guideBackground(props.columns.length, false, highlightCol)),
       }}
+      draggable={!session.blank}
+      onDragStart={event => {
+        event.stopPropagation()
+        if (event.dataTransfer === null) return
+        event.dataTransfer.effectAllowed = 'copy'
+        event.dataTransfer.setData('application/x-dsh-reference+json', JSON.stringify({ version: 1, kind: 'session', id: session.id }))
+      }}
       onClick={() => props.onOpen(session.id)}
     >
       {props.columns !== undefined && props.guide !== undefined && props.columns.length > 0
@@ -1636,8 +1712,7 @@ function SessionRow(props: {
   )
   // The session hover card (built-in parity): title, relative time, every
   // live status, and the file domain. An open row menu suppresses it for
-  // the same hover; the plugin's session rows are not draggable, so there
-  // is no drag-active suppression.
+  // the same hover. Session drags copy a reference and do not enter the tree's move state.
   return (
     <HoverCard
       anchor={ownRow}

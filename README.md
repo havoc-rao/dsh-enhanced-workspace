@@ -31,6 +31,11 @@ Harness 本体**：以 `priority: -1` 遮蔽 `sidebar.workspaces` 槽位，替�
   没有任何工作区时退化为无参 `startSession()`（内置 New Session 视图）。
   监听器挂在浏览器区根组件（mount 一次注册 / 卸载清理），因此仅在侧边栏
   展开（浏览器区挂载）期间生效；收成 rail 时由 shell 的 rail 新建按钮兜底。
+- **跟随 shell 侧边栏收起（rail）**：dsh 本体把侧边栏收成 56px rail 时，
+  浏览器区同步折叠——宽幅内容（标题头 / 搜索框 / 目录树）随折叠淡出卸载，
+  只保留搜索与添加工作区两个 36×36 rail 控件（图标 18px、主墨色、12px 节奏，
+  与 shell rail 规范一致）；rail 搜索点击展开侧边栏并在滑入后自动聚焦搜索框
+  （内置手势），进行中的搜索词跨折叠保留。
 - **持久化**：目录树 / 展开状态 / 最近触摸 / 视图字段全部在插件 store
   （localStorage `dsh.enhanced-workspace.v1`）；Host 平铺顺序经
   `ctx.workspaces.insertBefore` 最小移动集 reconcile

@@ -99,14 +99,23 @@ const t = ((key: string, params?: Record<string, string | number>): string => {
 let container: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 let instance: ReturnType<ReturnType<typeof createEnhancedWorkspaceStore>['create']>
+/** The props of the latest render (re-render with overrides to flip the
+ *  shell's fold state, like the real host does). */
+let latestProps: EnhancedWorkspaceBrowserProps
 
 /** Render the browser over a fresh real store engine instance. */
-async function renderBrowser(persistence: EnhancedWorkspaceBrowserProps['persistence'] = defaultPersistence(), strict = false): Promise<EnhancedWorkspaceBrowserProps> {
+async function renderBrowser(
+  persistence: EnhancedWorkspaceBrowserProps['persistence'] = defaultPersistence(),
+  strict = false,
+  wide = true,
+): Promise<EnhancedWorkspaceBrowserProps> {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
   instance = createEnhancedWorkspaceStore().create()
-  const props = {
+  latestProps = {
+    wide,
+    expandSidebar: vi.fn(),
     useWorkspaces: (selector: (snapshot: typeof WORKSPACES_STATE) => unknown) => selector(workspacesState),
     useSessions: (selector: (snapshot: typeof SESSIONS_STATE) => unknown) => selector(sessionsState),
     useStore: (selector: (snapshot: EnhancedWorkspaceState) => unknown) =>
@@ -128,10 +137,17 @@ async function renderBrowser(persistence: EnhancedWorkspaceBrowserProps['persist
     persistence,
   } as unknown as EnhancedWorkspaceBrowserProps
   await act(async () => {
-    const browser = <EnhancedWorkspaceBrowser {...props} />
+    const browser = <EnhancedWorkspaceBrowser {...latestProps} />
     root.render(strict ? <StrictMode>{browser}</StrictMode> : browser)
   })
-  return props
+  return latestProps
+}
+
+/** Re-render the mounted browser with overridden props (shell fold flip). */
+async function rerenderWith(overrides: Partial<EnhancedWorkspaceBrowserProps>): Promise<void> {
+  await act(async () => {
+    root.render(<EnhancedWorkspaceBrowser {...latestProps} {...overrides} />)
+  })
 }
 
 /** Inert persistence face: nothing durable stored, saves no-op. */
@@ -632,6 +648,24 @@ describe('enhanced workspace browser', () => {
     expect(sessionRowByText('画布草图')!.className, 'the viewer-open session row carries the wash').toContain('sessionRowCurrent')
   })
 
+  it('exports typed workspace and session references for the chat composer', async () => {
+    await renderBrowser()
+    const workspaceRow = treeRowByText('绘画收集')!
+    if (workspaceRow.getAttribute('aria-expanded') !== 'true') click(workspaceRow)
+    const sessionRow = sessionRowByText('画布草图')!
+    for (const [row, kind, id, effect] of [[workspaceRow, 'workspace', 'w-art', 'copyMove'], [sessionRow, 'session', 's1', 'copy']] as const) {
+      const data = new Map<string, string>()
+      const transfer = { effectAllowed: '', setData: (key: string, value: string) => data.set(key, value) }
+      const event = new Event('dragstart', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: transfer })
+      act(() => { row.dispatchEvent(event) })
+      expect(row.draggable).toBe(true)
+      expect(JSON.parse(data.get('application/x-dsh-reference+json')!)).toEqual({ version: 1, kind, id })
+      expect(transfer.effectAllowed).toBe(effect)
+      act(() => { row.dispatchEvent(dragEvent('dragend', 0)) })
+    }
+  })
+
   it('drags a workspace onto a folder row: the drop moves it into that folder (appended)', async () => {
     await renderBrowser()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '产品组') })
@@ -833,6 +867,69 @@ describe('search: in-place filter of the original dirs list', () => {
     expect(container.querySelectorAll('[role="treeitem"]')).toHaveLength(1)
     typeText(searchInput(), '')
     expect(sessionRowByText('配色研究'), 'clearing restores the flat list').toBeDefined()
+  })
+})
+
+describe('rail fold (shell collapse parity)', () => {
+  it('collapsed: only the two rail controls render — no header, input, or tree, and the list seat stays', async () => {
+    await renderBrowser(defaultPersistence(), false, false)
+    expect(buttonByAria(zh.addWorkspace), 'rail add control').toBeDefined()
+    expect(buttonByAria(zh.searchAria), 'rail search control').toBeDefined()
+    expect(container.querySelector('header'), 'wide title header is gone').toBeNull()
+    expect(container.querySelector('input'), 'wide search input is gone').toBeNull()
+    expect(container.querySelectorAll('[role="treeitem"]'), 'the tree is gone').toHaveLength(0)
+    expect(container.querySelectorAll('section'), 'the recency/tree sections are gone').toHaveLength(0)
+    expect(container.querySelector('[class*="scroll"]'), 'the list seat stays mounted').not.toBeNull()
+  })
+
+  it('rail add opens the directory picker directly', async () => {
+    const props = await renderBrowser(defaultPersistence(), false, false)
+    click(buttonByAria(zh.addWorkspace)!)
+    expect(props.pickDirectory).toHaveBeenCalled()
+  })
+
+  it('rail search requests the shell expansion (built-in gesture)', async () => {
+    const props = await renderBrowser(defaultPersistence(), false, false)
+    click(buttonByAria(zh.searchAria)!)
+    expect(props.expandSidebar).toHaveBeenCalled()
+  })
+
+  it('rail search lands focus in the input once the shell flips wide, after the slide', async () => {
+    vi.useFakeTimers()
+    try {
+      const props = await renderBrowser(defaultPersistence(), false, false)
+      click(buttonByAria(zh.searchAria)!)
+      expect(props.expandSidebar).toHaveBeenCalled()
+      await rerenderWith({ wide: true })
+      expect(container.querySelector('input'), 'the input mounted with the wide flip').not.toBeNull()
+      expect(document.activeElement, 'focus waits for the slide').not.toBe(container.querySelector('input'))
+      act(() => { vi.advanceTimersByTime(300) })
+      expect(document.activeElement, 'focus lands after the shell slide').toBe(container.querySelector('input'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the search query outlives the fold: collapsing clears the chrome, expanding restores the same filter', async () => {
+    await renderBrowser(defaultPersistence(), false, true)
+    typeText(container.querySelector<HTMLInputElement>('input[type="search"]')!, '画布草图')
+    expect(treeRowByText('绘画收集'), 'the dir holding the match stays').toBeDefined()
+    expect(treeRowByText('文档'), 'non-matching dirs hide').toBeUndefined()
+
+    // Collapse: the wide chrome unmounts, the rail takes over.
+    await rerenderWith({ wide: false })
+    expect(container.querySelector('input'), 'the input is wide-only').toBeNull()
+    expect(container.querySelectorAll('[role="treeitem"]')).toHaveLength(0)
+
+    // Expand: the SAME filter comes back — no silent query drop.
+    await rerenderWith({ wide: true })
+    expect(treeRowByText('绘画收集'), 'the in-progress filter survives the fold').toBeDefined()
+    expect(treeRowByText('文档')).toBeUndefined()
+    expect(container.querySelector('[class*="searchStatus"]'), 'a blank query is not forced').toBeNull()
+
+    // Clearing the restored input restores the whole tree.
+    typeText(container.querySelector<HTMLInputElement>('input[type="search"]')!, '')
+    expect(treeRowByText('文档'), 'clearing restores the full list').toBeDefined()
   })
 })
 

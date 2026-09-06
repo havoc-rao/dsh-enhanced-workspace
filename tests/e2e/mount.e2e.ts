@@ -142,6 +142,34 @@ test('the enhanced workspace region shadows the sidebar and renders rows without
   // dictionary copy and differs by the scratch home's locale).
   await expect(hoverCard).toContainText(WORKSPACE_PATH)
 
+  // The shell's own collapse fold: the toggle is the logo row's last button
+  // (brand first when wide, toggle last in both states). Collapsing must NOT
+  // squeeze the wide chrome — the region folds to the rail: wide chrome
+  // unmounts and only the two rail controls stay.
+  const shellToggle = page.locator('div[class*="logoRow"] button').last()
+  await shellToggle.click()
+  await expect(region.locator('input[type="search"]')).toHaveCount(0, { timeout: 15_000 })
+  await expect(region.locator('section')).toHaveCount(0)
+  await expect(region.locator('[role="treeitem"]')).toHaveCount(0)
+  const railButtons = region.locator('button[class*="railButton"]')
+  await expect(railButtons).toHaveCount(2, { timeout: 15_000 })
+
+  // Rail search = expand + land in the input (built-in gesture): the shell
+  // flips wide, the input mounts and takes focus after the slide.
+  await railButtons.last().click()
+  await expect(region.locator('input[type="search"]')).toBeVisible({ timeout: 15_000 })
+  await expect(region.locator('input[type="search"]')).toBeFocused({ timeout: 15_000 })
+  await expect(region.locator('section')).toHaveCount(2, { timeout: 15_000 }) // recents back
+
+  // Fold again from the shell toggle, then expand from the rail, to prove
+  // the fold is repeatable and stays in sync with the shell either way.
+  await shellToggle.click()
+  await expect(region.locator('input[type="search"]')).toHaveCount(0, { timeout: 15_000 })
+  await expect(region.locator('button[class*="railButton"]')).toHaveCount(2)
+  await shellToggle.click()
+  await expect(region.locator('input[type="search"]')).toBeVisible({ timeout: 15_000 })
+  await expect(region.locator('section')).toHaveCount(2, { timeout: 15_000 })
+
   // No crash markers anywhere on the page.
   expect(pageErrors, `pageerrors: ${pageErrors.map(error => error.message).join(' | ')}`).toEqual([])
   expect(pluginConsoleErrors, `plugin console errors: ${pluginConsoleErrors.join(' | ')}`).toEqual([])
