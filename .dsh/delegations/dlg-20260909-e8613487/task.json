@@ -1,0 +1,18 @@
+{
+  "delegationId": "dlg-20260909-e8613487",
+  "createdAt": "2026-09-09T09:48:51.235Z",
+  "mode": "local",
+  "target": "/Users/havoc/Documents/Projects/tools/dsh-plugins/dsh-enhanced-workspace",
+  "workspacePath": "/Users/havoc/Documents/Projects/tools/dsh-plugins/dsh-enhanced-workspace",
+  "parentSessionId": "session-3d5566a6-83c1-44a0-8f59-89802f610688",
+  "task": "验证并守护 dsh-enhanced-workspace 刚实现的新功能：浏览器区头「收起全部」按钮。\n\n## 背景\n\n用户在区头（src/client/Browser.tsx 的首页 header，约 line 817 处的 <header>）新增了一个 chevron-up 收起按钮，效果是**一键折叠下方两个模块（最近使用 recents + 全部/目录树，含未分组）的全部展开行**。已有改动已全部落盘，你需要验证它们是否自洽、修复任何失败，并跑完整质量门。\n\n## 已落盘的改动清单（请先阅读这些 diff 确认一致性）\n\n1. `src/client/store.ts`：\n   - 新增 `collapseEverything` 动作的类型注解与实现（在 `collapseRecents` 之后），语义 = `collapseAll` 与 `collapseRecents` 的并集：`folderExpansion` 与 `groupExpansion` 全部清空。\n2. `src/client/Browser.tsx`：\n   - 新增 `collapseEverything` 处理器（`actions.collapseEverything()` + `setSessionsOverflow([])`，位于 `collapseRecents` / `collapseAll` 处理器旁）。\n   - 区头 `headerActions` 内新增按钮：`IconChevronUpOutline14` + Tooltip + `aria-label={t('collapseEverything')}` + `onClick={collapseEverything}`，位于 ViewOptionsMenu 之前。\n3. `src/client/locales.ts`：新增 `collapseEverything` key（zh '收起全部' / en 'Collapse everything'），zh/en 字典必须镜像（`EnhancedWorkspaceKey` 联合类型会守护）。\n4. `tests/store.client.spec.ts`：新增用例 `collapses both modules through the everything action`。\n5. `tests/browser.client.spec.tsx`：新增用例 `collapses both modules from the browser header button: recency rows and the workspace list fold together`。\n6. `docs/plan/status.md`：质量门条目前新增「交互补充：浏览器区头『收起全部』」条目（已完成，无需再改，除非你发现描述与实现不符）。\n\n## 请执行并报告\n\n1. `pnpm typecheck` — 全绿。\n2. `pnpm test`（vitest run）— 全绿（预期约 154 个用例：原 152 + 新 2）。\n3. `pnpm build`（production 构建，脚本自带 DSH_ENHANCED_WORKSPACE_DEV=0，勿用全局 NODE_ENV=development）— 双通道通过（purity gate）。\n\n若任何一步失败：修复到全绿再继续下一步；修复范围只限上述功能相关的文件，不得改动无关功能、不得修改 DSH 源码。若有失败且你判断需要调整设计（如按钮位置、action 语义），先说明你的分析与建议方案再动手。\n\n最后报告：每步结果（通过/失败 + 修复说明）、`pnpm test` 最终用例数、以及你对改动与既有代码风格是否一致的评价。",
+  "title": "验证并守护 dsh-enhanced-workspace 刚实现的新功能：浏览器…",
+  "timeoutMs": 300000,
+  "sessionId": "session-c339c0b8-93fa-42ee-8d6a-655d8712076d",
+  "dir": "/Users/havoc/Documents/Projects/tools/dsh-plugins/dsh-enhanced-workspace/.dsh/delegations/dlg-20260909-e8613487",
+  "taskPath": "/Users/havoc/Documents/Projects/tools/dsh-plugins/dsh-enhanced-workspace/.dsh/delegations/dlg-20260909-e8613487/task.md",
+  "taskJsonPath": "/Users/havoc/Documents/Projects/tools/dsh-plugins/dsh-enhanced-workspace/.dsh/delegations/dlg-20260909-e8613487/task.json",
+  "progressPath": "/Users/havoc/Documents/Projects/tools/dsh-plugins/dsh-enhanced-workspace/.dsh/delegations/dlg-20260909-e8613487/progress.md",
+  "resumePath": "/Users/havoc/Documents/Projects/tools/dsh-plugins/dsh-enhanced-workspace/.dsh/delegations/dlg-20260909-e8613487/resume.md",
+  "runId": "session-c339c0b8-93fa-42ee-8d6a-655d8712076d"
+}

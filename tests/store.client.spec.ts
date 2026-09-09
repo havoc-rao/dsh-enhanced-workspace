@@ -124,6 +124,23 @@ describe('enhanced workspace store', () => {
     expect(after.folderExpansion).toEqual({ [a]: true })
   })
 
+  it('collapses both modules through the everything action', () => {
+    const instance = createEnhancedWorkspaceStore().create()
+    instance.actions.adoptWorkspace(W('w1'))
+    instance.actions.createFolder(ROOT_FOLDER_ID, 'a')
+    const a = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    instance.actions.setFolderExpanded(a, true)
+    instance.actions.setGroupExpanded(W('w1'), true)
+    instance.actions.setGroupExpanded('recent:w1', true)
+    instance.actions.collapseEverything()
+    const after = instance.getSnapshot()
+    // The header's collapse is the union of both section actions: folders,
+    // tree-row groups, AND recency rows all fold; the tree stays intact.
+    expect(after.folderExpansion).toEqual({})
+    expect(after.groupExpansion).toEqual({})
+    expect(after.folders[ROOT_FOLDER_ID]?.folderIds).toEqual([a])
+  })
+
   it('keeps prefixed recency-row expansion keys in step with their workspace on the baseline', () => {
     const instance = createEnhancedWorkspaceStore().create()
     instance.actions.setGroupExpanded('recent:w1', true)

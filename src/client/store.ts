@@ -63,6 +63,14 @@ type EnhancedWorkspaceActions = {
    */
   collapseRecents: (draft: EnhancedWorkspaceState) => void
   /**
+   * Collapse EVERY expandable row of both modules — the recency rows AND
+   * the workspace-list rows (folders + tree/ungrouped session groups) —
+   * the browser header's collapse-all ({@link collapseAll} + {@link
+   * collapseRecents} in one). The tree and the recency stamps themselves
+   * stay untouched.
+   */
+  collapseEverything: (draft: EnhancedWorkspaceState) => void
+  /**
    * Record a recency stamp at Date.now() — written only when a new query was
    * sent in the workspace (observed via {@link observeSessionActivity}; clicks
    * and opens never touch). Idempotent — one stamp per observation batch.
@@ -162,6 +170,10 @@ export function createEnhancedWorkspaceStore(): EngineStoreHandle<EnhancedWorksp
         for (const key of Object.keys(draft.groupExpansion)) {
           if (key.startsWith(RECENT_GROUP_KEY_PREFIX)) delete draft.groupExpansion[key]
         }
+      },
+      collapseEverything: draft => {
+        draft.folderExpansion = {}
+        draft.groupExpansion = {}
       },
       touchWorkspace: (draft, workspaceId) => {
         draft.recentTouchById[workspaceId] = Date.now()

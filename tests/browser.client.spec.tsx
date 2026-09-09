@@ -581,6 +581,46 @@ describe('enhanced workspace browser', () => {
     expect(instance.getSnapshot().groupExpansion).toEqual({})
   })
 
+  it('collapses both modules from the browser header button: recency rows and the workspace list fold together', async () => {
+    await renderBrowser()
+    // A folder holding the art workspace.
+    click(buttonByAria('新建目录')!)
+    const input = [...document.body.querySelectorAll<HTMLInputElement>('input')]
+      .filter(field => field.getAttribute('aria-label') === '目录名称').at(-1)
+    typeText(input!, '产品组')
+    click([...document.body.querySelectorAll('button')].find(button => button.textContent === '确认')!)
+    openRowMenu('绘画收集')
+    click(menuItemByText('移动到…')!)
+    click([...document.body.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find(option => option.textContent?.includes('产品组'))!)
+    click([...document.body.querySelectorAll('button')].find(button => button.textContent === '确认')!)
+
+    // Expand everything: the folder (reveals the nested workspace), the tree
+    // workspace's session list, and the recency row's own session list.
+    click(rowByText('产品组')!)
+    expect(treeRowByText('绘画收集'), 'nested workspace reveals once the folder opens').toBeDefined()
+    click(treeRowByText('绘画收集')!)
+    expect(sessionRowByText('画布草图'), 'tree workspace row expands its session list').toBeDefined()
+    const recencySection = [...container.querySelectorAll('section')]
+      .find(section => section.querySelector('h3')?.textContent === zh.recents)!
+    click([...recencySection.querySelectorAll<HTMLElement>('[class*="workspaceRow"]')][0]!)
+    expect(recencySection.querySelector('[class*="sessionRow"]')).not.toBeNull()
+
+    // The browser header carries its own collapse-all button (beside the
+    // view-options and add actions).
+    const headerCollapse = buttonByAria(zh.collapseEverything)
+    expect(headerCollapse, 'collapse-all button sits in the browser header').toBeDefined()
+
+    // One click folds BOTH modules: recency rows and the workspace list.
+    click(headerCollapse!)
+    expect(recencySection.querySelector('[class*="sessionRow"]'), 'recency rows fold with the header button').toBeNull()
+    expect(sessionRowByText('画布草图'), 'tree session rows fold too').toBeUndefined()
+    expect(rowByText('产品组')!.getAttribute('aria-expanded')).toBe('false')
+    expect(treeRowByText('绘画收集'), 'workspace hides with its collapsed folder').toBeUndefined()
+    expect(instance.getSnapshot().folderExpansion).toEqual({})
+    expect(instance.getSnapshot().groupExpansion).toEqual({})
+  })
+
   it('refreshes the recency stamp only when a new query lands; browsing gestures never touch', async () => {
     const props = await renderBrowser()
     // Mount baseline-seeds the observer: no query has been sent, no stamps.

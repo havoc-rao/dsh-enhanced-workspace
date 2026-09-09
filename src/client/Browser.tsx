@@ -334,6 +334,10 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   const sessions = props.useSessions(identity)
   const state = useStore(identity)
   const [query, setQuery] = useState('')
+  // "Show more" overflow toggles for long session lists, owned HERE so the
+  // browser header's collapse-everything can reset both sections' overflows
+  // in one shot; GroupedView renders the rows against this state.
+  const [sessionsOverflow, setSessionsOverflow] = useState<string[]>([])
 
   // Rail search = expand + land in the search box: the flag arms before the
   // expand request; once the shell flips wide the input mounts and takes
@@ -806,6 +810,28 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
       error: null, busy: false, confirm: draft => confirmRenameSession(sessionId, draft),
     }),
   }
+  const toggleOverflow = (key: string): void => setSessionsOverflow(keys => toggled(keys, key))
+  // The recents header's collapse: only the recency module's rows fold (its
+  // `recent:` keyspace) — the workspace list below keeps its expansion, and
+  // only the recency rows' "show more" overflows reset with them.
+  const collapseRecents = (): void => {
+    actions.collapseRecents()
+    setSessionsOverflow(keys => keys.filter(key => !key.startsWith(RECENT_GROUP_KEY_PREFIX)))
+  }
+  // The "all" header's collapse: only this section's expandable rows — the
+  // folder forest and the tree/ungrouped session groups — fold back; recency
+  // rows keep their expansion, and only this section's overflows reset.
+  const collapseAll = (): void => {
+    actions.collapseAll()
+    setSessionsOverflow(keys => keys.filter(key => key.startsWith(RECENT_GROUP_KEY_PREFIX)))
+  }
+  // The browser header's collapse: BOTH modules fold — the recency rows and
+  // the workspace-list rows (folders + tree/ungrouped groups) — and every
+  // "show more" overflow resets with them (both section overflows owned).
+  const collapseEverything = (): void => {
+    actions.collapseEverything()
+    setSessionsOverflow([])
+  }
 
   return (
     // The region folds with the shell: `wide` renders the full browser, the
@@ -817,6 +843,16 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
         <header className={css.header}>
           <span className={css.title}>{t('workspaces')}</span>
           <div className={css.headerActions}>
+            <Tooltip label={t('collapseEverything')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('collapseEverything')}
+                onClick={collapseEverything}
+              >
+                <IconChevronUpOutline14 />
+              </button>
+            </Tooltip>
             <ViewOptionsMenu
               groupBy={state.groupBy}
               orderBy={state.orderBy}
@@ -908,6 +944,10 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 recents={[]}
                 ungrouped={filteredForest.ungrouped}
                 openers={openers}
+                sessionsOverflow={sessionsOverflow}
+                onToggleOverflow={toggleOverflow}
+                onCollapseRecents={collapseRecents}
+                onCollapseAll={collapseAll}
               />
           : state.groupBy === 'flat'
             ? <FlatList props={props} rows={flat} onRename={openers.onRenameSession} />
@@ -918,6 +958,10 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
               recents={recents}
               ungrouped={forest.ungrouped}
               openers={openers}
+              sessionsOverflow={sessionsOverflow}
+              onToggleOverflow={toggleOverflow}
+              onCollapseRecents={collapseRecents}
+              onCollapseAll={collapseAll}
             />)}
       </div>
       {createFolderTarget !== null && (
@@ -1066,10 +1110,13 @@ function GroupedView(props: {
   recents: ReturnType<typeof deriveRecentWorkspaces>
   ungrouped: WorkspaceLeaf | undefined
   openers: RowOpeners
+  sessionsOverflow: readonly string[]
+  onToggleOverflow: (key: string) => void
+  onCollapseRecents: () => void
+  onCollapseAll: () => void
 }): ReactNode {
   const { t, actions, startSession } = props.props
   const state = props.props.useStore(identity)
-  const [sessionsOverflow, setSessionsOverflow] = useState<string[]>([])
   const callbacks: RowCallbacks = {
     onToggleGroup: key => actions.setGroupExpanded(key, !state.groupExpansion[key]),
     onToggleFolder: folderId => actions.setFolderExpanded(folderId, !state.folderExpansion[folderId]),
@@ -1098,24 +1145,9 @@ function GroupedView(props: {
     t,
   }
   const topLevelLabel = t('moveDestinationTopLevel')
-  const toggleOverflow = (key: string): void => setSessionsOverflow(keys => toggled(keys, key))
   // One relative-time stamp per render pass, shared by every session row's
   // hover card (the same posture as the built-in tree).
   const now = Date.now()
-  // The recents header's collapse: only the recency module's rows fold (its
-  // `recent:` keyspace) — the workspace list below keeps its expansion, and
-  // only the recency rows' "show more" overflows reset with them.
-  const collapseRecents = (): void => {
-    actions.collapseRecents()
-    setSessionsOverflow(keys => keys.filter(key => !key.startsWith(RECENT_GROUP_KEY_PREFIX)))
-  }
-  // The "all" header's collapse: only this section's expandable rows — the
-  // folder forest and the tree/ungrouped session groups — fold back; recency
-  // rows keep their expansion, and only this section's overflows reset.
-  const collapseAll = (): void => {
-    actions.collapseAll()
-    setSessionsOverflow(keys => keys.filter(key => key.startsWith(RECENT_GROUP_KEY_PREFIX)))
-  }
 
   // Drag & drop seat: source + highlighted target live here; drops resolve
   // against the tree through the pure drag module and dispatch store actions
@@ -1203,7 +1235,7 @@ function GroupedView(props: {
                   type="button"
                   className={css.iconButton}
                   aria-label={t('collapseAll')}
-                  onClick={collapseRecents}
+                  onClick={props.onCollapseRecents}
                 >
                   <IconChevronUpOutline14 />
                 </button>
@@ -1218,8 +1250,8 @@ function GroupedView(props: {
                 ancestors={[]}
                 callbacks={callbacks}
                 sessionSeat={sessionSeat}
-                sessionsOverflow={sessionsOverflow}
-                onToggleOverflow={toggleOverflow}
+                sessionsOverflow={props.sessionsOverflow}
+                onToggleOverflow={props.onToggleOverflow}
                 drag={drag}
                 guide={guide}
                 now={now}
@@ -1244,7 +1276,7 @@ function GroupedView(props: {
                     type="button"
                     className={css.iconButton}
                     aria-label={t('collapseAll')}
-                    onClick={collapseAll}
+                    onClick={props.onCollapseAll}
                   >
                     <IconChevronUpOutline14 />
                   </button>
@@ -1268,8 +1300,8 @@ function GroupedView(props: {
                 parentName={topLevelLabel}
                 callbacks={callbacks}
                 sessionSeat={sessionSeat}
-                sessionsOverflow={sessionsOverflow}
-                onToggleOverflow={toggleOverflow}
+                sessionsOverflow={props.sessionsOverflow}
+                onToggleOverflow={props.onToggleOverflow}
                 drag={drag}
                 ancestors={[]}
                 guide={guide}
@@ -1288,8 +1320,8 @@ function GroupedView(props: {
                   ancestors={[]}
                   callbacks={callbacks}
                   sessionSeat={sessionSeat}
-                  sessionsOverflow={sessionsOverflow}
-                  onToggleOverflow={toggleOverflow}
+                  sessionsOverflow={props.sessionsOverflow}
+                  onToggleOverflow={props.onToggleOverflow}
                   drag={drag}
                   guide={guide}
                   now={now}
@@ -1302,8 +1334,8 @@ function GroupedView(props: {
                 ancestors={[]}
                 callbacks={callbacks}
                 sessionSeat={sessionSeat}
-                sessionsOverflow={sessionsOverflow}
-                onToggleOverflow={toggleOverflow}
+                sessionsOverflow={props.sessionsOverflow}
+                onToggleOverflow={props.onToggleOverflow}
                 drag={drag}
                 guide={guide}
                 now={now}

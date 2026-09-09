@@ -86,6 +86,11 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   （侧边栏收成 rail 时由 shell 的 rail 新建按钮兜底）。组件 spec 1 例
   覆盖：命中三态目标（当前会话工作区 → 最近工作区 → 无参），噪声键
   （裸 n / Cmd+Shift+N / Cmd+Alt+N / Cmd+J / repeat）不触发。
+- **交互补充：浏览器区头「收起全部」**：区头右侧动作组新增 chevron-up
+  收起按钮（`collapseEverything` 动作 = `collapseAll` 与 `collapseRecents`
+  的并集）——一键折叠下方**两个模块**的全部展开行（最近使用行 + 目录树/
+  未分组会话组），两组「显示其余 n 个」溢出随之一并复位；分节各自的收起
+  按钮保持原语义。store 单测 1 例 + 组件 spec 1 例。
 - **质量门**：`pnpm typecheck` 全绿；`pnpm test` 152/152（model 68 + drag 10 +
   store 10 + browser 38 + host-storage 19 + persistence 7）；`pnpm build`
   双通道通过（purity gate）；`pnpm test:mount` 实测通过（scratch DSH_HOME +
