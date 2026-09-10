@@ -180,3 +180,49 @@ export function treesByWorkspace(
   }
   return out
 }
+
+/** One derived repo group of the "按仓库分组" view. */
+export interface GitRepoGroupDerived {
+  /** Repository identity key (the main `.git` directory path). */
+  repoKey: string
+  /** Display name: the main tree root's basename. */
+  name: string
+  /** Workspaces whose PATH binds to a tree of this repository. */
+  workspaceIds: WorkspaceId[]
+}
+
+/**
+ * Derive the repo grouping over the probe: every workspace whose path binds
+ * to a tree joins the repo group of that tree's `repoKey`; workspaces with
+ * no git binding land in `nogit` (rendered flattened below the repo groups —
+ * plain directories and dsh-remote mirrors alike). Repo display name is the
+ * main tree root's basename (fallback: the shallowest bound root).
+ */
+export function deriveRepoGroups(
+  index: GitProbeResultJSON,
+  workspaces: readonly { readonly workspaceId: WorkspaceId; readonly path: string }[],
+): { repos: GitRepoGroupDerived[]; nogit: WorkspaceId[] } {
+  const repoByName = new Map<string, GitRepoGroupDerived>()
+  const nogit: WorkspaceId[] = []
+  for (const workspace of workspaces) {
+    const tree = treeOfCwd(index, workspace.path)
+    if (tree === undefined) {
+      nogit.push(workspace.workspaceId)
+      continue
+    }
+    let repo = repoByName.get(tree.repoKey)
+    if (repo === undefined) {
+      repo = { repoKey: tree.repoKey, name: basename(tree.root), workspaceIds: [] }
+      repoByName.set(tree.repoKey, repo)
+    }
+    repo.workspaceIds.push(workspace.workspaceId)
+  }
+  return { repos: [...repoByName.values()], nogit }
+}
+
+/** Path basename (browser-safe, no node:path). */
+export function basename(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, '')
+  const sep = trimmed.lastIndexOf('/')
+  return sep >= 0 ? trimmed.slice(sep + 1) : trimmed
+}

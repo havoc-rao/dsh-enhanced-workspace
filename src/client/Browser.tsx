@@ -32,7 +32,7 @@
  * @module dsh-enhanced-workspace/client/Browser
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   HoverCard,
   IconArchiveOutline20,
@@ -53,7 +53,13 @@ import {
   StateDot,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type {
+  SessionId,
+  SessionListState,
+  SessionSummary,
+  WorkspaceId,
+  WorkspaceView,
+} from '@deepseek-ai/dsh-client-runtime/client'
 import {
   DIRECTORY_FLOW_SLOT,
   type EnhancedDirectoryFlowOwnerProps,
@@ -99,6 +105,16 @@ import {
   type SessionNode,
   type WorkspaceLeaf,
 } from './model.ts'
+import {
+  aggregateWorkspaceTrees,
+  basename,
+  deriveRepoGroups,
+  deriveSubworkspaceGroups,
+  treeOfCwd,
+  unregisteredTrees,
+  type GitRepoGroupDerived,
+} from './git-model.ts'
+import type { GitProbeResultJSON } from '../shared/git.ts'
 import { FLAT_SESSION_ORDER_KEY } from './store.ts'
 import css from './Browser.module.css'
 
@@ -309,6 +325,17 @@ const identity = <T,>(snapshot: T): T => snapshot
 /** Debounce of durable envelope writes (coalesces quick toggles/edits into one file write). */
 const PERSIST_DEBOUNCE_MS = 300
 
+/** Git probe refresh debounce on window focus (git state changes outside DSH:
+ *  worktree add/remove, branch switch — re-probed shortly after focus). */
+const PROBE_REFRESH_DEBOUNCE_MS = 1200
+
+/** Group-expansion key prefix for repo groups in the "按仓库分组" view. */
+const REPO_GROUP_KEY_PREFIX = 'repo:'
+
+/** Group-expansion key prefix for subworkspace (tree) groups inside a
+ *  workspace: `tw:<workspaceKey>:<groupKey>`. */
+const SUBWS_GROUP_KEY_PREFIX = 'tw:'
+
 // A slot can remount over the same store. Hydration belongs to that store's
 // action identity, not its React mount; weak keys do not retain disposed stores.
 const hydratedStores = new WeakSet<EnhancedWorkspaceBrowserProps['actions']>()
@@ -329,12 +356,45 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     startSession, open,
     renameSession, forkSession, archiveSession,
     renameWorkspace, deleteWorkspace,
-    insertWorkspaceBefore, createWorkspace, pickDirectory, persistence,
+    insertWorkspaceBefore, createWorkspace, pickDirectory, probeGit, persistence,
   } = props
   const workspaces = props.useWorkspaces(identity)
   const sessions = props.useSessions(identity)
   const state = useStore(identity)
   const [query, setQuery] = useState('')
+
+  // ── Git probe (derived cache, never persisted) ──────────────────────────
+  // The repo index lives in browser state, not the envelope: it is a
+  // read-only derivation of workspace paths + session cwds, refreshed on
+  // mount (once the workspace baseline is ready) and on window focus
+  // (debounced) — git state changes outside DSH (worktree add/remove, branch
+  // switch) self-heal on the next refresh. null = probe unavailable/failed:
+  // every git-derived surface renders its no-git fallback.
+  const [gitProbe, setGitProbe] = useState<GitProbeResultJSON | null>(null)
+  const refreshGit = useCallback((): void => {
+    const paths = new Set<string>()
+    for (const workspace of workspaces.items) paths.add(workspace.path)
+    for (const session of Object.values(sessions.byId)) {
+      if (session.cwd !== undefined && session.cwd !== '') paths.add(session.cwd)
+    }
+    void probeGit([...paths]).then(setGitProbe)
+  }, [probeGit, workspaces.items, sessions.byId])
+  useEffect(() => {
+    if (!workspaces.baselinesReady) return
+    refreshGit()
+  }, [workspaces.baselinesReady, refreshGit])
+  const focusTimerRef = useRef<number | null>(null)
+  useEffect(() => {
+    const onFocus = (): void => {
+      if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current)
+      focusTimerRef.current = window.setTimeout(refreshGit, PROBE_REFRESH_DEBOUNCE_MS)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current)
+    }
+  }, [refreshGit])
   // "Show more" overflow toggles for long session lists, owned HERE so the
   // browser header's collapse-everything can reset both sections' overflows
   // in one shot; GroupedView renders the rows against this state.
@@ -949,6 +1009,8 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 onToggleOverflow={toggleOverflow}
                 onCollapseRecents={collapseRecents}
                 onCollapseAll={collapseAll}
+                git={{ probe: gitProbe, onRefresh: refreshGit }}
+                query={query}
               />
           : state.groupBy === 'flat'
             ? <FlatList props={props} rows={flat} onRename={openers.onRenameSession} />
@@ -963,6 +1025,8 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
               onToggleOverflow={toggleOverflow}
               onCollapseRecents={collapseRecents}
               onCollapseAll={collapseAll}
+              git={{ probe: gitProbe, onRefresh: refreshGit }}
+              query={query}
             />)}
       </div>
       {createFolderTarget !== null && (
@@ -1116,9 +1180,43 @@ function GroupedView(props: {
   onToggleOverflow: (key: string) => void
   onCollapseRecents: () => void
   onCollapseAll: () => void
+  /** Active search query (repo view filters groups and members against it). */
+  query: string
+  /** Git probe seat: repo grouping + row pills + subworkspace groups +
+   *  the unregistered-tree group all derive from it. `probe: null` renders
+   *  every git surface in its no-git fallback. */
+  git: { probe: GitProbeResultJSON | null; onRefresh: () => void }
 }): ReactNode {
   const { t, actions, startSession } = props.props
   const state = props.props.useStore(identity)
+  // Workspace → session cwd list, for the git aggregation (row pill +
+  // subworkspace groups): the derived leaves only carry sessions while
+  // expanded, so the git layer reads the live session list directly.
+  const sessionCwdsByWorkspace = useMemo(() => {
+    const sessions = props.props.useSessions(identity)
+    const workspaces = props.props.useWorkspaces(identity)
+    const map = new Map<WorkspaceId, readonly { id: SessionId; cwd?: string }[]>()
+    for (const workspace of workspaces.items) {
+      const list: { id: SessionId; cwd?: string }[] = []
+      for (const id of workspace.sessionIds) {
+        const summary = sessions.byId[id]
+        if (summary === undefined) continue
+        list.push(summary.cwd === undefined ? { id } : { id, cwd: summary.cwd })
+      }
+      map.set(workspace.workspaceId, list)
+    }
+    return (workspaceId: WorkspaceId | undefined): readonly { id: SessionId; cwd?: string }[] =>
+      workspaceId === undefined ? [] : (map.get(workspaceId) ?? [])
+  }, [props.props])
+  // Expanded group-key set for the subworkspace headers (`tw:` keys live in
+  // the same groupExpansion map the section collapse-all already clears).
+  const expandedKeys = useMemo(() => {
+    const set = new Set<string>()
+    for (const [key, value] of Object.entries(state.groupExpansion)) {
+      if (value) set.add(key)
+    }
+    return set
+  }, [state.groupExpansion])
   const callbacks: RowCallbacks = {
     onToggleGroup: key => actions.setGroupExpanded(key, !state.groupExpansion[key]),
     onToggleFolder: folderId => actions.setFolderExpanded(folderId, !state.folderExpansion[folderId]),
@@ -1257,18 +1355,20 @@ function GroupedView(props: {
                 drag={drag}
                 guide={guide}
                 now={now}
+                git={props.git.probe}
+                sessionsForGit={sessionCwdsByWorkspace(recent.workspaceId)}
+                expandedKeys={expandedKeys}
               />
             ))}
           </section>
         )
         : null}
-      {props.forest.length > 0 || props.topLevel.length > 0 || props.ungrouped !== undefined
+      {props.forest.length > 0 || props.topLevel.length > 0 || props.ungrouped !== undefined || state.groupBy === 'repo'
         ? (
-          // The full workspace tree below the recents border: folder forest,
-          // root-level leaves, and the ungrouped bucket — shared section
-          // styling with the recency module but the last block, so its trailing
-          // divider is omitted; the collapse-all and "new folder" actions sit
-          // on the title's right side.
+          // The full workspace tree below the recents border: the folder
+          // forest, root-level leaves, and the ungrouped bucket — or, in the
+          // git-repo grouping mode, the repo forest with the no-git
+          // workspaces flattened below and the unregistered-tree group last.
           <section className={css.section}>
             <div className={css.sectionHeader}>
               <h3 className={css.sectionTitle}>{t('all')}</h3>
@@ -1295,54 +1395,86 @@ function GroupedView(props: {
                 </Tooltip>
               </div>
             </div>
-            {props.forest.map(folder => (
-              <FolderRow
-                key={folder.folderId}
-                node={folder}
-                parentName={topLevelLabel}
-                callbacks={callbacks}
-                sessionSeat={sessionSeat}
-                sessionsOverflow={props.sessionsOverflow}
-                onToggleOverflow={props.onToggleOverflow}
-                drag={drag}
-                ancestors={[]}
-                guide={guide}
-                now={now}
-              />
-            ))}
-            <WorkspaceDropRegion
-              active={drag.appendWorkspaceFolderId === ROOT_FOLDER_ID}
-              label={t('dropWorkspaceTopLevelEnd')}
-              depth={0}
-            >
-              {props.topLevel.map(leaf => (
-                <LeafRow
-                  key={leaf.key}
-                  leaf={leaf}
-                  ancestors={[]}
-                  callbacks={callbacks}
-                  sessionSeat={sessionSeat}
-                  sessionsOverflow={props.sessionsOverflow}
-                  onToggleOverflow={props.onToggleOverflow}
-                  drag={drag}
-                  guide={guide}
-                  now={now}
-                />
-              ))}
-            </WorkspaceDropRegion>
-            {props.ungrouped !== undefined && (
-              <LeafRow
-                leaf={props.ungrouped}
-                ancestors={[]}
-                callbacks={callbacks}
-                sessionSeat={sessionSeat}
-                sessionsOverflow={props.sessionsOverflow}
-                onToggleOverflow={props.onToggleOverflow}
-                drag={drag}
-                guide={guide}
-                now={now}
-              />
-            )}
+            {state.groupBy === 'repo'
+              ? (
+                <>
+                  <RepoForestView
+                    props={props.props}
+                    git={props.git}
+                    callbacks={callbacks}
+                    sessionSeat={sessionSeat}
+                    sessionsOverflow={props.sessionsOverflow}
+                    onToggleOverflow={props.onToggleOverflow}
+                    drag={drag}
+                    guide={guide}
+                    now={now}
+                    sessionsForGit={sessionCwdsByWorkspace}
+                    query={props.query}
+                  />
+                  <UnregGroup git={props.git.probe} props={props.props} />
+                </>
+              )
+              : (
+                <>
+                  {props.forest.map(folder => (
+                    <FolderRow
+                      key={folder.folderId}
+                      node={folder}
+                      parentName={topLevelLabel}
+                      callbacks={callbacks}
+                      sessionSeat={sessionSeat}
+                      sessionsOverflow={props.sessionsOverflow}
+                      onToggleOverflow={props.onToggleOverflow}
+                      drag={drag}
+                      ancestors={[]}
+                      guide={guide}
+                      now={now}
+                      git={props.git.probe}
+                      sessionsForGit={sessionCwdsByWorkspace}
+                      expandedKeys={expandedKeys}
+                    />
+                  ))}
+                  <WorkspaceDropRegion
+                    active={drag.appendWorkspaceFolderId === ROOT_FOLDER_ID}
+                    label={t('dropWorkspaceTopLevelEnd')}
+                    depth={0}
+                  >
+                    {props.topLevel.map(leaf => (
+                      <LeafRow
+                        key={leaf.key}
+                        leaf={leaf}
+                        ancestors={[]}
+                        callbacks={callbacks}
+                        sessionSeat={sessionSeat}
+                        sessionsOverflow={props.sessionsOverflow}
+                        onToggleOverflow={props.onToggleOverflow}
+                        drag={drag}
+                        guide={guide}
+                        now={now}
+                        git={props.git.probe}
+                        sessionsForGit={sessionCwdsByWorkspace(leaf.workspaceId as WorkspaceId)}
+                        expandedKeys={expandedKeys}
+                      />
+                    ))}
+                  </WorkspaceDropRegion>
+                  {props.ungrouped !== undefined && (
+                    <LeafRow
+                      leaf={props.ungrouped}
+                      ancestors={[]}
+                      callbacks={callbacks}
+                      sessionSeat={sessionSeat}
+                      sessionsOverflow={props.sessionsOverflow}
+                      onToggleOverflow={props.onToggleOverflow}
+                      drag={drag}
+                      guide={guide}
+                      now={now}
+                      git={null}
+                      sessionsForGit={[]}
+                    />
+                  )}
+                  <UnregGroup git={props.git.probe} props={props.props} />
+                </>
+              )}
           </section>
         )
         : null}
@@ -1387,6 +1519,12 @@ function FolderRow(props: {
   guide: GuideSeat
   /** Current epoch ms, forwarded to the subtree's session hover cards. */
   now: number
+  /** Git probe seat forwarded to the subtree's workspace rows. */
+  git?: GitProbeResultJSON | null
+  /** Workspace → session cwd list (git aggregation source). */
+  sessionsForGit?: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
+  /** Expanded group keys forwarded to the subtree's workspace rows. */
+  expandedKeys?: ReadonlySet<string>
 }): ReactNode {
   const { node, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1525,6 +1663,9 @@ function FolderRow(props: {
                   drag={props.drag}
                   guide={props.guide}
                   now={props.now}
+                  {...(props.git === undefined || props.git === null ? {} : { git: props.git })}
+                  sessionsForGit={props.sessionsForGit?.(leaf.workspaceId as WorkspaceId) ?? []}
+                  {...(props.expandedKeys === undefined ? {} : { expandedKeys: props.expandedKeys })}
                 />
               ))}
             </WorkspaceDropRegion>
@@ -1551,6 +1692,12 @@ function LeafRow(props: {
   /** Current epoch ms, injected from the tree render for the session rows'
    *  hover-card relative times (one stamp per render pass). */
   now: number
+  /** Git probe seat: row pill (aggregate) + subworkspace grouping. */
+  git?: GitProbeResultJSON | null
+  /** The workspace's sessions with cwd, for the git aggregation. */
+  sessionsForGit?: readonly { id: SessionId; cwd?: string }[]
+  /** Expanded group keys (subworkspace headers toggle through these). */
+  expandedKeys?: ReadonlySet<string>
 }): ReactNode {
   const { leaf, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1559,6 +1706,17 @@ function LeafRow(props: {
   const shownSessions = overflowExpanded
     ? leaf.sessions
     : leaf.sessions.slice(0, COLLAPSED_SESSION_LIMIT)
+  // Git aggregate pill: 0 trees → nothing; 1 tree → its pill; >1 → "n 棵".
+  const gitAggregate = props.git !== null && props.git !== undefined && hasAccount
+    ? aggregateWorkspaceTrees(props.sessionsForGit ?? [], props.git)
+    : { kind: 'none' } as const
+  // Subworkspace grouping (v3): sessions grouped by their cwd's tree; the
+  // renderer flattens single-group results (ordinary workspaces keep the
+  // built-in shape).
+  const gitGroups = props.git !== null && props.git !== undefined && hasAccount && leaf.cwd !== undefined
+    ? deriveSubworkspaceGroups(leaf.cwd, props.sessionsForGit ?? [], props.git)
+    : []
+  const splitGroups = gitGroups.length > 1
   // One indent step per ancestor folder (0 = top level).
   const depth = props.ancestors.length
   const indentPx = rowIndent(depth)
@@ -1637,6 +1795,19 @@ function LeafRow(props: {
         {leaf.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />}
       </span>
       <span className={css.rowLabel}>{leaf.label}</span>
+      {gitAggregate.kind === 'single' && (
+        <span
+          className={css.gitPill}
+          title={gitAggregate.tree.branch !== undefined ? `branch ${gitAggregate.tree.branch}` : `detached ${gitAggregate.tree.detached ?? ''}`}
+        >
+          {gitAggregate.tree.branch ?? gitAggregate.tree.detached}
+        </span>
+      )}
+      {gitAggregate.kind === 'multi' && (
+        <span className={css.gitPillMulti} title={`${gitAggregate.trees.length} 棵树的会话`}>
+          {gitAggregate.trees.length} 棵
+        </span>
+      )}
       <span className={css.rowActions}>
         {hasAccount && (
           <>
@@ -1708,7 +1879,71 @@ function LeafRow(props: {
     <div className={css.leafBranch}>
       {rowElement}
       {leaf.expanded
-        ? (
+        ? splitGroups
+          ? (
+            // Subworkspace grouping: the workspace's sessions split by their
+            // cwd's tree (own tree / linked tree / no git). Group headers
+            // toggle through `tw:`-prefixed group keys (cleared by the
+            // section collapse-all like every non-recent key).
+            <div className={css.sessionList}>
+              {gitGroups.map(group => {
+                const subKey = `${SUBWS_GROUP_KEY_PREFIX}${leaf.key}:${group.key}`
+                const groupOpen = props.expandedKeys?.has(subKey) ?? false
+                const groupSessions = leaf.sessions.filter(session => group.sessionIds.includes(session.id))
+                const shown = props.sessionsOverflow.includes(subKey)
+                  ? groupSessions
+                  : groupSessions.slice(0, COLLAPSED_SESSION_LIMIT)
+                const label = group.own
+                  ? callbacks.t('subwsOwn', { name: leaf.label })
+                  : (group.tree?.branch ?? group.tree?.detached ?? callbacks.t('subwsNogit'))
+                return (
+                  <div key={subKey}>
+                    <div
+                      className={css.subwsRow}
+                      role="treeitem"
+                      aria-expanded={groupOpen}
+                      style={{ paddingLeft: `${indentPx + SESSION_INDENT_OFFSET_PX}px` }}
+                      onClick={() => { callbacks.onToggleGroup(subKey) }}
+                    >
+                      <span className={css.chevron}>
+                        <IconTriangleRightFill14 className={groupOpen ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+                      </span>
+                      <span className={css.rowLabel}>{label}</span>
+                      {group.tree !== undefined && (
+                        <span
+                          className={`${css.gitPill}${group.tree.role === 'main' ? ` ${css.gitPillMain}` : ''}`}
+                        >
+                          {group.tree.branch ?? group.tree.detached}
+                        </span>
+                      )}
+                      <span className={css.sessionCount}>{group.sessionIds.length}</span>
+                    </div>
+                    {groupOpen && (
+                      <>
+                        {shown.map(session => (
+                          <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx + 16} columns={sessionColumns} guide={props.guide} now={props.now} />
+                        ))}
+                        {groupSessions.length > COLLAPSED_SESSION_LIMIT && (
+                          <button
+                            type="button"
+                            className={css.overflowButton}
+                            style={{ marginLeft: `${indentPx + SESSION_INDENT_OFFSET_PX + 24}px` }}
+                            aria-expanded={props.sessionsOverflow.includes(subKey)}
+                            onClick={() => { props.onToggleOverflow(subKey) }}
+                          >
+                            {props.sessionsOverflow.includes(subKey)
+                              ? callbacks.t('sessionsCollapse')
+                              : callbacks.t('sessionsExpand', { n: groupSessions.length - COLLAPSED_SESSION_LIMIT })}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )
+          : (
           <div className={css.sessionList}>
             {shownSessions.map(session => (
               <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx} columns={sessionColumns} guide={props.guide} now={props.now} />
@@ -1727,7 +1962,7 @@ function LeafRow(props: {
               </button>
             )}
           </div>
-        )
+          )
         : null}
     </div>
   )
@@ -1867,6 +2102,328 @@ function FlatList(props: {
       {props.rows.map(session => (
         <SessionRow key={session.id} session={session} seat={seat} onOpen={seat.onOpen} now={now} />
       ))}
+    </div>
+  )
+}
+
+/* =====================================================================
+ * Git-repo grouping view ("按仓库分组", v3): repo group rows (folder-row
+ * form) with their workspace members, the no-git workspaces flattened
+ * below, and the unregistered-worktree group last. All read the probe
+ * result; `probe: null` renders the section without any git furniture.
+ * ===================================================================== */
+
+/** Workspace-title/path/branch/session-title match for the repo filter. */
+function repoMatch(
+  workspace: { workspaceId: WorkspaceId; title: string; path: string },
+  sessions: readonly { id: SessionId; title?: string; cwd?: string }[],
+  probe: GitProbeResultJSON,
+  q: string,
+): boolean {
+  if (q === '') return true
+  if (workspace.title.includes(q) || workspace.path.includes(q)) return true
+  for (const session of sessions) {
+    if (session.title !== undefined && session.title.includes(q)) return true
+    const tree = treeOfCwd(probe, session.cwd)
+    if (tree !== undefined && tree.branch?.includes(q)) return true
+    if (tree !== undefined && tree.detached?.includes(q)) return true
+  }
+  return false
+}
+
+/** The "按仓库分组" body: repo groups + no-git workspaces, filtered by query. */
+function RepoForestView(props: {
+  props: EnhancedWorkspaceBrowserProps
+  git: { probe: GitProbeResultJSON | null; onRefresh: () => void }
+  callbacks: RowCallbacks
+  sessionSeat: SessionRowSeat
+  sessionsOverflow: readonly string[]
+  onToggleOverflow: (key: string) => void
+  drag: DragSeat
+  guide: GuideSeat
+  now: number
+  query: string
+  sessionsForGit: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
+}): ReactNode {
+  const { t, actions } = props.props
+  const state = props.props.useStore(identity)
+  const workspaces = props.props.useWorkspaces(identity)
+  const sessions = props.props.useSessions(identity)
+  const probe = props.git.probe
+  const q = props.query.trim().toLowerCase()
+  const callbacks = props.callbacks
+  const sessionSeat = props.sessionSeat
+  const expandedKeys = useMemo(() => {
+    const set = new Set<string>()
+    for (const [key, value] of Object.entries(state.groupExpansion)) if (value) set.add(key)
+    return set
+  }, [state.groupExpansion])
+  if (probe === null) {
+    return <div className={css.searchStatus} role="status">{t('searchNoMatches')}</div>
+  }
+  const { repos, nogit } = deriveRepoGroups(probe, workspaces.items)
+  const workspaceById = new Map(workspaces.items.map(workspace => [workspace.workspaceId, workspace]))
+  const sessionTitlesOf = (workspaceId: WorkspaceId): { id: SessionId; title?: string; cwd?: string }[] =>
+    (workspaceById.get(workspaceId)?.sessionIds as SessionId[] | undefined)?.map(id => {
+      const summary = sessions.byId[id]
+      if (summary === undefined) return { id } as { id: SessionId; title?: string; cwd?: string }
+      return summary.cwd === undefined
+        ? { id, title: summary.displayTitle } as { id: SessionId; title?: string; cwd?: string }
+        : { id, title: summary.displayTitle, cwd: summary.cwd } as { id: SessionId; title?: string; cwd?: string }
+    }) ?? []
+  const visibleRepos = repos
+    .map(repo => ({
+      ...repo,
+      members: repo.workspaceIds.filter(id => {
+        const workspace = workspaceById.get(id)
+        return workspace !== undefined && repoMatch(workspace, sessionTitlesOf(id), probe, q)
+      }),
+    }))
+    .filter(repo => repo.members.length > 0 || repo.name.includes(q))
+  return (
+    <>
+      {visibleRepos.map(repo => (
+        <RepoGroupRow
+          key={repo.repoKey}
+          repo={repo}
+          probe={probe}
+          workspaceById={workspaceById}
+          sessions={sessions}
+          state={state}
+          callbacks={callbacks}
+          sessionSeat={sessionSeat}
+          sessionsOverflow={props.sessionsOverflow}
+          onToggleOverflow={props.onToggleOverflow}
+          drag={props.drag}
+          guide={props.guide}
+          now={props.now}
+          sessionsForGit={props.sessionsForGit}
+          expandedKeys={expandedKeys}
+          actions={actions}
+          onRefresh={props.git.onRefresh}
+          t={t}
+        />
+      ))}
+      {nogit.length > 0 && (
+        <>
+          <div className={css.gitNote}>{t('noGitWorkspaces')}</div>
+          {nogit.map(workspaceId => {
+            const leaf = sessionLeafOf(workspaceById.get(workspaceId), sessions, state)
+            if (leaf === undefined) return null
+            return (
+              <LeafRow
+                key={workspaceId as string}
+                leaf={leaf}
+                ancestors={[]}
+                callbacks={callbacks}
+                sessionSeat={sessionSeat}
+                sessionsOverflow={props.sessionsOverflow}
+                onToggleOverflow={props.onToggleOverflow}
+                drag={props.drag}
+                guide={props.guide}
+                now={props.now}
+                git={null}
+                sessionsForGit={[]}
+                expandedKeys={expandedKeys}
+              />
+            )
+          })}
+        </>
+      )}
+    </>
+  )
+}
+
+/** One repo group row plus its workspace members (per-row menu state). */
+function RepoGroupRow(props: {
+  repo: GitRepoGroupDerived
+  probe: GitProbeResultJSON
+  workspaceById: Map<WorkspaceId, WorkspaceView>
+  sessions: SessionListState
+  state: { groupExpansion: Record<string, boolean>; folderExpansion: Record<string, boolean> }
+  callbacks: RowCallbacks
+  sessionSeat: SessionRowSeat
+  sessionsOverflow: readonly string[]
+  onToggleOverflow: (key: string) => void
+  drag: DragSeat
+  guide: GuideSeat
+  now: number
+  sessionsForGit: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
+  expandedKeys: ReadonlySet<string>
+  actions: EnhancedWorkspaceBrowserProps['actions']
+  onRefresh: () => void
+  t: EnhancedWorkspaceBrowserProps['t']
+}): ReactNode {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const repoKey = `${REPO_GROUP_KEY_PREFIX}${props.repo.repoKey}`
+  const open = props.state.groupExpansion[repoKey] === true
+  return (
+    <div>
+      <div
+        className={css.repoRow}
+        role="treeitem"
+        aria-expanded={open}
+        onClick={() => { props.actions.setGroupExpanded(repoKey, !open) }}
+      >
+        <span className={css.chevron}>
+          <IconTriangleRightFill14 className={open ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+        </span>
+        <span className={`${css.rowGlyph}${open ? ` ${css.folderActive}` : ''}`}>
+          {open ? <IconFolderOpen16 /> : <IconFolderClose16 />}
+        </span>
+        <span className={css.rowLabel}>{props.repo.name}</span>
+        <span className={css.gitPillMain}>{props.t('groupByRepo')}</span>
+        <span className={css.sessionCount}>{props.repo.workspaceIds.length}</span>
+        <span className={css.rowActions}>
+          <Menu
+            open={menuOpen}
+            onClose={() => { setMenuOpen(false) }}
+            items={[
+              { id: 'refresh', label: props.t('refreshGitProbe'), icon: <IconBranchOutline16 /> },
+              { id: 'organize', label: props.t('organizeIntoFolder'), icon: <IconFolderOpenOutline16 /> },
+            ]}
+            onSelect={(id) => {
+              setMenuOpen(false)
+              if (id === 'refresh') props.onRefresh()
+            }}
+            dense
+            portal
+            closeOnPointerLeave
+            anchor={(
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={props.t('refreshGitProbe')}
+                onClick={event => { event.stopPropagation(); setMenuOpen(value => !value) }}
+              >
+                <IconEllipsisOutline16 />
+              </button>
+            )}
+          />
+        </span>
+      </div>
+      {open && (
+        <div className={css.repoChildren}>
+          {props.repo.workspaceIds.map((workspaceId: WorkspaceId) => {
+            const leaf = sessionLeafOf(props.workspaceById.get(workspaceId), props.sessions, props.state)
+            if (leaf === undefined) return null
+            return (
+              <LeafRow
+                key={workspaceId as string}
+                leaf={leaf}
+                ancestors={[]}
+                callbacks={props.callbacks}
+                sessionSeat={props.sessionSeat}
+                sessionsOverflow={props.sessionsOverflow}
+                onToggleOverflow={props.onToggleOverflow}
+                drag={props.drag}
+                guide={props.guide}
+                now={props.now}
+                git={props.probe}
+                sessionsForGit={props.sessionsForGit(workspaceId)}
+                expandedKeys={props.expandedKeys}
+              />
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Build a leaf row for one workspace (session rows populated when expanded). */
+function sessionLeafOf(
+  workspace: WorkspaceView | undefined,
+  sessions: SessionListState,
+  state: { groupExpansion: Record<string, boolean>; folderExpansion: Record<string, boolean> },
+): WorkspaceLeaf | undefined {
+  if (workspace === undefined) return undefined
+  const expanded = state.groupExpansion[workspace.workspaceId] === true
+  return {
+    key: workspace.workspaceId,
+    workspaceId: workspace.workspaceId,
+    cwd: workspace.path,
+    createdAt: Date.parse(workspace.createdAt),
+    label: workspace.title,
+    sessionCount: workspace.sessionIds.length,
+    expanded,
+    containsCurrent: sessions.current !== undefined && workspace.sessionIds.includes(sessions.current as SessionId),
+    sessions: expanded
+      ? workspace.sessionIds
+        .map(id => sessions.byId[id as SessionId])
+        .filter((summary): summary is SessionSummary => summary !== undefined)
+        .filter(summary => !summary.blank && summary.origin !== 'subagent')
+        .map((summary): SessionNode => ({
+          id: summary.id,
+          current: summary.id === sessions.current,
+          title: summary.blank ? '' : summary.displayTitle,
+          blank: summary.blank,
+          running: summary.running,
+          runningSubagentCount: 0,
+          completed: summary.completed === true,
+          updatedAt: summary.updatedAt,
+          recentInputs: [],
+          recentOutputs: [],
+          ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
+          ...(summary.pendingInteraction === undefined ? {} : { pendingInteraction: summary.pendingInteraction }),
+        }))
+      : [],
+  }
+}
+
+/** The "未注册工作树" group: trees the probe knows but no workspace/session
+ *  path binds to — one-click registration adopts them as workspaces. */
+function UnregGroup(props: { git: GitProbeResultJSON | null; props: EnhancedWorkspaceBrowserProps }): ReactNode {
+  const { t, actions } = props.props
+  const state = props.props.useStore(identity)
+  if (props.git === null) return null
+  const workspaces = props.props.useWorkspaces(identity)
+  const sessions = props.props.useSessions(identity)
+  const referenced = new Set<string>()
+  for (const workspace of workspaces.items) referenced.add(workspace.path)
+  for (const session of Object.values(sessions.byId)) {
+    if (session.cwd !== undefined && session.cwd !== '') referenced.add(session.cwd)
+  }
+  const unreg = unregisteredTrees(props.git, [...referenced])
+  if (unreg.length === 0) return null
+  const key = 'tw:unreg'
+  const open = state.groupExpansion[key] === true
+  const register = (root: string): void => {
+    void props.props.createWorkspace({ path: root })
+      .then(created => { actions.adoptWorkspace(created.workspaceId) })
+      .catch(error => { console.warn('dsh-enhanced-workspace: register worktree failed', root, error) })
+  }
+  return (
+    <div>
+      <div
+        className={css.repoRow}
+        role="treeitem"
+        aria-expanded={open}
+        onClick={() => { actions.setGroupExpanded(key, !open) }}
+      >
+        <span className={css.chevron}>
+          <IconTriangleRightFill14 className={open ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+        </span>
+        <span className={css.rowGlyph}>
+          <IconFolderClose16 />
+        </span>
+        <span className={css.rowLabel}>{t('unregTreeGroup')}</span>
+        <span className={css.sessionCount}>{unreg.length}</span>
+      </div>
+      {open && (
+        <div className={css.repoChildren}>
+          {unreg.map(tree => (
+            <div key={tree.root} className={css.unregRow} onClick={() => { register(tree.root) }}>
+              <span className={css.rowGlyph}>
+                <IconFolderClose16 />
+              </span>
+              <span className={css.rowLabel}>{basename(tree.root)}</span>
+              <span className={css.gitPill}>{tree.detached ?? tree.branch}</span>
+              <span className={css.registerButton}>{t('registerTree')}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -148,6 +148,10 @@ async function renderBrowser(
       throw new Error('unused in this spec')
     }),
     pickDirectory: vi.fn(async () => null),
+    // Git probe: this spec renders the no-git world (probe unavailable →
+    // every git-derived surface falls back to the built-in shape). Git-layer
+    // behavior lives in tests/git-model.spec.ts + the git browser spec.
+    probeGit: vi.fn(async () => null),
     persistence,
   } as unknown as EnhancedWorkspaceBrowserProps
   await act(async () => {
