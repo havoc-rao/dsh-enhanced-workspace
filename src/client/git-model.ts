@@ -7,9 +7,12 @@
  *
  * Design anchor (v3, docs/plan/2026-09-10): tree ownership is a SESSION
  * property — `session.cwd` → tree via the probe bindings; a workspace row
- * only summarizes its sessions' trees. Plain directories and dsh-remote
- * mirrors (whose sync ignores `.git`) simply have no binding and render the
- * default no-git form. Every function here is side-effect free.
+ * only summarizes its sessions' trees. Plain directories simply have no
+ * binding and render the default no-git form. dsh-remote mirror workspaces
+ * (whose sync ignores `.git`) get their git state from the REMOTE side:
+ * `src/client/remote-git.ts` overlays virtual remote trees onto the probe
+ * (role `'remote'`) — this module consumes the merged result unchanged.
+ * Every function here is side-effect free.
  * @module dsh-enhanced-workspace/client/git-model
  */
 

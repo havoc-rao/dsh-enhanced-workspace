@@ -13,6 +13,7 @@ import type {
   WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { GitProbeResultJSON } from '../shared/git.ts'
+import type { RemoteGitSource } from './remote-git.ts'
 import type {
   InjectFace,
   PropsLocale,
@@ -133,6 +134,14 @@ export interface EnhancedWorkspaceInjected {
    * unavailable or the probe failed. Callers treat null as "no git layer".
    */
   probeGit: (paths: readonly string[]) => Promise<GitProbeResultJSON | null>
+  /**
+   * Remote-mirror git markers (dsh-remote `GET /dsh-remote/git-workspace`):
+   * branch + dirty state of the REMOTE repo behind a mirror workspace —
+   * the mirror's local `.git` does not exist, so the local probe alone can
+   * never see it. Fetches are memoized per path with a TTL and every
+   * failure degrades to "no marker" (never blocks, never errors).
+   */
+  remoteGit: RemoteGitSource
   /**
    * Start a NEW session in a target workspace and open it — the "在目标树
    * 继续" verb. Honest semantics: a session's cwd is fixed at creation and

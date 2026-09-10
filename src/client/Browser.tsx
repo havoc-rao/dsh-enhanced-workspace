@@ -110,11 +110,18 @@ import {
   basename,
   deriveRepoGroups,
   deriveSubworkspaceGroups,
+  normalizeProbePath,
   treeOfCwd,
   unregisteredTrees,
   type GitRepoGroupDerived,
 } from './git-model.ts'
-import type { GitProbeResultJSON, GitTreeInfoJSON } from '../shared/git.ts'
+import {
+  overlayRemoteMarkers,
+  remoteBranchLabel,
+  remoteDirtyCount,
+  remotePillTitle,
+} from './remote-git.ts'
+import type { GitProbeResultJSON, GitTreeInfoJSON, RemoteGitMarker } from '../shared/git.ts'
 import { FLAT_SESSION_ORDER_KEY } from './store.ts'
 import css from './Browser.module.css'
 
@@ -356,7 +363,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     startSession, open,
     renameSession, forkSession, archiveSession,
     renameWorkspace, deleteWorkspace,
-    insertWorkspaceBefore, createWorkspace, pickDirectory, probeGit, persistence,
+    insertWorkspaceBefore, createWorkspace, pickDirectory, probeGit, remoteGit, persistence,
   } = props
   const workspaces = props.useWorkspaces(identity)
   const sessions = props.useSessions(identity)
@@ -369,16 +376,28 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   // mount (once the workspace baseline is ready) and on window focus
   // (debounced) — git state changes outside DSH (worktree add/remove, branch
   // switch) self-heal on the next refresh. null = probe unavailable/failed:
-  // every git-derived surface renders its no-git fallback.
+  // every git-derived surface renders its no-git fallback. Remote-mirror
+  // markers ride along: the LOCAL probe can never see a mirror's git state
+  // (no .git in the mirror), so the dsh-remote marker source runs in
+  // parallel and its results overlay the probe as virtual remote trees.
   const [gitProbe, setGitProbe] = useState<GitProbeResultJSON | null>(null)
-  const refreshGit = useCallback((): void => {
+  const [gitMarkers, setGitMarkers] = useState<ReadonlyMap<string, RemoteGitMarker>>(() => new Map())
+  const collectGitPaths = useCallback((): string[] => {
     const paths = new Set<string>()
     for (const workspace of workspaces.items) paths.add(workspace.path)
     for (const session of Object.values(sessions.byId)) {
       if (session.cwd !== undefined && session.cwd !== '') paths.add(session.cwd)
     }
-    void probeGit([...paths]).then(setGitProbe)
-  }, [probeGit, workspaces.items, sessions.byId])
+    return [...paths]
+  }, [workspaces.items, sessions.byId])
+  const refreshGit = useCallback((hard = false): void => {
+    const paths = collectGitPaths()
+    void probeGit(paths).then(setGitProbe)
+    // hard = manual "重新检测 git": bypass the client memo AND the endpoint
+    // cache (?refresh=1); soft refreshes (mount / focus) reuse the TTL.
+    const fetch = hard ? remoteGit.refresh : remoteGit.fetchMarkers
+    void fetch(paths).then(setGitMarkers)
+  }, [collectGitPaths, probeGit, remoteGit])
   useEffect(() => {
     if (!workspaces.baselinesReady) return
     refreshGit()
@@ -395,6 +414,24 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
       if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current)
     }
   }, [refreshGit])
+  // The git seat every surface reads: the LOCAL probe + the remote markers
+  // overlaid into ONE index (virtual remote trees under `role: 'remote'`),
+  // plus the marker map itself for the remote pill / hover detail. The
+  // merge is reference-stable: with no markers it returns the probe as-is,
+  // so state changes unrelated to git never churn the derived surfaces.
+  const gitPaths = useMemo(collectGitPaths, [collectGitPaths])
+  const gitIndex = useMemo(
+    () => overlayRemoteMarkers(gitProbe, gitMarkers, gitPaths),
+    [gitProbe, gitMarkers, gitPaths],
+  )
+  const gitSeat = useMemo(
+    () => ({
+      probe: gitIndex,
+      markers: gitMarkers,
+      onRefresh: () => { refreshGit(true) },
+    }),
+    [gitIndex, gitMarkers, refreshGit],
+  )
   // "Show more" overflow toggles for long session lists, owned HERE so the
   // browser header's collapse-everything can reset both sections' overflows
   // in one shot; GroupedView renders the rows against this state.
@@ -1009,7 +1046,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 onToggleOverflow={toggleOverflow}
                 onCollapseRecents={collapseRecents}
                 onCollapseAll={collapseAll}
-                git={{ probe: gitProbe, onRefresh: refreshGit }}
+                git={gitSeat}
                 query={query}
               />
           : state.groupBy === 'flat'
@@ -1025,7 +1062,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
               onToggleOverflow={toggleOverflow}
               onCollapseRecents={collapseRecents}
               onCollapseAll={collapseAll}
-              git={{ probe: gitProbe, onRefresh: refreshGit }}
+              git={gitSeat}
               query={query}
             />)}
       </div>
@@ -1192,10 +1229,12 @@ function GroupedView(props: {
   onCollapseAll: () => void
   /** Active search query (repo view filters groups and members against it). */
   query: string
-  /** Git probe seat: repo grouping + row pills + subworkspace groups +
+  /** Git seat: repo grouping + row pills + subworkspace groups +
    *  the unregistered-tree group all derive from it. `probe: null` renders
-   *  every git surface in its no-git fallback. */
-  git: { probe: GitProbeResultJSON | null; onRefresh: () => void }
+   *  every git surface in its no-git fallback. `markers` carries the
+   *  dsh-remote workspace markers (remote mirror rows render their own
+   *  `⎇ branch ·N` pill and hover detail from it). */
+  git: { probe: GitProbeResultJSON | null; markers: ReadonlyMap<string, RemoteGitMarker>; onRefresh: () => void }
 }): ReactNode {
   const { t, actions, startSession } = props.props
   const state = props.props.useStore(identity)
@@ -1424,6 +1463,7 @@ function GroupedView(props: {
                 guide={guide}
                 now={now}
                 git={props.git.probe}
+                gitMarkers={props.git.markers}
                 sessionsForGit={sessionCwdsByWorkspace(recent.workspaceId)}
                 expandedKeys={expandedKeys}
               />
@@ -1498,6 +1538,7 @@ function GroupedView(props: {
                       guide={guide}
                       now={now}
                       git={props.git.probe}
+                      gitMarkers={props.git.markers}
                       sessionsForGit={sessionCwdsByWorkspace}
                       expandedKeys={expandedKeys}
                     />
@@ -1520,6 +1561,7 @@ function GroupedView(props: {
                         guide={guide}
                         now={now}
                         git={props.git.probe}
+                        gitMarkers={props.git.markers}
                         sessionsForGit={sessionCwdsByWorkspace(leaf.workspaceId as WorkspaceId)}
                         expandedKeys={expandedKeys}
                       />
@@ -1537,6 +1579,7 @@ function GroupedView(props: {
                       guide={guide}
                       now={now}
                       git={null}
+                      gitMarkers={props.git.markers}
                       sessionsForGit={[]}
                     />
                   )}
@@ -1589,6 +1632,8 @@ function FolderRow(props: {
   now: number
   /** Git probe seat forwarded to the subtree's workspace rows. */
   git?: GitProbeResultJSON | null
+  /** Remote-mirror marker map forwarded to the subtree's workspace rows. */
+  gitMarkers?: ReadonlyMap<string, RemoteGitMarker>
   /** Workspace → session cwd list (git aggregation source). */
   sessionsForGit?: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
   /** Expanded group keys forwarded to the subtree's workspace rows. */
@@ -1732,6 +1777,7 @@ function FolderRow(props: {
                   guide={props.guide}
                   now={props.now}
                   {...(props.git === undefined || props.git === null ? {} : { git: props.git })}
+                  {...(props.gitMarkers === undefined ? {} : { gitMarkers: props.gitMarkers })}
                   sessionsForGit={props.sessionsForGit?.(leaf.workspaceId as WorkspaceId) ?? []}
                   {...(props.expandedKeys === undefined ? {} : { expandedKeys: props.expandedKeys })}
                 />
@@ -1762,6 +1808,10 @@ function LeafRow(props: {
   now: number
   /** Git probe seat: row pill (aggregate) + subworkspace grouping. */
   git?: GitProbeResultJSON | null
+  /** Remote-mirror marker map: a row whose cwd holds a marker renders the
+   *  marker pill (`⎇ branch ·N`) instead of the session aggregate — the
+   *  marker IS the workspace's git state (mirrors have no local .git). */
+  gitMarkers?: ReadonlyMap<string, RemoteGitMarker>
   /** The workspace's sessions with cwd, for the git aggregation. */
   sessionsForGit?: readonly { id: SessionId; cwd?: string }[]
   /** Expanded group keys (subworkspace headers toggle through these). */
@@ -1774,7 +1824,14 @@ function LeafRow(props: {
   const shownSessions = overflowExpanded
     ? leaf.sessions
     : leaf.sessions.slice(0, COLLAPSED_SESSION_LIMIT)
+  // Remote-mirror marker of THIS row (keyed by the normalized workspace
+  // path — the dsh-remote fetch layer and the overlay share the spelling).
+  const remoteMarker = hasAccount && leaf.cwd !== undefined && props.gitMarkers !== undefined
+    ? props.gitMarkers.get(normalizeProbePath(leaf.cwd))
+    : undefined
+  const remotePillLabel = remoteMarker === undefined ? '' : remoteBranchLabel(remoteMarker)
   // Git aggregate pill: 0 trees → nothing; 1 tree → its pill; >1 → "n 棵".
+  // A remote marker RENDERS ITS OWN pill instead (workspace-level truth).
   const gitAggregate = props.git !== null && props.git !== undefined && hasAccount
     ? aggregateWorkspaceTrees(props.sessionsForGit ?? [], props.git)
     : { kind: 'none' } as const
@@ -1883,7 +1940,18 @@ function LeafRow(props: {
         {leaf.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />}
       </span>
       <span className={css.rowLabel}>{leaf.label}</span>
-      {gitAggregate.kind === 'single' && (
+      {remoteMarker !== undefined && remotePillLabel !== '' ? (
+        <span
+          className={`${css.gitPill} ${css.gitPillRemote}`}
+          title={remotePillTitle(remoteMarker)}
+        >
+          <span className={css.gitRemoteGlyph} aria-hidden="true">⎇</span>
+          <span className={css.gitRemoteBranch}>{remotePillLabel}</span>
+          {remoteDirtyCount(remoteMarker) > 0 && (
+            <span className={css.gitRemoteCount}>·{remoteDirtyCount(remoteMarker)}</span>
+          )}
+        </span>
+      ) : gitAggregate.kind === 'single' && (
         <span
           className={css.gitPill}
           title={gitAggregate.tree.branch !== undefined ? `branch ${gitAggregate.tree.branch}` : `detached ${gitAggregate.tree.detached ?? ''}`}
@@ -1975,6 +2043,7 @@ function LeafRow(props: {
             createdAt={leaf.createdAt ?? 0}
             t={callbacks.t}
             {...(hoverGit === undefined ? {} : { git: hoverGit })}
+            {...(remoteMarker === undefined ? {} : { remote: remoteMarker })}
           />
         )}
         disabled={menuOpen}
@@ -2243,7 +2312,7 @@ function repoMatch(
 /** The "按仓库分组" body: repo groups + no-git workspaces, filtered by query. */
 function RepoForestView(props: {
   props: EnhancedWorkspaceBrowserProps
-  git: { probe: GitProbeResultJSON | null; onRefresh: () => void }
+  git: { probe: GitProbeResultJSON | null; markers: ReadonlyMap<string, RemoteGitMarker>; onRefresh: () => void }
   callbacks: RowCallbacks
   sessionSeat: SessionRowSeat
   sessionsOverflow: readonly string[]
@@ -2296,6 +2365,7 @@ function RepoForestView(props: {
           key={repo.repoKey}
           repo={repo}
           probe={probe}
+          gitMarkers={props.git.markers}
           workspaceById={workspaceById}
           sessions={sessions}
           state={state}
@@ -2332,6 +2402,7 @@ function RepoForestView(props: {
                 guide={props.guide}
                 now={props.now}
                 git={null}
+                gitMarkers={props.git.markers}
                 sessionsForGit={[]}
                 expandedKeys={expandedKeys}
               />
@@ -2347,6 +2418,8 @@ function RepoForestView(props: {
 function RepoGroupRow(props: {
   repo: GitRepoGroupDerived
   probe: GitProbeResultJSON
+  /** Remote-mirror marker map forwarded to the member rows. */
+  gitMarkers: ReadonlyMap<string, RemoteGitMarker>
   workspaceById: Map<WorkspaceId, WorkspaceView>
   sessions: SessionListState
   state: { groupExpansion: Record<string, boolean>; folderExpansion: Record<string, boolean> }
@@ -2429,6 +2502,7 @@ function RepoGroupRow(props: {
                 guide={props.guide}
                 now={props.now}
                 git={props.probe}
+                gitMarkers={props.gitMarkers}
                 sessionsForGit={props.sessionsForGit(workspaceId)}
                 expandedKeys={props.expandedKeys}
               />

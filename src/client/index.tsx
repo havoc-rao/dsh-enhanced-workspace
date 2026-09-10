@@ -36,6 +36,7 @@ import {
 } from './contract.ts'
 import { NS, en, zh, type EnhancedWorkspaceKey } from './locales.ts'
 import { createGitProbe, createPersistence } from './persistence.ts'
+import { createRemoteGitSource } from './remote-git.ts'
 import { createEnhancedWorkspaceStore } from './store.ts'
 
 export type { EnhancedWorkspaceBrowserProps, EnhancedWorkspaceInjected } from './contract.ts'
@@ -107,6 +108,10 @@ export function apply(ctx: ClientContext): void {
   const probeGit = createGitProbe(
     () => ctx.get('connection') as ConnectionHandle | undefined,
   )
+  // Remote-mirror git markers: the browser half fetches the dsh-remote
+  // endpoint directly (same origin); the source owns the per-path memo/TTL
+  // and the silent-degrade posture.
+  const remoteGit = createRemoteGitSource()
 
   const injected = (): EnhancedWorkspaceInjected => ({
     // Picking-share hooks compartment: the renderer binds `directoryFlow`
@@ -146,6 +151,7 @@ export function apply(ctx: ClientContext): void {
     createWorkspace: input => ctx.workspaces.create(input),
     pickDirectory: () => ctx.workspaces.pickDirectory(),
     probeGit,
+    remoteGit,
     // The client sessions face is read-only (+ open); starting a session in
     // a workspace is the workspaces service verb — the same call the row's
     // plus button and Cmd/Ctrl+N use.

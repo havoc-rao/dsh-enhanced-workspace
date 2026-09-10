@@ -71,15 +71,26 @@ workspace 按 主树/linked/子目录 排序；**无 git 的 workspace 平铺在
 ＋=新建会话。**树本身零改动**，派生层只读，git 状态变动后刷新即校正，绝不
 回写 envelope。可选采纳动作（§5，默认关）不变。
 
-**远程项目（dsh-remote 镜像）——零适配落入「无 git」形态**（已核实
-dsh-remote 源码）：远程会话的 cwd 是本地镜像路径
-（`~/.dsh/remote-workspaces/<host>-<user>-<port>/<base>`，会话目录命名即
-镜像路径的 URL 编码），镜像同步默认忽略 `.git/`（`lib/ignore.js:81`）→
-本地 `.git` walk 自然返回无树 → 行形态/卡片/菜单全部走无 git 回退，无需
-`remote://` 识别。信息增益：Host 半顺带读 `<mirror>/.dsh-remote-meta.json`
-（`{host, port, username, remotePath}`，纯文件读、不依赖 dsh-remote API），
-在无树卡片上揭示「远程镜像 · host · 远端路径」；真正要远程分支状态才需要
-远端 exec（复用 dsh-remote 的 SSH 通道，属后续扩展）。
+**远程项目（dsh-remote 镜像）——远端 git 状态由 dsh-remote 端点联动**
+（已按 dsh-remote 源码核实 + 实装，2026-09-10 M3）：远程会话的 cwd 是本地
+镜像路径（`~/.dsh/remote-workspaces/<host>-<user>-<port>/<base>`，会话目录
+命名即镜像路径的 URL 编码），镜像同步默认忽略 `.git/`（`lib/ignore.js:81`）
+→ 本地 `.git` walk 对镜像恒返回无树。客户端因此**叠加一个远程取数面**：
+镜像工作区行 / hover 卡片直接 fetch dsh-remote 宿主半注册在同源 webServer 的
+`GET /dsh-remote/git-workspace?local=<本地镜像路径>`（任意镜像内路径都解析到
+其属主镜像），一次远端 `git status --porcelain -b`（+detached 短 sha），
+5s 端点 TTL 缓存（`?refresh=1` 绕过）；返回的 marker
+（`{isRepo, branch|detached, dirty, staged, ahead, behind, upstream, gone,
+root, remotePath, machine, mirrorDir, at}`）经纯函数 overlay 合并进本地
+probe：每个 marker 生成一棵**虚拟 remote 树**（`role: 'remote'`，root 按
+属主机器命名空间隔离 `remote:<machine>:<remotePath>`）并把镜像根与镜内会话
+cwd 绑定到它——既有派生（行聚合 / subworkspace 分组 / 按仓库分组 / 未注册
+树 / 搜索）零改动即对远程工作区生效；行 pill 额外显示 `⎇ branch ·N`
+（N=远端脏计数，蓝色 accent 与本地 amber/green 区分），hover 卡片显示远端
+git 段（分支 / 暂存 / ↑↓ 同步 / 远端机器 / 远端路径）。失败姿势全家桶
+（HTTP 500/501 无凭据/离线、marker:null 非镜像、isRepo:false 非仓库、畸形
+响应、网络错误）一律静默降级为无标记，绝不阻塞浏览器；浏览器侧按路径
+memo + 5s TTL。本地非镜像工作区行为完全不变。
 
 ## 3. 检测：`.git` 上行 walk（主）+ `git worktree list --porcelain`（辅）
 

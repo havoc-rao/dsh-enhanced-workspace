@@ -152,6 +152,12 @@ async function renderBrowser(
     // every git-derived surface falls back to the built-in shape). Git-layer
     // behavior lives in tests/git-model.spec.ts + the git browser spec.
     probeGit: vi.fn(async () => null),
+    // Remote markers: absent in this spec (no dsh-remote mirror in the
+    // fixture) — the fetch source resolves an empty map.
+    remoteGit: {
+      fetchMarkers: vi.fn(async () => new Map()),
+      refresh: vi.fn(async () => new Map()),
+    },
     continueInWorkspace: vi.fn(async () => undefined),
     persistence,
   } as unknown as EnhancedWorkspaceBrowserProps

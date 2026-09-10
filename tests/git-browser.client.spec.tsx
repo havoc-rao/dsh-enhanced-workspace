@@ -17,7 +17,7 @@ import { WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
 import { DIRECTORY_FLOW_SLOT, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { zh } from '../src/client/locales.ts'
 import { createEnhancedWorkspaceStore, type EnhancedWorkspaceState } from '../src/client/store.ts'
-import type { GitProbeResultJSON } from '../src/shared/git.ts'
+import type { GitProbeResultJSON, RemoteGitMarker } from '../src/shared/git.ts'
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -28,6 +28,24 @@ const MAIN = '/work/acme'
 const PAY = '/tmp/acme/feat-payment'
 const HF = '/tmp/acme/hotfix-login'
 const GH = '/tmp/acme/gh-pages'
+// A dsh-remote mirror workspace: the LOCAL path (mirror) has no .git; the
+// marker carries the REMOTE repo state (branch dev, 3 dirty, 1 staged,
+// 2 ahead / 1 behind of origin/dev).
+const REMOTE_PATH = '/Users/u/.dsh/remote-workspaces/1.2.3.4-root-22/acme'
+const REMOTE_MARKER: RemoteGitMarker = {
+  isRepo: true,
+  branch: 'dev',
+  dirty: 3,
+  staged: 1,
+  ahead: 2,
+  behind: 1,
+  upstream: 'origin/dev',
+  root: '/srv/acme',
+  remotePath: '/srv/acme',
+  machine: { id: 'm1', name: 'dev', host: '1.2.3.4', port: 22, username: 'root' },
+  mirrorDir: REMOTE_PATH,
+  at: NOW,
+}
 
 function session(id: string, title: string, cwd: string, ageMs: number): SessionSummary {
   return {
@@ -59,15 +77,18 @@ const WORKSPACES: WorkspaceView[] = [
   workspace('w-pay', 'feat-payment', PAY, ['p1']),
   // no-git workspace (hammerspoon)
   workspace('w-hs', 'hammerspoon', '/Users/u/.hammerspoon', ['h1']),
+  // remote-mirror workspace (marker-backed; no local .git)
+  workspace('w-rm', 'my-remote', REMOTE_PATH, ['r1']),
 ]
 const SESSIONS_BY_ID: Record<string, SessionSummary> = {
   sa1: session('sa1', '初始化脚手架', MAIN, 1000),
   sc1: session('sc1', 'hotfix 排查', HF, 2000),
   p1: session('p1', 'fix webhook retry', PAY, 3000),
   h1: session('h1', '窗口布局脚本', '/Users/u/.hammerspoon', 4000),
+  r1: session('r1', '远端联调', REMOTE_PATH, 5000),
 }
 const SESSIONS_STATE = {
-  ids: ['sa1', 'sc1', 'p1', 'h1'],
+  ids: ['sa1', 'sc1', 'p1', 'h1', 'r1'],
   byId: SESSIONS_BY_ID,
   current: undefined as SessionId | undefined,
   phase: 'ready',
@@ -109,7 +130,7 @@ let instance: ReturnType<ReturnType<typeof createEnhancedWorkspaceStore>['create
 let latestProps: EnhancedWorkspaceBrowserProps
 let createWorkspaceMock: ReturnType<typeof vi.fn>
 
-async function renderBrowser(probe: GitProbeResultJSON | null = PROBE): Promise<void> {
+async function renderBrowser(probe: GitProbeResultJSON | null = PROBE, markers: ReadonlyMap<string, RemoteGitMarker> = new Map()): Promise<void> {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -140,6 +161,10 @@ async function renderBrowser(probe: GitProbeResultJSON | null = PROBE): Promise<
     createWorkspace: createWorkspaceMock,
     pickDirectory: vi.fn(async () => null),
     probeGit: vi.fn(async () => probe),
+    remoteGit: {
+      fetchMarkers: vi.fn(async () => markers),
+      refresh: vi.fn(async () => markers),
+    },
     continueInWorkspace: vi.fn(async () => undefined),
     persistence: {
       load: vi.fn(async () => null),
@@ -284,5 +309,80 @@ describe('git-worktree browser layer', () => {
     expect(text()).not.toContain('棵')
     expect(container.querySelector('[class*="gitPill"]')).toBeNull()
     expect(container.querySelectorAll('[class*="workspaceRow"]').length).toBeGreaterThan(0)
+  })
+
+  it('renders the remote-marker pill `⎇ branch ·N` on mirror workspaces (and only there)', async () => {
+    await renderBrowser(PROBE, new Map([[REMOTE_PATH, REMOTE_MARKER]]))
+    const remote = rowsByLabel('my-remote')[0]!
+    const pill = remote.querySelector('[class*="gitPillRemote"]')
+    expect(pill).not.toBeNull()
+    expect(pill?.textContent).toContain('⎇')
+    expect(pill?.textContent).toContain('dev')
+    expect(pill?.textContent).toContain('·3')
+    // tooltip carries the full summary (dirty · staged · sync)
+    expect(pill?.getAttribute('title')).toContain('· 3 (1 staged)')
+    expect(pill?.getAttribute('title')).toContain('↑2 ↓1')
+    // the session aggregate never double-renders for remote rows
+    expect(remote.querySelector('[class*="gitPillMulti"]')).toBeNull()
+    // local workspaces keep their aggregate pills
+    const pay = rowsByLabel('feat-payment')[0]!
+    expect(pay.textContent).toContain('feat/payment')
+    expect(pay.querySelector('[class*="gitPillRemote"]')).toBeNull()
+    // no-git workspace: still no pill
+    expect(rowsByLabel('hammerspoon')[0]?.querySelector('[class*="gitPill"]')).toBeNull()
+  })
+
+  it('shows the remote section on the mirror hover card (branch/sync/machine/path)', async () => {
+    const holder = document.createElement('div')
+    document.body.appendChild(holder)
+    const hoverRoot = createRoot(holder)
+    await act(async () => {
+      hoverRoot.render(
+        <WorkspaceHoverContent
+          label="my-remote"
+          cwd={REMOTE_PATH}
+          createdAt={NOW}
+          t={t}
+          // probed locally: no .git → git null; the REMOTE marker still renders
+          git={null}
+          remote={REMOTE_MARKER}
+        />,
+      )
+    })
+    const card = holder.textContent ?? ''
+    expect(card).toContain('⎇')
+    expect(card).toContain('dev')
+    expect(card).toContain('·3')
+    expect(card).toContain('暂存')
+    expect(card).toContain('1')
+    expect(card).toContain('同步')
+    expect(card).toContain('↑2 ↓1')
+    expect(card).toContain('远端')
+    expect(card).toContain('root@1.2.3.4')
+    expect(card).toContain('远端路径')
+    expect(card).toContain('/srv/acme')
+    // the remote section REPLACES the no-git notice
+    expect(card).not.toContain('未检测到 git 仓库')
+    await act(async () => { hoverRoot.unmount() })
+    holder.remove()
+  })
+
+  it('groups mirror workspaces into their remote repo in the repo view (pill intact)', async () => {
+    await renderBrowser(PROBE, new Map([[REMOTE_PATH, REMOTE_MARKER]]))
+    await act(async () => { instance.actions.setGroupBy('repo') })
+    await rerender()
+    const remote = rowsByLabel('my-remote')[0]
+    expect(remote).toBeDefined()
+    expect(remote?.querySelector('[class*="gitPillRemote"]')?.textContent).toContain('dev')
+    // the remote repo group row (named by the remote root basename) exists
+    const repoRows = [...container.querySelectorAll<HTMLElement>('[class*="repoRow"]')]
+    expect(repoRows.some(row => row.textContent?.includes('acme'))).toBe(true)
+  })
+
+  it('renders nothing remote when the marker source degrades (offline / not a mirror)', async () => {
+    await renderBrowser(PROBE, new Map())
+    const remote = rowsByLabel('my-remote')[0]!
+    expect(remote.querySelector('[class*="gitPillRemote"]')).toBeNull()
+    expect(remote.textContent).not.toContain('⎇')
   })
 })

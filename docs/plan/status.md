@@ -119,9 +119,26 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
 - **验证**：`pnpm typecheck` 0 错误；`pnpm test` **195/195**（新增
   host-git 12 + git-model 9 + git-browser 6）；`pnpm build:dev` 双通道 +
   纯度门通过。
-- **M3 剩余**：`pnpm test:mount` 挂载冒烟复核；README 双语补 git 条目；
-  「整理到文件夹…」占位实装（M4 采纳动作）；远程镜像卡片附注
-  （读 `.dsh-remote-meta.json`，design §2 备注）。
+- **M3 剩余 → 远程镜像 git 标记已实装**（2026-09-10，本任务）：镜像工作区
+  （`~/.dsh/remote-workspaces/…`，本地无 `.git`）的行 pill / hover 卡片改为
+  联动 dsh-remote 同源端点 `GET /dsh-remote/git-workspace?local=<path>`
+  —— 浏览器侧 `createRemoteGitSource`（按路径 memo + 5s TTL +
+  `?refresh=1` 硬刷新，500/501 无凭据离线 / marker:null 非镜像 /
+  isRepo:false / 畸形体 / 网络错全部静默无标记）；纯函数
+  `overlayRemoteMarkers` 把 marker 合成本地 probe 之上的**虚拟 remote 树**
+  （`role:'remote'`、root 按属主机器命名空间隔离），镜像根与镜内会话 cwd
+  绑定之——行聚合 / subworkspace 分组 / 按仓库分组 / 未注册树 / 搜索全部
+  零改动复用；行 pill `⎇ branch ·N`（蓝色 accent，悬停标题含 staged 与
+  ↑↓ 同步）、hover 卡片远端 git 段（分支 / 暂存 / 同步 / 远端机器 / 远端
+  路径）。与 dsh-remote 契约逐字段对齐（核实 lib/index.js 路由 + git-parse.js
+  buildWorkspaceMarker）。本地非镜像工作区行为不变。改动：shared/git.ts、
+  client/remote-git.ts（新）、contract/index、Browser/HoverCards/locales/CSS、
+  tests remote-git 16 + remote-git-source 10 + git-browser 组件 4 例。
+  验证：`pnpm typecheck` 0 错误、`pnpm test` **225/225**、`pnpm build`
+  双通道 + 纯度门通过。
+- **M3 剩余**：`pnpm test:mount` 挂载冒烟复核（git 层）；README 已补 git 双
+  条目（工作树层 + 远程镜像标记），en 版双语补全仍挂起；「整理到文件夹…」
+  占位实装（M4 采纳动作）。
 
 ### 后续任务目标
 
