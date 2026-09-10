@@ -152,6 +152,7 @@ async function renderBrowser(
     // every git-derived surface falls back to the built-in shape). Git-layer
     // behavior lives in tests/git-model.spec.ts + the git browser spec.
     probeGit: vi.fn(async () => null),
+    continueInWorkspace: vi.fn(async () => undefined),
     persistence,
   } as unknown as EnhancedWorkspaceBrowserProps
   await act(async () => {

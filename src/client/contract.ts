@@ -133,6 +133,13 @@ export interface EnhancedWorkspaceInjected {
    * unavailable or the probe failed. Callers treat null as "no git layer".
    */
   probeGit: (paths: readonly string[]) => Promise<GitProbeResultJSON | null>
+  /**
+   * Start a NEW session in a target workspace and open it — the "在目标树
+   * 继续" verb. Honest semantics: a session's cwd is fixed at creation and
+   * there is no cross-tree move API, so switching trees is a new session in
+   * the target workspace, never a relocation.
+   */
+  continueInWorkspace: (workspaceId: WorkspaceId) => Promise<void>
   /** Durable envelope load/store (Host file first, localStorage fallback). */
   persistence: EnhancedWorkspacePersistence
 }

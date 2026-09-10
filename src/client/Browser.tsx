@@ -114,7 +114,7 @@ import {
   unregisteredTrees,
   type GitRepoGroupDerived,
 } from './git-model.ts'
-import type { GitProbeResultJSON } from '../shared/git.ts'
+import type { GitProbeResultJSON, GitTreeInfoJSON } from '../shared/git.ts'
 import { FLAT_SESSION_ORDER_KEY } from './store.ts'
 import css from './Browser.module.css'
 
@@ -1144,6 +1144,11 @@ interface RowCallbacks {
   onStartSession: (workspaceId: WorkspaceId, key: string) => void
   openers: RowOpeners
   t: EnhancedWorkspaceBrowserProps['t']
+  /** Workspace whose PATH binds to a tree root (the "在目标树继续" resolver). */
+  workspaceIdForTree?: (treeRoot: string) => WorkspaceId | undefined
+  /** Continue in a target tree: new session in the bound workspace, or
+   *  register the tree first when no workspace owns it yet. */
+  onContinueInTree?: (tree: GitTreeInfoJSON) => void
 }
 
 /** Drag & drop seat shared by every workspace and folder row. */
@@ -1208,6 +1213,17 @@ function GroupedView(props: {
     return (workspaceId: WorkspaceId | undefined): readonly { id: SessionId; cwd?: string }[] =>
       workspaceId === undefined ? [] : (map.get(workspaceId) ?? [])
   }, [props.props])
+  // Tree root → workspace bound to it (via workspace PATHS), for the
+  // "在目标树继续" resolver: a tree may have zero (unregistered) or one owner.
+  const treeWorkspaceIndex = useMemo(() => {
+    const index = new Map<string, WorkspaceId>()
+    if (props.git.probe === null) return index
+    for (const workspace of props.props.useWorkspaces(identity).items) {
+      const tree = treeOfCwd(props.git.probe, workspace.path)
+      if (tree !== undefined && !index.has(tree.root)) index.set(tree.root, workspace.workspaceId)
+    }
+    return index
+  }, [props.git.probe, props.props])
   // Expanded group-key set for the subworkspace headers (`tw:` keys live in
   // the same groupExpansion map the section collapse-all already clears).
   const expandedKeys = useMemo(() => {
@@ -1232,6 +1248,29 @@ function GroupedView(props: {
     },
     openers: props.openers,
     t,
+    workspaceIdForTree: (treeRoot) => treeWorkspaceIndex.get(treeRoot),
+    onContinueInTree: (tree) => {
+      const workspaceId = treeWorkspaceIndex.get(tree.root)
+      const continueIn = (target: WorkspaceId): void => {
+        actions.setGroupExpanded(target, true)
+        props.props.continueInWorkspace(target).catch(error => {
+          console.warn('dsh-enhanced-workspace: continue-in-tree failed', target, error)
+        })
+      }
+      if (workspaceId !== undefined) {
+        continueIn(workspaceId)
+        return
+      }
+      // Unregistered tree: register it as a workspace, adopt, then continue.
+      props.props.createWorkspace({ path: tree.root })
+        .then(created => {
+          actions.adoptWorkspace(created.workspaceId)
+          continueIn(created.workspaceId)
+        })
+        .catch(error => {
+          console.warn('dsh-enhanced-workspace: register-and-continue failed', tree.root, error)
+        })
+    },
   }
   const sessionSeat: SessionRowSeat = {
     onOpen: callbacks.onSessionOpen,
@@ -1717,6 +1756,26 @@ function LeafRow(props: {
     ? deriveSubworkspaceGroups(leaf.cwd, props.sessionsForGit ?? [], props.git)
     : []
   const splitGroups = gitGroups.length > 1
+  // Hover-card git seat: undefined = probe unavailable (no section),
+  // null = probed, no git; an object = the tree + its peer trees.
+  const ownTree = props.git !== null && props.git !== undefined && leaf.cwd !== undefined
+    ? treeOfCwd(props.git, leaf.cwd)
+    : undefined
+  const hoverGit = props.git === undefined
+    ? undefined
+    : props.git === null || ownTree === undefined
+      ? null
+      : {
+        tree: ownTree,
+        peers: Object.values(props.git.trees).filter(tree => tree.repoKey === ownTree.repoKey && tree.root !== ownTree.root),
+      }
+  // "在目标树继续" targets: the other trees of the same repo (registered or
+  // not — an unregistered tree registers on the way through).
+  const continueTrees = ownTree === undefined || props.git === null || props.git === undefined
+    ? []
+    : Object.values(props.git.trees)
+      .filter(tree => tree.repoKey === ownTree.repoKey && tree.root !== ownTree.root)
+      .sort((a, b) => (a.branch ?? a.detached ?? '').localeCompare(b.branch ?? b.detached ?? ''))
   // One indent step per ancestor folder (0 = top level).
   const depth = props.ancestors.length
   const indentPx = rowIndent(depth)
@@ -1817,6 +1876,16 @@ function LeafRow(props: {
               items={[
                 { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
                 { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
+                ...(continueTrees.length > 0
+                  ? [
+                    { type: 'label' as const, id: 'continue-label', text: callbacks.t('continueInTree') },
+                    ...continueTrees.map(tree => ({
+                      id: `tree:${tree.root}`,
+                      label: tree.branch ?? tree.detached ?? basename(tree.root),
+                      icon: <IconBranchOutline16 />,
+                    })),
+                  ]
+                  : []),
                 { type: 'separator' as const, id: 'workspace-actions-separator' },
                 { id: 'delete', label: callbacks.t('deleteWorkspaceTitle'), icon: <IconTrashOutline16 />, danger: true },
               ]}
@@ -1825,6 +1894,11 @@ function LeafRow(props: {
                 if (id === 'rename') callbacks.openers.onRenameWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
                 else if (id === 'move') callbacks.openers.onMoveWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
                 else if (id === 'delete') callbacks.openers.onDeleteWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
+                else if (id.startsWith('tree:')) {
+                  const root = id.slice('tree:'.length)
+                  const tree = continueTrees.find(candidate => candidate.root === root)
+                  if (tree !== undefined) callbacks.onContinueInTree?.(tree)
+                }
               }}
               dense
               portal
@@ -1866,7 +1940,13 @@ function LeafRow(props: {
       <HoverCard
         anchor={ownRow}
         content={(
-          <WorkspaceHoverContent label={leaf.label} cwd={leaf.cwd} createdAt={leaf.createdAt ?? 0} t={callbacks.t} />
+          <WorkspaceHoverContent
+            label={leaf.label}
+            cwd={leaf.cwd}
+            createdAt={leaf.createdAt ?? 0}
+            t={callbacks.t}
+            {...(hoverGit === undefined ? {} : { git: hoverGit })}
+          />
         )}
         disabled={menuOpen}
         copyText={leaf.cwd}

@@ -22,6 +22,7 @@ import {
   type RecentFileTreeRow,
   type SessionNode,
 } from './model.ts'
+import type { GitTreeInfoJSON } from '../shared/git.ts'
 import css from './Browser.module.css'
 
 /** The browser root's locale seat, prop-passed from the row seats. */
@@ -60,12 +61,16 @@ function hoverTimeLabel(updatedAt: number, now: number, t: HoverTranslate): stri
 }
 
 /** Hover-card body: display directory path and absolute creation time. */
-export function WorkspaceHoverContent({ label, cwd, createdAt, t }: {
+export function WorkspaceHoverContent({ label, cwd, createdAt, t, git }: {
   label: string
   /** The workspace's host directory; absent keeps the card title + time only. */
   cwd: string | undefined
   createdAt: number
   t: HoverTranslate
+  /** Git binding of the workspace path: the tree it sits in plus its peer
+   *  trees (same repo). `null` = probed and no git; `undefined` = probe
+   *  unavailable (no git section at all). */
+  git?: { tree: GitTreeInfoJSON; peers: readonly GitTreeInfoJSON[] } | null
 }) {
   return (
     <div className={css.hoverContent}>
@@ -74,8 +79,41 @@ export function WorkspaceHoverContent({ label, cwd, createdAt, t }: {
       </div>
       {cwd !== undefined && <div className={css.hoverPath}>{cwd}</div>}
       <div className={css.hoverTime}>{createdLabel(createdAt, t)}</div>
+      {git === null && <div className={css.hoverNoGit}>{t('hoverNoGit')}</div>}
+      {git !== undefined && git !== null && (
+        <div className={css.hoverGit}>
+          <div className={css.hoverGitRow}>
+            <span className={css.hoverGitKey}>{t('hoverBranch')}</span>
+            <span className={css.hoverGitPill}>{git.tree.branch ?? git.tree.detached ?? '—'}</span>
+          </div>
+          <div className={css.hoverGitRow}>
+            <span className={css.hoverGitKey}>{t('hoverRole')}</span>
+            <span className={css.hoverGitValue}>
+              {git.tree.role === 'main' ? t('hoverRoleMain') : t('hoverRoleLinked')}
+            </span>
+          </div>
+          {git.peers.length > 0 && (
+            <div className={css.hoverPeerList}>
+              <div className={css.hoverGitKey}>{t('hoverPeerTrees')}</div>
+              {git.peers.map(peer => (
+                <div key={peer.root} className={css.hoverPeerRow}>
+                  <span className={css.hoverPeerName}>{basenameOf(peer.root)}</span>
+                  <span className={css.hoverGitPill}>{peer.branch ?? peer.detached ?? '—'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
+}
+
+/** Path basename (browser-safe helper for the peer-tree rows). */
+function basenameOf(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, '')
+  const sep = trimmed.lastIndexOf('/')
+  return sep >= 0 ? trimmed.slice(sep + 1) : trimmed
 }
 
 /** One visible status line of the session hover card: dot state + label. */

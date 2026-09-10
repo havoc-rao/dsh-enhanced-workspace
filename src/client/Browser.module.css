@@ -984,3 +984,68 @@
   color: var(--ds-color-accent, #4c8dff);
   border: 1px solid color-mix(in srgb, var(--ds-color-accent, #4c8dff) 45%, transparent);
 }
+
+/* Hover card git section (workspace rows). */
+.hoverNoGit{
+  margin-top: 6px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--ds-color-text-3, #8b919b);
+}
+.hoverGit{
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--ds-color-border-l1, rgba(128, 128, 128, 0.35));
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.hoverGitRow{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+.hoverGitKey{
+  flex: none;
+  width: 46px;
+  font-size: 10.5px;
+  color: var(--ds-color-text-3, #8b919b);
+}
+.hoverGitValue{
+  color: var(--ds-color-text-2, #c8c9cc);
+}
+.hoverGitPill{
+  font-family: var(--ds-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 6px;
+  color: var(--ds-color-text-2, #c8c9cc);
+  background: rgba(217, 154, 91, 0.13);
+  border: 1px solid rgba(217, 154, 91, 0.22);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hoverPeerList{
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hoverPeerRow{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+}
+.hoverPeerName{
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ds-color-text-2, #c8c9cc);
+}

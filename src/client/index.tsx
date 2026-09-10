@@ -124,6 +124,12 @@ export function apply(ctx: ClientContext): void {
     createWorkspace: input => ctx.workspaces.create(input),
     pickDirectory: () => ctx.workspaces.pickDirectory(),
     probeGit,
+    // The client sessions face is read-only (+ open); starting a session in
+    // a workspace is the workspaces service verb — the same call the row's
+    // plus button and Cmd/Ctrl+N use.
+    continueInWorkspace: async (workspaceId) => {
+      ctx.workspaces.startSession(workspaceId)
+    },
     persistence: buildPersistence(),
   })
 

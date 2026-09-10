@@ -13,10 +13,13 @@ import { act } from 'react-dom/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
 import { EnhancedWorkspaceBrowser } from '../src/client/Browser.tsx'
+import { WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
 import { DIRECTORY_FLOW_SLOT, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { zh } from '../src/client/locales.ts'
 import { createEnhancedWorkspaceStore, type EnhancedWorkspaceState } from '../src/client/store.ts'
 import type { GitProbeResultJSON } from '../src/shared/git.ts'
+
+;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const W = (id: string): WorkspaceId => id as WorkspaceId
 const NOW = Date.now()
@@ -137,6 +140,7 @@ async function renderBrowser(probe: GitProbeResultJSON | null = PROBE): Promise<
     createWorkspace: createWorkspaceMock,
     pickDirectory: vi.fn(async () => null),
     probeGit: vi.fn(async () => probe),
+    continueInWorkspace: vi.fn(async () => undefined),
     persistence: {
       load: vi.fn(async () => null),
       save: vi.fn(async () => undefined),
@@ -225,6 +229,52 @@ describe('git-worktree browser layer', () => {
     await act(async () => { unregRow[0]!.click() })
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(createWorkspaceMock).toHaveBeenCalledWith({ path: GH })
+  })
+
+  it('shows the tree binding on the workspace hover card (and the no-git notice)', async () => {
+    // Component-level: the hover card content itself (the HoverCard shell is
+    // ui-primitives behavior, not this plugin's contract).
+    const holder = document.createElement('div')
+    document.body.appendChild(holder)
+    const hoverRoot = createRoot(holder)
+    const tree = PROBE.trees[MAIN]!
+    const peers = Object.values(PROBE.trees).filter(t => t.repoKey === tree.repoKey && t.root !== tree.root)
+    await act(async () => {
+      hoverRoot.render(
+        <WorkspaceHoverContent label="acme" cwd={MAIN} createdAt={NOW} t={t} git={{ tree, peers }} />,
+      )
+    })
+    expect(holder.textContent).toContain('分支')
+    expect(holder.textContent).toContain('main')
+    expect(holder.textContent).toContain('主树（外部 space）')
+    expect(holder.textContent).toContain('同仓库树')
+    expect(holder.textContent).toContain('feat/payment')
+    // no-git variant
+    await act(async () => {
+      hoverRoot.render(<WorkspaceHoverContent label="hammerspoon" cwd="/Users/u/.hammerspoon" createdAt={NOW} t={t} git={null} />)
+    })
+    expect(holder.textContent).toContain('未检测到 git 仓库')
+    await act(async () => { hoverRoot.unmount() })
+    holder.remove()
+  })
+
+  it('offers "continue in another tree" from the row menu and starts a session there', async () => {
+    await renderBrowser()
+    const acmeRow = rowsByLabel('acme')[0]!
+    const menuButton = acmeRow.querySelector<HTMLButtonElement>('button[aria-label*="acme"]')
+    expect(menuButton).not.toBeNull()
+    await act(async () => { menuButton!.click() })
+    await act(async () => { await Promise.resolve() })
+    // portal menu: the section label and the peer tree entry
+    const bodyText = document.body.textContent ?? ''
+    expect(bodyText).toContain('在目标树继续…')
+    const treeEntry = [...document.body.querySelectorAll<HTMLElement>('*')]
+      .filter(el => el.children.length === 0 && el.textContent === 'feat/payment')
+      .pop()
+    expect(treeEntry).toBeDefined()
+    await act(async () => { treeEntry!.click() })
+    await act(async () => { await Promise.resolve() })
+    expect(latestProps.continueInWorkspace).toHaveBeenCalledWith(W('w-pay'))
   })
 
   it('falls back to the built-in shape when the probe is unavailable', async () => {
