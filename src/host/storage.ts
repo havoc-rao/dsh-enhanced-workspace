@@ -56,7 +56,7 @@ export interface PersistedEnvelope {
   folders: Record<string, PersistedFolderRecord>
   folderExpansion: Record<string, boolean>
   recentTouchById: Record<string, number>
-  groupBy: 'workspace' | 'flat'
+  groupBy: 'workspace' | 'repo' | 'flat'
   orderBy: 'updated' | 'manual'
   groupExpansion: Record<string, boolean>
   sessionOrderByAccount: Record<string, string[]>
@@ -108,7 +108,7 @@ function isFiniteNumberTable(value: unknown): value is Record<string, Record<str
 export function validateEnvelope(value: unknown): value is PersistedEnvelope {
   if (!isPlainRecord(value)) return false
   if (Object.keys(value).sort().join('\u0000') !== [...ENVELOPE_KEYS].sort().join('\u0000')) return false
-  if (value.groupBy !== 'workspace' && value.groupBy !== 'flat') return false
+  if (value.groupBy !== 'workspace' && value.groupBy !== 'repo' && value.groupBy !== 'flat') return false
   if (value.orderBy !== 'updated' && value.orderBy !== 'manual') return false
   if (!isBooleanRecord(value.folderExpansion)) return false
   if (!isFiniteNumberRecord(value.recentTouchById)) return false

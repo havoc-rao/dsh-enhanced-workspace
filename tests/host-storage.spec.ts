@@ -123,6 +123,11 @@ describe('validateEnvelope', () => {
     expect(validateEnvelope({ ...envelope(), orderBy: 'alphabetical' })).toBe(false)
   })
 
+  it('accepts the git-repo grouping mode', () => {
+    expect(validateEnvelope({ ...envelope(), groupBy: 'repo' })).toBe(true)
+    expect(validateEnvelope({ ...envelope(), groupBy: 'flat' })).toBe(true)
+  })
+
   it('rejects a missing or mislinked root', () => {
     const orphan = envelope()
     delete orphan.folders.root

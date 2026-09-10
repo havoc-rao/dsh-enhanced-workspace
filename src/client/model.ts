@@ -497,8 +497,8 @@ export interface PersistedViewState {
   sessionUpdatedAtByAccount: Record<string, Record<string, number>>
 }
 
-/** Session-list grouping mode: workspace sections or one flat recency list. */
-export type SessionGroupBy = 'workspace' | 'flat'
+/** Session-list grouping mode: workspace sections, the git-repo view, or one flat recency list. */
+export type SessionGroupBy = 'workspace' | 'repo' | 'flat'
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -524,7 +524,7 @@ function isFiniteNumberMap(value: unknown): value is Record<string, number> {
  */
 export function isPersistedViewState(value: unknown): value is PersistedViewState {
   if (!isPlainRecord(value)) return false
-  if (value.groupBy !== 'workspace' && value.groupBy !== 'flat') return false
+  if (value.groupBy !== 'workspace' && value.groupBy !== 'repo' && value.groupBy !== 'flat') return false
   if (value.orderBy !== 'updated' && value.orderBy !== 'manual') return false
   if (!isBooleanMap(value.folderExpansion) || !isBooleanMap(value.groupExpansion)) return false
   if (!isFiniteNumberMap(value.recentTouchById)) return false

@@ -2,12 +2,37 @@
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type { EnhancedWorkspacePersistence } from './contract.ts'
 import { isPersistedViewState } from './model.ts'
+import { GIT_PROBE_ENDPOINT, isGitProbeResultJSON, type GitProbeResultJSON } from '../shared/git.ts'
 import {
   PERSISTENCE_CHANNEL,
   PERSISTENCE_LOAD_ENDPOINT,
   PERSISTENCE_LOCAL_FALLBACK_KEY,
   PERSISTENCE_SAVE_ENDPOINT,
 } from '../shared/persistence.ts'
+
+/**
+ * Git-probe face over the plugin Connection channel: route `git/probe` to
+ * the host half, validate the wire shape, and fold every failure into null
+ * (the browser's git layer is optional by design — probe failures must
+ * never block the workspace browser).
+ */
+export function createGitProbe(getConnection: () => ConnectionHandle | undefined): (paths: readonly string[]) => Promise<GitProbeResultJSON | null> {
+  return async (paths) => {
+    try {
+      const connection = getConnection()
+      if (connection === undefined) return null
+      const result = await connection.rpc.call(PERSISTENCE_CHANNEL, GIT_PROBE_ENDPOINT, { paths: [...paths] })
+      if (!result.ok) return null
+      if (!result.value || typeof result.value !== 'object') return null
+      const candidate = result.value as GitProbeResultJSON
+      if (!isGitProbeResultJSON(candidate)) return null
+      return candidate
+    } catch (error) {
+      console.warn('dsh-enhanced-workspace: git probe failed (git layer disabled)', error)
+      return null
+    }
+  }
+}
 
 export function createPersistence(getConnection: () => ConnectionHandle | undefined): EnhancedWorkspacePersistence {
   return {

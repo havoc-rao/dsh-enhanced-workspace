@@ -35,7 +35,7 @@ import {
   type EnhancedWorkspacePersistence,
 } from './contract.ts'
 import { NS, en, zh, type EnhancedWorkspaceKey } from './locales.ts'
-import { createPersistence } from './persistence.ts'
+import { createGitProbe, createPersistence } from './persistence.ts'
 import { createEnhancedWorkspaceStore } from './store.ts'
 
 export type { EnhancedWorkspaceBrowserProps, EnhancedWorkspaceInjected } from './contract.ts'
@@ -82,6 +82,9 @@ export function apply(ctx: ClientContext): void {
   const buildPersistence = (): EnhancedWorkspacePersistence => createPersistence(
     () => ctx.get('connection') as ConnectionHandle | undefined,
   )
+  const probeGit = createGitProbe(
+    () => ctx.get('connection') as ConnectionHandle | undefined,
+  )
 
   const injected = (): EnhancedWorkspaceInjected => ({
     // Picking-share hooks compartment: the renderer binds `directoryFlow`
@@ -120,6 +123,7 @@ export function apply(ctx: ClientContext): void {
     },
     createWorkspace: input => ctx.workspaces.create(input),
     pickDirectory: () => ctx.workspaces.pickDirectory(),
+    probeGit,
     persistence: buildPersistence(),
   })
 

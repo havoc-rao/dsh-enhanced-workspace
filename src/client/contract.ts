@@ -12,6 +12,7 @@ import type {
   WorkspaceId,
   WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
+import type { GitProbeResultJSON } from '../shared/git.ts'
 import type {
   InjectFace,
   PropsLocale,
@@ -126,6 +127,12 @@ export interface EnhancedWorkspaceInjected {
   createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
   /** Open the Host's native directory picker. */
   pickDirectory: () => Promise<string | null>
+  /**
+   * Compute the git-repo index over a path list (workspace paths + session
+   * cwds, deduped host-side). Resolves to null when the Connection is
+   * unavailable or the probe failed. Callers treat null as "no git layer".
+   */
+  probeGit: (paths: readonly string[]) => Promise<GitProbeResultJSON | null>
   /** Durable envelope load/store (Host file first, localStorage fallback). */
   persistence: EnhancedWorkspacePersistence
 }

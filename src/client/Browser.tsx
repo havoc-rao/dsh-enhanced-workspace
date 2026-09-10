@@ -95,6 +95,7 @@ import {
   UNGROUPED_KEY,
   type FolderId,
   type FolderNode,
+  type SessionGroupBy,
   type SessionNode,
   type WorkspaceLeaf,
 } from './model.ts'
@@ -1011,9 +1012,9 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
 
 /** Grouping and ordering menu; own open state (built-in parity). */
 function ViewOptionsMenu({ groupBy, orderBy, onGroupPick, onOrderPick, t }: {
-  groupBy: 'workspace' | 'flat'
+  groupBy: SessionGroupBy
   orderBy: 'manual' | 'updated'
-  onGroupPick: (mode: 'workspace' | 'flat') => void
+  onGroupPick: (mode: SessionGroupBy) => void
   onOrderPick: (mode: 'manual' | 'updated') => void
   t: EnhancedWorkspaceBrowserProps['t']
 }): ReactNode {
@@ -1025,6 +1026,7 @@ function ViewOptionsMenu({ groupBy, orderBy, onGroupPick, onOrderPick, t }: {
       items={[
         { type: 'label' as const, id: 'group-by', text: t('groupByLabel') },
         { id: 'workspace', label: t('groupByWorkspace') },
+        { id: 'repo', label: t('groupByRepo') },
         { id: 'flat', label: t('groupByFlat') },
         { type: 'separator' as const, id: 'order-by-separator' },
         { type: 'label' as const, id: 'order-by', text: t('orderByLabel') },
@@ -1033,7 +1035,7 @@ function ViewOptionsMenu({ groupBy, orderBy, onGroupPick, onOrderPick, t }: {
       ]}
       selectedIds={[groupBy, orderBy]}
       onSelect={(id) => {
-        if (id === 'workspace' || id === 'flat') onGroupPick(id)
+        if (id === 'workspace' || id === 'repo' || id === 'flat') onGroupPick(id)
         else if (id === 'manual' || id === 'updated') onOrderPick(id)
         setOpen(false)
       }}
