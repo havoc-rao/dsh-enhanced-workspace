@@ -26,6 +26,11 @@ import {
   PERSISTENCE_LOAD_ENDPOINT,
   PERSISTENCE_SAVE_ENDPOINT,
 } from './shared/persistence.ts'
+import { GIT_PROBE_ENDPOINT } from './shared/git.ts'
+import {
+  probeGitIndex,
+  serializeGitRepoIndex,
+} from './host/git.ts'
 import {
   envelopeByteSize,
   envelopeFilePath,
@@ -53,6 +58,10 @@ interface SaveEnvelopePayload {
  * endpoint returns the Connection `RpcResult` shape: business failures
  * (validation rejection, storage errors) fold into the error branch — the
  * client never sees a thrown transport error for a rejected envelope.
+ *
+ * Endpoints:
+ * - `load` / `save` — the durable envelope (see src/host/storage.ts);
+ * - `git/probe` — the git-repo index over a path list (see src/host/git.ts).
  * @param ctx - cordis context (with the injected `connection` service).
  */
 export function apply(ctx: Context): void {
@@ -111,6 +120,35 @@ export function apply(ctx: Context): void {
             error: {
               code: 'internal',
               message: `dsh-enhanced-workspace: envelope write failed: ${String(error)}`,
+              details: {},
+            },
+          } as const
+        }
+      }
+      if (endpoint === GIT_PROBE_ENDPOINT) {
+        const paths = (payload as { paths?: unknown } | null | undefined)?.paths
+        if (!Array.isArray(paths) || paths.some(item => typeof item !== 'string')) {
+          return {
+            ok: false,
+            error: {
+              code: 'internal',
+              message: 'dsh-enhanced-workspace: git/probe expects { paths: string[] }',
+              details: {},
+            },
+          } as const
+        }
+        try {
+          const index = probeGitIndex(paths as string[])
+          return { ok: true, value: serializeGitRepoIndex(index) } as const
+        } catch (error) {
+          // Probe failures are soft by design: an empty index keeps the
+          // browser usable without any git-derived layer.
+          ctx.logger.warn('dsh-enhanced-workspace: git probe failed', error)
+          return {
+            ok: false,
+            error: {
+              code: 'internal',
+              message: `dsh-enhanced-workspace: git probe failed: ${String(error)}`,
               details: {},
             },
           } as const
