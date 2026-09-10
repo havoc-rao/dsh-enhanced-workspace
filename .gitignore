@@ -7,3 +7,5 @@ test-results/
 .DS_Store
 pnpm-debug.log*
 .pnpm-store/
+# 平行 dev worktree（AGENTS.md 的 tmp/<repo>/<branch> 约定）：绝不入库
+tmp/
