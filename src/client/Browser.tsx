@@ -1194,17 +1194,21 @@ function GroupedView(props: {
 }): ReactNode {
   const { t, actions, startSession } = props.props
   const state = props.props.useStore(identity)
+  // Framework feeds are real hooks: they MUST run at the component top level
+  // (a call inside useMemo would be an invalid hook call under the real DSH
+  // runtime; the jsdom fixtures hide it because their selectors are plain
+  // functions).
+  const workspaceList = props.props.useWorkspaces(identity)
+  const sessionList = props.props.useSessions(identity)
   // Workspace → session cwd list, for the git aggregation (row pill +
   // subworkspace groups): the derived leaves only carry sessions while
   // expanded, so the git layer reads the live session list directly.
   const sessionCwdsByWorkspace = useMemo(() => {
-    const sessions = props.props.useSessions(identity)
-    const workspaces = props.props.useWorkspaces(identity)
     const map = new Map<WorkspaceId, readonly { id: SessionId; cwd?: string }[]>()
-    for (const workspace of workspaces.items) {
+    for (const workspace of workspaceList.items) {
       const list: { id: SessionId; cwd?: string }[] = []
       for (const id of workspace.sessionIds) {
-        const summary = sessions.byId[id]
+        const summary = sessionList.byId[id]
         if (summary === undefined) continue
         list.push(summary.cwd === undefined ? { id } : { id, cwd: summary.cwd })
       }
@@ -1212,18 +1216,18 @@ function GroupedView(props: {
     }
     return (workspaceId: WorkspaceId | undefined): readonly { id: SessionId; cwd?: string }[] =>
       workspaceId === undefined ? [] : (map.get(workspaceId) ?? [])
-  }, [props.props])
+  }, [workspaceList, sessionList])
   // Tree root → workspace bound to it (via workspace PATHS), for the
   // "在目标树继续" resolver: a tree may have zero (unregistered) or one owner.
   const treeWorkspaceIndex = useMemo(() => {
     const index = new Map<string, WorkspaceId>()
     if (props.git.probe === null) return index
-    for (const workspace of props.props.useWorkspaces(identity).items) {
+    for (const workspace of workspaceList.items) {
       const tree = treeOfCwd(props.git.probe, workspace.path)
       if (tree !== undefined && !index.has(tree.root)) index.set(tree.root, workspace.workspaceId)
     }
     return index
-  }, [props.git.probe, props.props])
+  }, [props.git.probe, workspaceList])
   // Expanded group-key set for the subworkspace headers (`tw:` keys live in
   // the same groupExpansion map the section collapse-all already clears).
   const expandedKeys = useMemo(() => {
@@ -2455,10 +2459,14 @@ function sessionLeafOf(
  *  path binds to — one-click registration adopts them as workspaces. */
 function UnregGroup(props: { git: GitProbeResultJSON | null; props: EnhancedWorkspaceBrowserProps }): ReactNode {
   const { t, actions } = props.props
+  // EVERY hook runs before the probe-availability early return: a hook after
+  // a conditional return changes the hook order when the probe lands
+  // (React: "Rendered more hooks than during the previous render" → the
+  // slot error boundary tears the whole region down).
   const state = props.props.useStore(identity)
-  if (props.git === null) return null
   const workspaces = props.props.useWorkspaces(identity)
   const sessions = props.props.useSessions(identity)
+  if (props.git === null) return null
   const referenced = new Set<string>()
   for (const workspace of workspaces.items) referenced.add(workspace.path)
   for (const session of Object.values(sessions.byId)) {
