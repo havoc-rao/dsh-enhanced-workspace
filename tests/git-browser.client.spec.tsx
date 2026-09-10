@@ -274,7 +274,9 @@ describe('git-worktree browser layer', () => {
     expect(treeEntry).toBeDefined()
     await act(async () => { treeEntry!.click() })
     await act(async () => { await Promise.resolve() })
-    expect(latestProps.continueInWorkspace).toHaveBeenCalledWith(W('w-pay'))
+    // title carry-over: the source row (acme) has no current session in this
+    // fixture, so its first visible session title travels along.
+    expect(latestProps.continueInWorkspace).toHaveBeenCalledWith(W('w-pay'), '初始化脚手架')
   })
 
   it('falls back to the built-in shape when the probe is unavailable', async () => {

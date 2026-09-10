@@ -15,7 +15,7 @@
  * @module dsh-enhanced-workspace/client
  */
 
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only (erased — never reaches the purity gate): the client Connection
 // handle that carries the generic RPC caller. `ctx.connection` itself is not
 // typed on the client Context, so the handle is read like the gateway does —
@@ -63,6 +63,28 @@ if (process.env.NODE_ENV === 'development') {
   void import('@havocrao/dsh-code-finder/runtime').then(({ setupCodeFinder }) => {
     setupCodeFinder({})
   })
+}
+
+/** How long the title carry-over waits for the fresh session id to land. */
+const CONTINUE_TITLE_WAIT_MS = 3000
+
+/**
+ * Poll the observable sessions list until an id outside `before` appears.
+ * Resolves undefined on timeout (startSession's blank-reuse path yields no
+ * new id, and a missing rename is better than renaming someone else's row).
+ */
+async function waitForNewSessionId(
+  list: { getSnapshot: () => { ids: readonly (string & {})[] } },
+  before: ReadonlySet<string>,
+  timeoutMs: number,
+): Promise<SessionId | undefined> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const fresh = list.getSnapshot().ids.find(id => !before.has(id as string))
+    if (fresh !== undefined) return fresh as SessionId
+    if (Date.now() > deadline) return undefined
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
 }
 
 /** Required services (cordis fiber inject). */
@@ -127,8 +149,19 @@ export function apply(ctx: ClientContext): void {
     // The client sessions face is read-only (+ open); starting a session in
     // a workspace is the workspaces service verb — the same call the row's
     // plus button and Cmd/Ctrl+N use.
-    continueInWorkspace: async (workspaceId) => {
+    continueInWorkspace: async (workspaceId, title) => {
+      // The client sessions face is read-only and startSession returns void,
+      // so the fresh session is located by diffing the observable list ids.
+      // A reused blank session (startSession's reuse path) produces no new
+      // id: the carry-over is then skipped rather than renaming a stranger.
+      const list = ctx.sessions.list
+      const before = new Set<string>(list.getSnapshot().ids.map(id => id as string))
       ctx.workspaces.startSession(workspaceId)
+      if (title === undefined || title.trim() === '') return
+      const fresh = await waitForNewSessionId(list, before, CONTINUE_TITLE_WAIT_MS)
+      if (fresh === undefined) return
+      const session = ctx.sessions.binding(fresh)?.session
+      if (session !== undefined) await session.rename(title)
     },
     persistence: buildPersistence(),
   })

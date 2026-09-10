@@ -36,6 +36,14 @@ export default defineConfig({
     },
     exclude: [
       'tests/e2e/**',
+      // Parallel dev worktrees live under tmp/<repo>/<branch> (AGENTS.md):
+      // they hold their own copy of every spec, and collecting them here
+      // would run the OTHER checkout's code against this one's config.
+      '**/tmp/**',
+      // pnpm's in-repo store keeps a per-project mirror of the checkout
+      // (`.pnpm-store/v11/projects/<hash>/tests/…`); without this the whole
+      // suite is collected twice against the mirrored copy.
+      '**/.pnpm-store/**',
       '**/node_modules/**',
       '**/dist/**',
       '**/cypress/**',

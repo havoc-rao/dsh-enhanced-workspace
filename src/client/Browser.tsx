@@ -1146,9 +1146,14 @@ interface RowCallbacks {
   t: EnhancedWorkspaceBrowserProps['t']
   /** Workspace whose PATH binds to a tree root (the "在目标树继续" resolver). */
   workspaceIdForTree?: (treeRoot: string) => WorkspaceId | undefined
+  /** Source session title of a workspace row (current session when it lives
+   *  there, else the row's first visible session) — the title carried over
+   *  by "在目标树继续". */
+  sessionTitleFor?: (workspaceId: WorkspaceId) => string | undefined
   /** Continue in a target tree: new session in the bound workspace, or
-   *  register the tree first when no workspace owns it yet. */
-  onContinueInTree?: (tree: GitTreeInfoJSON) => void
+   *  register the tree first when no workspace owns it yet. The source
+   *  workspace names the title to carry over. */
+  onContinueInTree?: (tree: GitTreeInfoJSON, sourceWorkspaceId: WorkspaceId | undefined) => void
 }
 
 /** Drag & drop seat shared by every workspace and folder row. */
@@ -1237,6 +1242,24 @@ function GroupedView(props: {
     }
     return set
   }, [state.groupExpansion])
+  /** Source title for the continue carry-over: the current session's title
+   *  when it belongs to this row, else the row's first visible session. */
+  const sessionTitleFor = (workspaceId: WorkspaceId): string | undefined => {
+    const current = sessionList.current
+    if (current !== undefined) {
+      const owner = workspaceList.items.find(workspace => workspace.sessionIds.includes(current))
+      if (owner !== undefined && owner.workspaceId === workspaceId) {
+        const summary = sessionList.byId[current]
+        if (summary !== undefined && !summary.blank) return summary.displayTitle
+      }
+    }
+    const workspace = workspaceList.items.find(candidate => candidate.workspaceId === workspaceId)
+    for (const id of workspace?.sessionIds ?? []) {
+      const summary = sessionList.byId[id]
+      if (summary !== undefined && !summary.blank && summary.origin !== 'subagent') return summary.displayTitle
+    }
+    return undefined
+  }
   const callbacks: RowCallbacks = {
     onToggleGroup: key => actions.setGroupExpanded(key, !state.groupExpansion[key]),
     onToggleFolder: folderId => actions.setFolderExpanded(folderId, !state.folderExpansion[folderId]),
@@ -1253,11 +1276,13 @@ function GroupedView(props: {
     openers: props.openers,
     t,
     workspaceIdForTree: (treeRoot) => treeWorkspaceIndex.get(treeRoot),
-    onContinueInTree: (tree) => {
+    sessionTitleFor,
+    onContinueInTree: (tree, sourceWorkspaceId) => {
       const workspaceId = treeWorkspaceIndex.get(tree.root)
+      const title = sourceWorkspaceId === undefined ? undefined : sessionTitleFor(sourceWorkspaceId)
       const continueIn = (target: WorkspaceId): void => {
         actions.setGroupExpanded(target, true)
-        props.props.continueInWorkspace(target).catch(error => {
+        props.props.continueInWorkspace(target, title).catch(error => {
           console.warn('dsh-enhanced-workspace: continue-in-tree failed', target, error)
         })
       }
@@ -1901,7 +1926,7 @@ function LeafRow(props: {
                 else if (id.startsWith('tree:')) {
                   const root = id.slice('tree:'.length)
                   const tree = continueTrees.find(candidate => candidate.root === root)
-                  if (tree !== undefined) callbacks.onContinueInTree?.(tree)
+                  if (tree !== undefined) callbacks.onContinueInTree?.(tree, leaf.workspaceId)
                 }
               }}
               dense

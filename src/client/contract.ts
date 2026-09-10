@@ -137,9 +137,11 @@ export interface EnhancedWorkspaceInjected {
    * Start a NEW session in a target workspace and open it — the "在目标树
    * 继续" verb. Honest semantics: a session's cwd is fixed at creation and
    * there is no cross-tree move API, so switching trees is a new session in
-   * the target workspace, never a relocation.
+   * the target workspace, never a relocation. A source title (when given)
+   * is carried over by renaming the freshly created session once it appears
+   * in the sessions list.
    */
-  continueInWorkspace: (workspaceId: WorkspaceId) => Promise<void>
+  continueInWorkspace: (workspaceId: WorkspaceId, title?: string) => Promise<void>
   /** Durable envelope load/store (Host file first, localStorage fallback). */
   persistence: EnhancedWorkspacePersistence
 }
