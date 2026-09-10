@@ -96,6 +96,33 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   双通道通过（purity gate）；`pnpm test:mount` 实测通过（scratch DSH_HOME +
   官方 CLI 挂载 + 无头渲染，含 hover 卡片断言）。
 
+### Git Worktree 模式（M1–M2 已完成，2026-09-10）
+
+设计与交互定稿见 `docs/plan/2026-09-10-git-worktree-mode-design.md`（v3：
+**树归属 = 会话级**）+ 交互概念稿 `docs/git-worktree-ui-concept.html`。
+
+- **M1 检测面**（`9fa3efd`）：`src/host/git.ts`（`.git` 上行 walk：
+  main 目录 / `gitdir:` 文件 → linked / `modules/` → submodule；commondir、
+  HEAD（分支/`@短sha` detached）、worktrees 枚举；mtime 签名 + 5s TTL 缓存；
+  `parseWorktreePorcelain` exec 兜底）、`src/shared/git.ts`（wire 形状 +
+  严格校验）、宿主 `git/probe` RPC（loopback，失败软降级）、
+  `src/client/git-model.ts`（会话 cwd → 树绑定、聚合 pill 规则、subworkspace
+  分组、未注册树集合、repo 分组派生）。
+- **M2 视图层**（`033c42a` / `0531b98` / `2c71f49`）：`groupBy` 扩
+  `'workspace' | 'repo' | 'flat'`（双端信封校验同步）；注入面 `probeGit`
+  （通道调用）+ `continueInWorkspace`（= `ctx.workspaces.startSession`）；
+  Browser 的 gitProbe 派生缓存（挂载 + focus 防抖刷新）；行内聚合 pill
+  （单树分支 / 跨树「n 棵」/ 无 git 无 pill）；subworkspace 分组
+  （按会话 cwd 树分组，单组自动平铺，`tw:` 键空间）；「按仓库分组」视图
+  （repo 组行 + 无 git 工作区平铺 + 未注册工作树组一键注册）；
+  工作区 hover 卡片 git 区（分支/角色/同仓库树）；行菜单「在目标树继续…」。
+- **验证**：`pnpm typecheck` 0 错误；`pnpm test` **195/195**（新增
+  host-git 12 + git-model 9 + git-browser 6）；`pnpm build:dev` 双通道 +
+  纯度门通过。
+- **M3 剩余**：`pnpm test:mount` 挂载冒烟复核；README 双语补 git 条目；
+  「整理到文件夹…」占位实装（M4 采纳动作）；远程镜像卡片附注
+  （读 `.dsh-remote-meta.json`，design §2 备注）。
+
 ### 后续任务目标
 
 - **P3 剩余**：会话拖拽（手动顺序编辑入口，`setSessionOrder` /
