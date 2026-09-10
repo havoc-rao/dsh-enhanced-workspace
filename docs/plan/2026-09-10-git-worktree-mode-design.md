@@ -85,10 +85,10 @@ root, remotePath, machine, mirrorDir, at}`）经纯函数 overlay 合并进本�
 probe：每个 marker 生成一棵**虚拟 remote 树**（`role: 'remote'`，root 按
 属主机器命名空间隔离 `remote:<machine>:<remotePath>`）并把镜像根与镜内会话
 cwd 绑定到它——既有派生（行聚合 / subworkspace 分组 / 按仓库分组 / 未注册
-树 / 搜索）零改动即对远程工作区生效；行 pill 额外显示 `⎇ branch`
-（与 dsh-remote 自身 chip 一致；脏/暂存计数不再展示——用户反馈「太占位置」
-「不需要展示这个数值」，蓝色 accent 与本地 amber/green 区分），hover 卡片
-显示远端 git 段（分支 / ↑↓ 同步 / 远端机器 / 远端路径）。失败姿势全家桶
+树 / 搜索）零改动即对远程工作区生效；工作区行不渲染分支 tag（用户反馈
+「太占位置」→ 分支只进 hover 卡片），hover 卡片显示远端 git 段
+（`⎇ branch` 与 dsh-remote 自身 chip 一致、脏/暂存计数不展示，外加
+↑↓ 同步 / 远端机器 / 远端路径）。失败姿势全家桶
 （HTTP 500/501 无凭据/离线、marker:null 非镜像、isRepo:false 非仓库、畸形
 响应、网络错误）一律静默降级为无标记，绝不阻塞浏览器；浏览器侧按路径
 memo + 5s TTL。本地非镜像工作区行为完全不变。
@@ -176,9 +176,10 @@ probe 必须覆盖会话 cwd；同一树根的多个路径共享一次 walk）�
 - 已注册 workspace 被删除（仅删注册，目录仍在）→ 下次 probe 自动恢复
   「未注册」行，自愈。
 - worktree 被 `git worktree remove` → 行消失；若其 workspace 仍存在，
-  降级为普通目录 workspace（无分支 pill），树不受影响。
-- 行内分支 pill 出现在每一类工作区行（最近使用区同样有），是 worktree 状态
-  的行级视觉锚点。
+  降级为普通目录 workspace（无 git 绑定），树不受影响。
+- 工作区行上**不渲染分支 tag**（用户反馈「太占位置」；最近使用区同样无），
+  分支 / 角色 / 同仓库树全部收敛到 hover 卡片；跨树会话数保留「n 棵」小标
+  作为行级视觉锚点。
 
 ### 4.4 一致性
 
@@ -226,7 +227,8 @@ probe 必须覆盖会话 cwd；同一树根的多个路径共享一次 walk）�
   - `deriveGitForest(gitIndex, workspaces, folders, view)` → repo 分组森林
     （复用 `WorkspaceLeaf` 行形态；组行 = `RepoNode{ repoKey, members:
     WorkspaceLeaf[], nogit: WorkspaceLeaf[], unregistered: GitTreeInfo[] }`）；
-  - `wsTreeSet` 聚合（行 pill：单树 / 「n 棵」/ 无）与 `pathContainment`；
+  - `wsTreeSet` 聚合（跨树「n 棵」行小标；单树分支不占行——hover 卡片
+    为准）与 `pathContainment`；
   - `registerTree` 采纳（= `createWorkspace` + adopt 到根级头部）。
 - `src/client/store.ts`：`gitProbe: GitRepoIndex | null`（只读缓存态）+
   `refreshGitProbe()` action（focus 轮询 / 仓库组菜单刷新）；
@@ -244,8 +246,8 @@ probe 必须覆盖会话 cwd；同一树根的多个路径共享一次 walk）�
 
 - `src/client/Browser.tsx`：`ViewOptionsMenu` 分组区加「按仓库分组」项；
   GroupedView 按 `groupBy` 渲染 repo 森林（组行复用 FolderRow 形态）或用户
-  树；全部区块底部渲染「未注册工作树」组。行组件复用 + 行内分支 pill +
-  hover 卡片扩展（git 信息 + 同仓库树列表）+ 行菜单「在目标树继续…」/
+  树；全部区块底部渲染「未注册工作树」组。行组件复用 + hover 卡片扩展
+  （分支只进卡片，行内不再 pill——用户反馈）+ 行菜单「在目标树继续…」/
   「重新检测 git」。
 - 组件 spec：repo 分组渲染 / 未注册组 / 卡片跳转 / 键空间独立（recent: vs
   ws:）/ 搜索组内过滤断言（jsdom + 真实 store 引擎 + fixture gitIndex 快照）。
@@ -256,8 +258,9 @@ probe 必须覆盖会话 cwd；同一树根的多个路径共享一次 walk）�
   model 派生/绑定纯函数（含单测：main/linked/detached/submodule/无 git/
   含空格路径、porcelain 解析、缓存失效键）；未注册树行 + 注册动作。
 - **M2 派生视图与交互**：`groupBy: 'repo'`（视图选项菜单分组区第三项）与
-  repo 分组渲染（trees 在前 / 纯子目录在后）、未注册工作树独立组、行内
-  分支 pill、hover 卡片扩展（git 信息 + 同仓库树跳转）、行菜单「在目标树
+  repo 分组渲染（trees 在前 / 纯子目录在后）、未注册工作树独立组、hover
+  卡片扩展（分支 / 角色 / 同仓库树——分支只进卡片，行内不再 pill）、
+  行菜单「在目标树
   继续…」与「重新检测 git」、搜索组内过滤；focus 刷新。
 - **M3 收尾**：最近使用区与树区键空间独立（`recent:` 前缀清账）、折叠链
   跟随、溢出复位与收起所有的一致性；组件 spec 补全。

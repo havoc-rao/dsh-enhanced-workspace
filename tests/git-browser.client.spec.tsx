@@ -207,12 +207,14 @@ afterEach(() => {
 })
 
 describe('git-worktree browser layer', () => {
-  it('renders the aggregate pill: single tree, cross-tree count, none for no-git', async () => {
+  it('renders only the cross-tree count on rows (no branch tag — hover card only)', async () => {
     await renderBrowser()
-    // homogeneous workspace: the tree's branch pill on the row
+    // user feedback: workspace rows carry no branch tag; homogeneous
+    // workspace rows show neither the branch nor any git pill
     const pay = rowsByLabel('feat-payment')[0]
-    expect(pay?.textContent).toContain('feat/payment')
-    // cross-tree workspace: the count form
+    expect(pay?.textContent).not.toContain('feat/payment')
+    expect(pay?.querySelector('[class*="gitPill"]')).toBeNull()
+    // cross-tree workspace: the count form stays
     const acme = rowsByLabel('acme')[0]
     expect(acme?.textContent).toContain('2 棵')
     // no-git workspace: no pill at all
@@ -311,25 +313,21 @@ describe('git-worktree browser layer', () => {
     expect(container.querySelectorAll('[class*="workspaceRow"]').length).toBeGreaterThan(0)
   })
 
-  it('renders the remote-marker pill `⎇ branch` (no count) on mirror workspaces (and only there)', async () => {
+  it('keeps the branch off mirror workspace rows (hover card only)', async () => {
     await renderBrowser(PROBE, new Map([[REMOTE_PATH, REMOTE_MARKER]]))
     const remote = rowsByLabel('my-remote')[0]!
-    const pill = remote.querySelector('[class*="gitPillRemote"]')
-    expect(pill).not.toBeNull()
-    expect(pill?.textContent).toContain('⎇')
-    expect(pill?.textContent).toContain('dev')
-    // user feedback: the dirty count is gone from the pill and the tooltip
-    expect(pill?.textContent).not.toContain('·3')
-    expect(pill?.getAttribute('title')).not.toContain('staged')
-    expect(pill?.getAttribute('title')).not.toContain('· 3')
-    // tooltip carries the sync summary only
-    expect(pill?.getAttribute('title')).toContain('↑2 ↓1')
-    // the session aggregate never double-renders for remote rows
+    // user feedback: no branch tag on the row — marker state lives in the
+    // hover card (remote section), covered by the hover-card spec below
+    expect(remote.querySelector('[class*="gitPillRemote"]')).toBeNull()
+    expect(remote.querySelector('[class*="gitPill"]')).toBeNull()
+    expect(remote.textContent).not.toContain('⎇')
+    expect(remote.textContent).not.toContain('dev')
+    // the session aggregate never renders for remote rows either
     expect(remote.querySelector('[class*="gitPillMulti"]')).toBeNull()
-    // local workspaces keep their aggregate pills
+    // local workspaces follow the same no-branch-tag rule
     const pay = rowsByLabel('feat-payment')[0]!
-    expect(pay.textContent).toContain('feat/payment')
-    expect(pay.querySelector('[class*="gitPillRemote"]')).toBeNull()
+    expect(pay.textContent).not.toContain('feat/payment')
+    expect(pay.querySelector('[class*="gitPill"]')).toBeNull()
     // no-git workspace: still no pill
     expect(rowsByLabel('hammerspoon')[0]?.querySelector('[class*="gitPill"]')).toBeNull()
   })
@@ -369,13 +367,15 @@ describe('git-worktree browser layer', () => {
     holder.remove()
   })
 
-  it('groups mirror workspaces into their remote repo in the repo view (pill intact)', async () => {
+  it('groups mirror workspaces into their remote repo in the repo view (no row pill)', async () => {
     await renderBrowser(PROBE, new Map([[REMOTE_PATH, REMOTE_MARKER]]))
     await act(async () => { instance.actions.setGroupBy('repo') })
     await rerender()
     const remote = rowsByLabel('my-remote')[0]
     expect(remote).toBeDefined()
-    expect(remote?.querySelector('[class*="gitPillRemote"]')?.textContent).toContain('dev')
+    // the branch lives in the hover card, not on the repo-view row either
+    expect(remote?.querySelector('[class*="gitPillRemote"]')).toBeNull()
+    expect(remote?.textContent).not.toContain('⎇')
     // the remote repo group row (named by the remote root basename) exists
     const repoRows = [...container.querySelectorAll<HTMLElement>('[class*="repoRow"]')]
     expect(repoRows.some(row => row.textContent?.includes('acme'))).toBe(true)

@@ -24,16 +24,17 @@ Harness 本体**：以 `priority: -1` 遮蔽 `sidebar.workspaces` 槽位，替�
   原语（右侧定位 / 悬停驻留 / 复制反馈），内容与纯派生函数从内置 rows /
   tree 复刻。
 - **Git 工作树层**：宿主 `git/probe`（`.git` 上行 walk + worktree 枚举，
-  RPC 通道）派生——工作区行分支 pill（单树分支 / 跨树「n 棵」/ 无 git 无
-  pill）、展开工作区的 subworkspace 分组（本工作区 / linked 树 / 其他）、
-  「按仓库分组」视图（repo 组 + 无 git 工作区平铺 + 未注册工作树一键注册）、
-  工作区 hover 卡片 git 区（分支 / 角色 / 同仓库树）、行菜单「在目标树继续…」。
+  RPC 通道）派生——工作区行不展示分支 tag（用户反馈：太占位置；分支信息
+  收敛到 hover 卡片），跨树会话数用「n 棵」小标、展开工作区的 subworkspace
+  分组（本工作区 / linked 树 / 其他）、「按仓库分组」视图（repo 组 + 无
+  git 工作区平铺 + 未注册工作树一键注册）、工作区 hover 卡片 git 区（分支 /
+  角色 / 同仓库树）、行菜单「在目标树继续…」。
 - **远程镜像 git 标记（联动 dsh-remote）**：镜像工作区
   （`~/.dsh/remote-workspaces/…`，本地目录无 `.git`，本地 probe 恒报无 git）
-  的行与 hover 卡片改为直接消费 dsh-remote 宿主半的同源端点
-  `GET /dsh-remote/git-workspace?local=<镜像路径>`——行 pill `⎇ branch`
-  （与 dsh-remote 自身 chip 一致，不显示脏/暂存计数——用户反馈）、hover
-  卡片远端 git 段（分支 / 同步 / 远端机器 / 远端路径）；端点失败（离线 / 无
+  的 hover 卡片改为直接消费 dsh-remote 宿主半的同源端点
+  `GET /dsh-remote/git-workspace?local=<镜像路径>`——卡片远端 git 段
+  `⎇ branch`（与 dsh-remote 自身 chip 一致，不显示脏/暂存计数——用户反馈）
+  加 同步 / 远端机器 / 远端路径，行上不再渲染分支 tag；端点失败（离线 / 无
   凭据 / 非镜像 / 非仓库）一律静默降级为无标记，本地非镜像工作区行为不变。
 - **Cmd/Ctrl+N 新建会话快捷键**：与工作区行内 `+` 按钮同效——命中
   Cmd/Ctrl+N（无 Shift/Alt 修饰、忽略自动重复）时**在当前工作区新建会话**：

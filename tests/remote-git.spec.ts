@@ -3,8 +3,8 @@
  * src/shared/git.ts wire validators): marker validation against the real
  * dsh-remote contract (GET /dsh-remote/git-workspace), the virtual remote
  * tree conversion, the overlay merge into the local probe (bindings inside
- * mirrors, stale-binding replacement, reference stability), and the pill /
- * hover presentation helpers.
+ * mirrors, stale-binding replacement, reference stability), and the hover
+ * presentation helpers.
  */
 import { describe, expect, it } from 'vitest'
 import type { SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
@@ -19,7 +19,6 @@ import {
   remoteBranchLabel,
   remoteDirtyCount,
   remoteMachineLabel,
-  remotePillTitle,
   remoteStagedCount,
   remoteTreeInfo,
   remoteTreeRoot,
@@ -205,15 +204,10 @@ describe('presentation helpers', () => {
     expect(remoteStagedCount(nonRepo)).toBe(0)
   })
 
-  it('composes the branch label and the pill tooltip (sync only — no counts)', () => {
+  it('composes the hover-card branch label', () => {
     expect(remoteBranchLabel(repoMarker())).toBe('dev')
     expect(remoteBranchLabel(variant(m => { delete m.branch; m.detached = 'a1b2c3d' }))).toBe('a1b2c3d')
     expect(remoteBranchLabel(variant(m => { m.branch = ''; delete m.detached }))).toBe('')
-    // user feedback: dirty/staged counts are NOT part of the tooltip anymore
-    expect(remotePillTitle(repoMarker())).toBe('⎇ dev · ↑2')
-    expect(remotePillTitle(repoMarker({ ahead: 0, behind: 1, dirty: 0, staged: 0 }))).toBe('⎇ dev · ↓1')
-    expect(remotePillTitle(variant(m => { m.dirty = 0; m.staged = 0; delete m.upstream }))).toBe('⎇ dev')
-    expect(remotePillTitle(repoMarker({ dirty: 0, staged: 0, upstream: 'origin/dev', ahead: 0, behind: 0 }))).toBe('⎇ dev')
   })
 
   it('labels the owning machine (port 22 omitted)', () => {

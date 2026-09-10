@@ -137,6 +137,15 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   tests remote-git 16 + remote-git-source 10 + git-browser 组件 4 例。
   验证：`pnpm typecheck` 0 错误、`pnpm test` **225/225**、`pnpm build`
   双通道 + 纯度门通过。
+- **M3 剩余 → 分支 tag 撤出行，只留 hover 卡片**（2026-09-10，用户反馈）：
+  工作区行右侧的 branch tag 全部移除——单树聚合 pill、远端镜像 `⎇ branch`
+  pill（含其 ↑↓ 同步 tooltip）都不再渲染；分支 / 同步 / 机器 / 路径只出现在
+  hover 卡片（本地 git 区 + 远端 git 段，原有呈现不动）。保留跨树「n 棵」小
+  标（非分支信息）。死代码清理：`remotePillTitle` 与其单测移除、
+  `.gitPillRemote` / `.gitRemoteBranch` CSS 类移除（`.gitRemoteGlyph` 保留，
+  hover 卡片用）；subworkspace 组头 / 未注册树行的分支 pill 不属于「工作区
+  行」，不变。验证：`pnpm typecheck` 0 错误、`pnpm test` 全绿、`pnpm
+  build:dev` 双通道 + 纯度门通过。
 - **M3 剩余**：`pnpm test:mount` 挂载冒烟复核（git 层）；README 已补 git 双
   条目（工作树层 + 远程镜像标记），en 版双语补全仍挂起；「整理到文件夹…」
   占位实装（M4 采纳动作）。

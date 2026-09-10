@@ -115,11 +115,7 @@ import {
   unregisteredTrees,
   type GitRepoGroupDerived,
 } from './git-model.ts'
-import {
-  overlayRemoteMarkers,
-  remoteBranchLabel,
-  remotePillTitle,
-} from './remote-git.ts'
+import { overlayRemoteMarkers } from './remote-git.ts'
 import type { GitProbeResultJSON, GitTreeInfoJSON, RemoteGitMarker } from '../shared/git.ts'
 import { FLAT_SESSION_ORDER_KEY } from './store.ts'
 import css from './Browser.module.css'
@@ -415,7 +411,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   }, [refreshGit])
   // The git seat every surface reads: the LOCAL probe + the remote markers
   // overlaid into ONE index (virtual remote trees under `role: 'remote'`),
-  // plus the marker map itself for the remote pill / hover detail. The
+  // plus the marker map itself for the hover detail. The
   // merge is reference-stable: with no markers it returns the probe as-is,
   // so state changes unrelated to git never churn the derived surfaces.
   const gitPaths = useMemo(collectGitPaths, [collectGitPaths])
@@ -1228,11 +1224,11 @@ function GroupedView(props: {
   onCollapseAll: () => void
   /** Active search query (repo view filters groups and members against it). */
   query: string
-  /** Git seat: repo grouping + row pills + subworkspace groups +
-   *  the unregistered-tree group all derive from it. `probe: null` renders
-   *  every git surface in its no-git fallback. `markers` carries the
-   *  dsh-remote workspace markers (remote mirror rows render their own
-   *  `⎇ branch` pill and hover detail from it). */
+  /** Git seat: repo grouping + subworkspace groups + the unregistered-tree
+   *  group all derive from it. `probe: null` renders every git surface in
+   *  its no-git fallback. `markers` carries the dsh-remote workspace
+   *  markers (mirror rows show their branch in the hover card only — no
+   *  row pill). */
   git: { probe: GitProbeResultJSON | null; markers: ReadonlyMap<string, RemoteGitMarker>; onRefresh: () => void }
 }): ReactNode {
   const { t, actions, startSession } = props.props
@@ -1243,9 +1239,9 @@ function GroupedView(props: {
   // functions).
   const workspaceList = props.props.useWorkspaces(identity)
   const sessionList = props.props.useSessions(identity)
-  // Workspace → session cwd list, for the git aggregation (row pill +
-  // subworkspace groups): the derived leaves only carry sessions while
-  // expanded, so the git layer reads the live session list directly.
+  // Workspace → session cwd list, for the git aggregation (cross-tree
+  // count + subworkspace groups): the derived leaves only carry sessions
+  // while expanded, so the git layer reads the live session list directly.
   const sessionCwdsByWorkspace = useMemo(() => {
     const map = new Map<WorkspaceId, readonly { id: SessionId; cwd?: string }[]>()
     for (const workspace of workspaceList.items) {
@@ -1805,11 +1801,11 @@ function LeafRow(props: {
   /** Current epoch ms, injected from the tree render for the session rows'
    *  hover-card relative times (one stamp per render pass). */
   now: number
-  /** Git probe seat: row pill (aggregate) + subworkspace grouping. */
+  /** Git probe seat: subworkspace grouping + the cross-tree count row pill. */
   git?: GitProbeResultJSON | null
-  /** Remote-mirror marker map: a row whose cwd holds a marker renders the
-   *  marker pill (`⎇ branch`) instead of the session aggregate — the
-   *  marker IS the workspace's git state (mirrors have no local .git). */
+  /** Remote-mirror marker map: a row whose cwd holds a marker carries its
+   *  REMOTE git state (mirrors have no local .git) — shown in the hover
+   *  card only; the workspace row itself renders no branch tag. */
   gitMarkers?: ReadonlyMap<string, RemoteGitMarker>
   /** The workspace's sessions with cwd, for the git aggregation. */
   sessionsForGit?: readonly { id: SessionId; cwd?: string }[]
@@ -1828,9 +1824,9 @@ function LeafRow(props: {
   const remoteMarker = hasAccount && leaf.cwd !== undefined && props.gitMarkers !== undefined
     ? props.gitMarkers.get(normalizeProbePath(leaf.cwd))
     : undefined
-  const remotePillLabel = remoteMarker === undefined ? '' : remoteBranchLabel(remoteMarker)
-  // Git aggregate pill: 0 trees → nothing; 1 tree → its pill; >1 → "n 棵".
-  // A remote marker RENDERS ITS OWN pill instead (workspace-level truth).
+  // Git aggregate pill: 0 trees → nothing; >1 → "n 棵" (cross-tree count). A
+  // single tree's branch no longer renders on the row — user feedback; the
+  // hover card carries the branch detail (marker or probe alike).
   const gitAggregate = props.git !== null && props.git !== undefined && hasAccount
     ? aggregateWorkspaceTrees(props.sessionsForGit ?? [], props.git)
     : { kind: 'none' } as const
@@ -1939,22 +1935,6 @@ function LeafRow(props: {
         {leaf.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />}
       </span>
       <span className={css.rowLabel}>{leaf.label}</span>
-      {remoteMarker !== undefined && remotePillLabel !== '' ? (
-        <span
-          className={`${css.gitPill} ${css.gitPillRemote}`}
-          title={remotePillTitle(remoteMarker)}
-        >
-          <span className={css.gitRemoteGlyph} aria-hidden="true">⎇</span>
-          <span className={css.gitRemoteBranch}>{remotePillLabel}</span>
-        </span>
-      ) : gitAggregate.kind === 'single' && (
-        <span
-          className={css.gitPill}
-          title={gitAggregate.tree.branch !== undefined ? `branch ${gitAggregate.tree.branch}` : `detached ${gitAggregate.tree.detached ?? ''}`}
-        >
-          {gitAggregate.tree.branch ?? gitAggregate.tree.detached}
-        </span>
-      )}
       {gitAggregate.kind === 'multi' && (
         <span className={css.gitPillMulti} title={`${gitAggregate.trees.length} 棵树的会话`}>
           {gitAggregate.trees.length} 棵

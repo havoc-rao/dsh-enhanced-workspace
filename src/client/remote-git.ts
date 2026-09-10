@@ -135,25 +135,9 @@ export function remoteStagedCount(marker: RemoteGitMarker): number {
   return marker.isRepo === true ? marker.staged ?? 0 : 0
 }
 
-/** The pill/hover label of a remote marker: branch or detached short sha. */
+/** The hover-card label of a remote marker: branch or detached short sha. */
 export function remoteBranchLabel(marker: RemoteGitMarker): string {
   return marker.branch ?? marker.detached ?? ''
-}
-
-/** Tooltip of the remote pill: `⎇ branch · ↑ahead ↓behind` — the sync
- *  summary only. Dirty/staged counts are intentionally absent (user
- *  feedback); the hover card carries the full detail (sync, machine,
- *  remote path). */
-export function remotePillTitle(marker: RemoteGitMarker): string {
-  const label = remoteBranchLabel(marker)
-  const parts = [`⎇ ${label}`]
-  const sync: string[] = []
-  if (marker.upstream !== undefined && marker.upstream !== '') {
-    if ((marker.ahead ?? 0) > 0) sync.push(`↑${marker.ahead}`)
-    if ((marker.behind ?? 0) > 0) sync.push(`↓${marker.behind}`)
-  }
-  if (sync.length > 0) parts.push(`· ${sync.join(' ')}`)
-  return parts.join(' ')
 }
 
 /** Human label of the owning machine: `user@host[:port]` (port omitted at
