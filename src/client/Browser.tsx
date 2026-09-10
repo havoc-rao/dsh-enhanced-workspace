@@ -118,7 +118,6 @@ import {
 import {
   overlayRemoteMarkers,
   remoteBranchLabel,
-  remoteDirtyCount,
   remotePillTitle,
 } from './remote-git.ts'
 import type { GitProbeResultJSON, GitTreeInfoJSON, RemoteGitMarker } from '../shared/git.ts'
@@ -1233,7 +1232,7 @@ function GroupedView(props: {
    *  the unregistered-tree group all derive from it. `probe: null` renders
    *  every git surface in its no-git fallback. `markers` carries the
    *  dsh-remote workspace markers (remote mirror rows render their own
-   *  `⎇ branch ·N` pill and hover detail from it). */
+   *  `⎇ branch` pill and hover detail from it). */
   git: { probe: GitProbeResultJSON | null; markers: ReadonlyMap<string, RemoteGitMarker>; onRefresh: () => void }
 }): ReactNode {
   const { t, actions, startSession } = props.props
@@ -1809,7 +1808,7 @@ function LeafRow(props: {
   /** Git probe seat: row pill (aggregate) + subworkspace grouping. */
   git?: GitProbeResultJSON | null
   /** Remote-mirror marker map: a row whose cwd holds a marker renders the
-   *  marker pill (`⎇ branch ·N`) instead of the session aggregate — the
+   *  marker pill (`⎇ branch`) instead of the session aggregate — the
    *  marker IS the workspace's git state (mirrors have no local .git). */
   gitMarkers?: ReadonlyMap<string, RemoteGitMarker>
   /** The workspace's sessions with cwd, for the git aggregation. */
@@ -1947,9 +1946,6 @@ function LeafRow(props: {
         >
           <span className={css.gitRemoteGlyph} aria-hidden="true">⎇</span>
           <span className={css.gitRemoteBranch}>{remotePillLabel}</span>
-          {remoteDirtyCount(remoteMarker) > 0 && (
-            <span className={css.gitRemoteCount}>·{remoteDirtyCount(remoteMarker)}</span>
-          )}
         </span>
       ) : gitAggregate.kind === 'single' && (
         <span

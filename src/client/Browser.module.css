@@ -916,9 +916,10 @@
   color: var(--ds-color-text-3, #8b919b);
   border: 1px dashed var(--ds-color-border-l1, rgba(128, 128, 128, 0.35));
 }
-/* Remote-mirror pill: `⎇ branch ·N` — the dsh-remote git-workspace marker
-   (the mirror has no local .git; only the REMOTE state exists). Blue accent
-   so local (amber) / main (green) / remote (blue) read apart. */
+/* Remote-mirror pill: `⎇ branch` (no dirty count — user feedback; matches
+   dsh-remote's own chip) — the dsh-remote git-workspace marker (the mirror
+   has no local .git; only the REMOTE state exists). Blue accent so local
+   (amber) / main (green) / remote (blue) read apart. */
 .gitPillRemote{
   display: inline-flex;
   align-items: center;
@@ -938,16 +939,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-/* Dirty count of a remote workspace (warn tint — mirrors dsh-remote's chip). */
-.gitRemoteCount{
-  flex: none;
-  font-size: 9.5px;
-  line-height: 1.4;
-  color: var(--ds-color-text-3, #8b919b);
-  background: rgba(217, 154, 91, 0.16);
-  border-radius: 5px;
-  padding: 0 4px;
 }
 .gitNote{
   padding: 6px 10px 2px;
@@ -1046,10 +1037,6 @@
   color: var(--ds-color-text-3, #8b919b);
 }
 .hoverGitValue{
-  color: var(--ds-color-text-2, #c8c9cc);
-}
-/* Remote-marker dirty count inside the hover branch pill (warn accent). */
-.hoverGitDirty{
   color: var(--ds-color-text-2, #c8c9cc);
 }
 /* Remote path of the hover card's remote section (long paths truncate). */

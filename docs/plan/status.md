@@ -128,8 +128,9 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   `overlayRemoteMarkers` 把 marker 合成本地 probe 之上的**虚拟 remote 树**
   （`role:'remote'`、root 按属主机器命名空间隔离），镜像根与镜内会话 cwd
   绑定之——行聚合 / subworkspace 分组 / 按仓库分组 / 未注册树 / 搜索全部
-  零改动复用；行 pill `⎇ branch ·N`（蓝色 accent，悬停标题含 staged 与
-  ↑↓ 同步）、hover 卡片远端 git 段（分支 / 暂存 / 同步 / 远端机器 / 远端
+  零改动复用；行 pill `⎇ branch`（蓝色 accent，与 dsh-remote chip 一致；
+  不显示脏/暂存计数——用户反馈「太占位置」「不需要展示这个数值」，悬停
+  标题仅含 ↑↓ 同步）、hover 卡片远端 git 段（分支 / 同步 / 远端机器 / 远端
   路径）。与 dsh-remote 契约逐字段对齐（核实 lib/index.js 路由 + git-parse.js
   buildWorkspaceMarker）。本地非镜像工作区行为不变。改动：shared/git.ts、
   client/remote-git.ts（新）、contract/index、Browser/HoverCards/locales/CSS、

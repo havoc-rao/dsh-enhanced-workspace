@@ -25,9 +25,7 @@ import {
 import type { GitTreeInfoJSON, RemoteGitMarker } from '../shared/git.ts'
 import {
   remoteBranchLabel,
-  remoteDirtyCount,
   remoteMachineLabel,
-  remoteStagedCount,
 } from './remote-git.ts'
 import css from './Browser.module.css'
 
@@ -78,14 +76,13 @@ export function WorkspaceHoverContent({ label, cwd, createdAt, t, git, remote }:
    *  unavailable (no git section at all). */
   git?: { tree: GitTreeInfoJSON; peers: readonly GitTreeInfoJSON[] } | null
   /** Remote-mirror marker (dsh-remote): the workspace's REMOTE git state —
-   *  branch + dirty/staged + sync + owning machine. Takes precedence over
+   *  branch + sync + owning machine. Takes precedence over
    *  `git` (a mirror's local `.git` walk is never authoritative). */
   remote?: RemoteGitMarker
 }) {
-  // Remote section: `⎇ branch ·dirty (staged)`, the upstream sync row, and
-  // the owning machine + remote path. dsh-remote's own chip semantics.
-  const remoteDirty = remote === undefined ? 0 : remoteDirtyCount(remote)
-  const remoteStaged = remote === undefined ? 0 : remoteStagedCount(remote)
+  // Remote section: `⎇ branch`, the upstream sync row, and the owning
+  // machine + remote path. Counts (dirty/staged) are intentionally absent —
+  // user feedback; dsh-remote's own chip dropped them too.
   const syncParts: string[] = []
   if (remote !== undefined && remote.upstream !== undefined && remote.upstream !== '') {
     if ((remote.ahead ?? 0) > 0) syncParts.push(`↑${remote.ahead}`)
@@ -106,15 +103,8 @@ export function WorkspaceHoverContent({ label, cwd, createdAt, t, git, remote }:
             <span className={css.hoverGitPill}>
               <span className={css.gitRemoteGlyph} aria-hidden="true">⎇</span>
               {` ${remoteBranchLabel(remote)}`}
-              {remoteDirty > 0 && <span className={css.hoverGitDirty}>{` ·${remoteDirty}`}</span>}
             </span>
           </div>
-          {remoteStaged > 0 && (
-            <div className={css.hoverGitRow}>
-              <span className={css.hoverGitKey}>{t('hoverGitStaged')}</span>
-              <span className={css.hoverGitValue}>{remoteStaged}</span>
-            </div>
-          )}
           {syncParts.length > 0 && (
             <div className={css.hoverGitRow}>
               <span className={css.hoverGitKey}>{t('hoverGitSync')}</span>

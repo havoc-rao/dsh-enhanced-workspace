@@ -15,7 +15,7 @@
  * so ALL existing derivations (row aggregate, subworkspace groups, repo
  * grouping, unregistered trees, search) work on remote workspaces without
  * renderer branching; the marker detail map additionally feeds the remote
- * row pill (`⎇ branch ·N`) and the hover card's remote section.
+ * row pill (`⎇ branch`, no counts) and the hover card's remote section.
  *
  * Failure posture (task contract): every failure — transport, credential /
  * registry (HTTP 500/501), non-mirror (`marker: null`), `isRepo: false`,
@@ -121,12 +121,16 @@ export function overlayRemoteMarkers(
   return trees === undefined ? probe : { ...probe, trees, bindings: bindings ?? probe.bindings }
 }
 
-/** The dirty count of a marker (0 for the `isRepo: false` variant). */
+/** The dirty count of a marker (0 for the `isRepo: false` variant).
+ *  Accessor only — rendering no longer displays counts (user feedback:
+ *  the dirty/staged numbers are not shown anywhere in the UI). */
 export function remoteDirtyCount(marker: RemoteGitMarker): number {
   return marker.isRepo === true ? marker.dirty ?? 0 : 0
 }
 
-/** The staged count of a marker (0 when absent). */
+/** The staged count of a marker (0 when absent). Accessor only — no UI
+ *  surface displays it (user feedback; the hover card keeps sync, machine
+ *  and remote path instead). */
 export function remoteStagedCount(marker: RemoteGitMarker): number {
   return marker.isRepo === true ? marker.staged ?? 0 : 0
 }
@@ -136,14 +140,13 @@ export function remoteBranchLabel(marker: RemoteGitMarker): string {
   return marker.branch ?? marker.detached ?? ''
 }
 
-/** Tooltip of the remote pill: `⎇ branch · N (M staged) · ↑ahead ↓behind`
- *  — the same summary dsh-remote's own chip shows. */
+/** Tooltip of the remote pill: `⎇ branch · ↑ahead ↓behind` — the sync
+ *  summary only. Dirty/staged counts are intentionally absent (user
+ *  feedback); the hover card carries the full detail (sync, machine,
+ *  remote path). */
 export function remotePillTitle(marker: RemoteGitMarker): string {
   const label = remoteBranchLabel(marker)
   const parts = [`⎇ ${label}`]
-  const dirty = remoteDirtyCount(marker)
-  const staged = remoteStagedCount(marker)
-  if (dirty > 0) parts.push(`· ${dirty}${staged > 0 ? ` (${staged} staged)` : ''}`)
   const sync: string[] = []
   if (marker.upstream !== undefined && marker.upstream !== '') {
     if ((marker.ahead ?? 0) > 0) sync.push(`↑${marker.ahead}`)

@@ -85,9 +85,10 @@ root, remotePath, machine, mirrorDir, at}`）经纯函数 overlay 合并进本�
 probe：每个 marker 生成一棵**虚拟 remote 树**（`role: 'remote'`，root 按
 属主机器命名空间隔离 `remote:<machine>:<remotePath>`）并把镜像根与镜内会话
 cwd 绑定到它——既有派生（行聚合 / subworkspace 分组 / 按仓库分组 / 未注册
-树 / 搜索）零改动即对远程工作区生效；行 pill 额外显示 `⎇ branch ·N`
-（N=远端脏计数，蓝色 accent 与本地 amber/green 区分），hover 卡片显示远端
-git 段（分支 / 暂存 / ↑↓ 同步 / 远端机器 / 远端路径）。失败姿势全家桶
+树 / 搜索）零改动即对远程工作区生效；行 pill 额外显示 `⎇ branch`
+（与 dsh-remote 自身 chip 一致；脏/暂存计数不再展示——用户反馈「太占位置」
+「不需要展示这个数值」，蓝色 accent 与本地 amber/green 区分），hover 卡片
+显示远端 git 段（分支 / ↑↓ 同步 / 远端机器 / 远端路径）。失败姿势全家桶
 （HTTP 500/501 无凭据/离线、marker:null 非镜像、isRepo:false 非仓库、畸形
 响应、网络错误）一律静默降级为无标记，绝不阻塞浏览器；浏览器侧按路径
 memo + 5s TTL。本地非镜像工作区行为完全不变。

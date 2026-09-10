@@ -311,16 +311,18 @@ describe('git-worktree browser layer', () => {
     expect(container.querySelectorAll('[class*="workspaceRow"]').length).toBeGreaterThan(0)
   })
 
-  it('renders the remote-marker pill `⎇ branch ·N` on mirror workspaces (and only there)', async () => {
+  it('renders the remote-marker pill `⎇ branch` (no count) on mirror workspaces (and only there)', async () => {
     await renderBrowser(PROBE, new Map([[REMOTE_PATH, REMOTE_MARKER]]))
     const remote = rowsByLabel('my-remote')[0]!
     const pill = remote.querySelector('[class*="gitPillRemote"]')
     expect(pill).not.toBeNull()
     expect(pill?.textContent).toContain('⎇')
     expect(pill?.textContent).toContain('dev')
-    expect(pill?.textContent).toContain('·3')
-    // tooltip carries the full summary (dirty · staged · sync)
-    expect(pill?.getAttribute('title')).toContain('· 3 (1 staged)')
+    // user feedback: the dirty count is gone from the pill and the tooltip
+    expect(pill?.textContent).not.toContain('·3')
+    expect(pill?.getAttribute('title')).not.toContain('staged')
+    expect(pill?.getAttribute('title')).not.toContain('· 3')
+    // tooltip carries the sync summary only
     expect(pill?.getAttribute('title')).toContain('↑2 ↓1')
     // the session aggregate never double-renders for remote rows
     expect(remote.querySelector('[class*="gitPillMulti"]')).toBeNull()
@@ -332,7 +334,7 @@ describe('git-worktree browser layer', () => {
     expect(rowsByLabel('hammerspoon')[0]?.querySelector('[class*="gitPill"]')).toBeNull()
   })
 
-  it('shows the remote section on the mirror hover card (branch/sync/machine/path)', async () => {
+  it('shows the remote section on the mirror hover card (branch/sync/machine/path; no counts)', async () => {
     const holder = document.createElement('div')
     document.body.appendChild(holder)
     const hoverRoot = createRoot(holder)
@@ -352,9 +354,9 @@ describe('git-worktree browser layer', () => {
     const card = holder.textContent ?? ''
     expect(card).toContain('⎇')
     expect(card).toContain('dev')
-    expect(card).toContain('·3')
-    expect(card).toContain('暂存')
-    expect(card).toContain('1')
+    // user feedback: dirty/staged counts are gone from the card
+    expect(card).not.toContain('·3')
+    expect(card).not.toContain('暂存')
     expect(card).toContain('同步')
     expect(card).toContain('↑2 ↓1')
     expect(card).toContain('远端')

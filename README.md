@@ -31,9 +31,9 @@ Harness 本体**：以 `priority: -1` 遮蔽 `sidebar.workspaces` 槽位，替�
 - **远程镜像 git 标记（联动 dsh-remote）**：镜像工作区
   （`~/.dsh/remote-workspaces/…`，本地目录无 `.git`，本地 probe 恒报无 git）
   的行与 hover 卡片改为直接消费 dsh-remote 宿主半的同源端点
-  `GET /dsh-remote/git-workspace?local=<镜像路径>`——行 pill `⎇ branch ·N`
-  （N = 远端脏计数，悬停标题含 staged 与 ↑ahead ↓behind）、hover 卡片远端
-  git 段（分支 / 暂存 / 同步 / 远端机器 / 远端路径）；端点失败（离线 / 无
+  `GET /dsh-remote/git-workspace?local=<镜像路径>`——行 pill `⎇ branch`
+  （与 dsh-remote 自身 chip 一致，不显示脏/暂存计数——用户反馈）、hover
+  卡片远端 git 段（分支 / 同步 / 远端机器 / 远端路径）；端点失败（离线 / 无
   凭据 / 非镜像 / 非仓库）一律静默降级为无标记，本地非镜像工作区行为不变。
 - **Cmd/Ctrl+N 新建会话快捷键**：与工作区行内 `+` 按钮同效——命中
   Cmd/Ctrl+N（无 Shift/Alt 修饰、忽略自动重复）时**在当前工作区新建会话**：

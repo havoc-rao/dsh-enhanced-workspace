@@ -205,11 +205,12 @@ describe('presentation helpers', () => {
     expect(remoteStagedCount(nonRepo)).toBe(0)
   })
 
-  it('composes the branch label and the pill tooltip', () => {
+  it('composes the branch label and the pill tooltip (sync only — no counts)', () => {
     expect(remoteBranchLabel(repoMarker())).toBe('dev')
     expect(remoteBranchLabel(variant(m => { delete m.branch; m.detached = 'a1b2c3d' }))).toBe('a1b2c3d')
     expect(remoteBranchLabel(variant(m => { m.branch = ''; delete m.detached }))).toBe('')
-    expect(remotePillTitle(repoMarker())).toBe('⎇ dev · 3 (1 staged) · ↑2')
+    // user feedback: dirty/staged counts are NOT part of the tooltip anymore
+    expect(remotePillTitle(repoMarker())).toBe('⎇ dev · ↑2')
     expect(remotePillTitle(repoMarker({ ahead: 0, behind: 1, dirty: 0, staged: 0 }))).toBe('⎇ dev · ↓1')
     expect(remotePillTitle(variant(m => { m.dirty = 0; m.staged = 0; delete m.upstream }))).toBe('⎇ dev')
     expect(remotePillTitle(repoMarker({ dirty: 0, staged: 0, upstream: 'origin/dev', ahead: 0, behind: 0 }))).toBe('⎇ dev')
