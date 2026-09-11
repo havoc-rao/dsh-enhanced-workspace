@@ -30,6 +30,12 @@ if (!rawBaseUrl) {
 }
 /** The booted DSH web base URL (guarded non-null above). */
 const BASE_URL: string = rawBaseUrl
+/** Launch-token authenticated URL: GETting it at `/` mints the session cookie
+ *  the `/api/*` channels demand (browser-auth process-token exchange). */
+const AUTH_URL = process.env.DSH_E2E_AUTH_URL
+if (!AUTH_URL) {
+  throw new Error('DSH_E2E_AUTH_URL is not set — boot a DSH web instance with the plugin mounted and point this lane at it (see scripts/e2e-mount.sh)')
+}
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -39,11 +45,16 @@ const BROWSER_SELECTOR = '[data-dsh-enhanced-workspace="browser"]'
 
 let api: APIRequestContext
 
-/** Seed one workspace + one session through the host's unary RPC surface. */
+/**
+ * Seed one workspace + one session through the host's unary RPC surface —
+ * the current Host wire: `POST /api/<namespace>/<method>` with the
+ * `client-request` envelope and the typert `{ args: { request: … } }`
+ * payload, so the sidebar has a real workspace to render.
+ */
 async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
-  const workspace = await api.post(`${BASE_URL}/api/workspace.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-mount-workspace', method: 'workspace.create', payload: { path: WORKSPACE_PATH } },
+  const workspace = await api.post(`${BASE_URL}/api/workspace/create`, {
+    data: { type: 'client-request', rpcId: 'e2e-mount-workspace', method: 'workspace/create', payload: { args: { request: { path: WORKSPACE_PATH } } } },
   })
   expect(workspace.ok(), `workspace.create: ${workspace.status()} ${await workspace.text()}`).toBe(true)
   const workspaceBody = (await workspace.json()) as {
@@ -54,8 +65,8 @@ async function seedSession(): Promise<void> {
 
   // A session is optional for the mount probe; a failure must not mask the
   // core assertion (the workspace row renders on its own).
-  const session = await api.post(`${BASE_URL}/api/session.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-mount-session', method: 'session.create', payload: { workspaceId } },
+  const session = await api.post(`${BASE_URL}/api/session/create`, {
+    data: { type: 'client-request', rpcId: 'e2e-mount-session', method: 'session/create', payload: { args: { request: { workspaceId } } } },
   })
   if (!session.ok()) {
     console.warn(`[e2e-mount] session.create skipped: ${session.status()} ${await session.text()}`)
@@ -64,6 +75,9 @@ async function seedSession(): Promise<void> {
 
 test.beforeAll(async () => {
   api = await request.newContext({ baseURL: BASE_URL })
+  // browser-auth: the launch-token GET mints the authority-bound session
+  // cookie that every following /api/* call must carry.
+  await api.get(AUTH_URL)
   await seedSession()
 })
 
@@ -81,7 +95,9 @@ test('the enhanced workspace region shadows the sidebar and renders rows without
     }
   })
 
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  // The authenticated URL (token query) — a plain origin load would answer
+  // 401 until the browser-auth exchange ran.
+  await page.goto(AUTH_URL, { waitUntil: 'domcontentloaded' })
 
   // A brand-new scratch DSH_HOME mounts the web app's first-run onboarding
   // takeover, which holds `#root` inert and blocks pointer/keyboard input

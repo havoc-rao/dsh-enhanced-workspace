@@ -53,13 +53,9 @@ import {
   StateDot,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type {
-  SessionId,
-  SessionListState,
-  SessionSummary,
-  WorkspaceId,
-  WorkspaceView,
-} from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import {
   DIRECTORY_FLOW_SLOT,
   type EnhancedDirectoryFlowOwnerProps,
@@ -94,6 +90,7 @@ import {
   folderOfWorkspace,
   observeSessionActivity,
   orderDeltas,
+  pendingInteractionOf,
   RECENT_GROUP_KEY_PREFIX,
   sessionStatusDot,
   treeOrder,
@@ -103,6 +100,7 @@ import {
   type FolderNode,
   type SessionGroupBy,
   type SessionNode,
+  type SessionPendingInteractions,
   type WorkspaceLeaf,
 } from './model.ts'
 import {
@@ -142,7 +140,7 @@ function rowIndent(ancestorFolderCount: number): number {
  *  repo's color-mix pattern), the visual weight of VSCode's guide lines —
  *  clearly visible but quieter than the row dividers. (Mirror of the
  *  better-sidebar FileTree guide, re-geometried to this tree's 8px step.) */
-export const GUIDE_STROKE = 'color-mix(in srgb, var(--dsw-alias-border-l1, var(--ds-color-border, rgba(128, 128, 128, 0.35))) 70%, transparent)'
+export const GUIDE_STROKE = 'color-mix(in srgb, var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.35)) 70%, transparent)'
 
 /** The guide stroke while its column is hovered: the ancestor's WHOLE
  *  vertical line lights up (every row in its visible subtree paints this
@@ -150,7 +148,7 @@ export const GUIDE_STROKE = 'color-mix(in srgb, var(--dsw-alias-border-l1, var(-
  *  strong accent so the full "collapse target" line reads at a glance. The
  *  band's ::before stroke in Browser.module.css mirrors this look — keep the
  *  two in sync. */
-export const GUIDE_STROKE_HOVER = 'color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent, var(--ds-color-accent, #4c8dff)) 80%, transparent)'
+export const GUIDE_STROKE_HOVER = 'color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent, #4c8dff) 80%, transparent)'
 
 /** Half-width of the clickable band around each guide stroke, in px. The
  *  stroke itself is 1px; the band (2 × this) sits on the 8px column grid so
@@ -362,6 +360,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   } = props
   const workspaces = props.useWorkspaces(identity)
   const sessions = props.useSessions(identity)
+  const pendingInteractions = props.useSessionPendingInteraction(identity)
   const state = useStore(identity)
   const [query, setQuery] = useState('')
 
@@ -394,9 +393,9 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     void fetch(paths).then(setGitMarkers)
   }, [collectGitPaths, probeGit, remoteGit])
   useEffect(() => {
-    if (!workspaces.baselinesReady) return
+    if (workspaces.phase !== 'ready') return
     refreshGit()
-  }, [workspaces.baselinesReady, refreshGit])
+  }, [workspaces.phase === 'ready', refreshGit])
   const focusTimerRef = useRef<number | null>(null)
   useEffect(() => {
     const onFocus = (): void => {
@@ -469,7 +468,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   // Restore only with the CURRENT authoritative baseline. An empty list
   // before baselinesReady is not evidence that every saved workspace died.
   useEffect(() => {
-    if (hydratedRef.current || loaded === null || !workspaces.baselinesReady) return
+    if (hydratedRef.current || loaded === null || workspaces.phase !== 'ready') return
     hydratedRef.current = true
     try {
       if (loaded.envelope !== null) {
@@ -488,30 +487,30 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
       console.warn('dsh-enhanced-workspace: envelope restore failed; writes disabled', error)
       setRestoreStatus('failed')
     }
-  }, [loaded, workspaces.baselinesReady, workspaces.items, state.folders, actions])
+  }, [loaded, workspaces.phase === 'ready', workspaces.items, state.folders, actions])
   const persistedReady = restoreStatus === 'restored' || restoreStatus === 'empty'
 
   // No adoption or pruning may race durable restore.
   useEffect(() => {
-    if (!persistedReady || !workspaces.baselinesReady) return
+    if (!persistedReady || workspaces.phase !== 'ready') return
     actions.retainLiveKeys(workspaces.items.map(workspace => workspace.workspaceId))
     for (const workspace of workspaces.items) {
       if (folderOfWorkspace(state.folders, workspace.workspaceId) === undefined) {
         actions.adoptWorkspace(workspace.workspaceId)
       }
     }
-  }, [persistedReady, workspaces.baselinesReady, workspaces.items, state.folders, actions])
+  }, [persistedReady, workspaces.phase === 'ready', workspaces.items, state.folders, actions])
 
   // Failed reads never authorize a write, including a later edit or reconnect.
   useEffect(() => {
-    if (!persistedReady || !workspaces.baselinesReady) return
+    if (!persistedReady || workspaces.phase !== 'ready') return
     const timer = setTimeout(() => {
       void persistence.save(state).catch(error => {
         console.warn('dsh-enhanced-workspace: envelope save failed', error)
       })
     }, PERSIST_DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [persistedReady, workspaces.baselinesReady, state, persistence])
+  }, [persistedReady, workspaces.phase === 'ready', state, persistence])
 
   // Recency stamps refresh ONLY on a new query send: the host bumps a
   // session's updatedAt on durable session activity (a send dominates), so a
@@ -543,7 +542,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   // registry order onto the tree's depth-first order with the minimal move
   // set, so every other surface (picker, rail, flat lists) follows the tree.
   useEffect(() => {
-    if (!persistedReady || !workspaces.baselinesReady || workspaces.items.length === 0) return
+    if (!persistedReady || workspaces.phase !== 'ready' || workspaces.items.length === 0) return
     const current = workspaces.items.map(workspace => workspace.workspaceId)
     const desired = treeOrder(state.folders)
     const deltas = orderDeltas(current, desired)
@@ -559,7 +558,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
         }
       }
     })()
-  }, [persistedReady, workspaces.baselinesReady, workspaces.items, state.folders, insertWorkspaceBefore])
+  }, [persistedReady, workspaces.phase === 'ready', workspaces.items, state.folders, insertWorkspaceBefore])
 
   // First-encounter expansion (built-in parity): the group holding the
   // selected session opens unless the user already recorded a choice, so the
@@ -594,7 +593,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     const currentWorkspaceId = sessions.current === undefined
       ? undefined
       : workspaceIdBySession.get(sessions.current)
-    const workspaceId = currentWorkspaceId ?? workspaces.recentWorkspaceId
+    const workspaceId = currentWorkspaceId ?? workspaces.items[0]?.workspaceId
     if (workspaceId !== undefined) {
       actions.setGroupExpanded(workspaceId, true)
       startSession(workspaceId)
@@ -672,16 +671,16 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     [state.folderExpansion, state.groupExpansion, state.orderBy, state.sessionOrderByAccount],
   )
   const forest = useMemo(
-    () => deriveFolderForest(sessions, workspaces.items, state.folders, workspaces.archivedSessionIds, view),
-    [sessions, workspaces.items, state.folders, workspaces.archivedSessionIds, view],
+    () => deriveFolderForest(sessions, workspaces.items, state.folders, workspaces.archivedSessionIds, view, pendingInteractions),
+    [sessions, workspaces.items, state.folders, workspaces.archivedSessionIds, view, pendingInteractions],
   )
   const recents = useMemo(
     () => deriveRecentWorkspaces(workspaces.items, sessions, state.recentTouchById, RECENTS_LIMIT, view, workspaces.archivedSessionIds),
     [workspaces.items, sessions, state.recentTouchById, view, workspaces.archivedSessionIds],
   )
   const flat = useMemo(
-    () => deriveFlat(sessions, workspaces.archivedSessionIds),
-    [sessions, workspaces.archivedSessionIds],
+    () => deriveFlat(sessions, workspaces.archivedSessionIds, pendingInteractions),
+    [sessions, workspaces.archivedSessionIds, pendingInteractions],
   )
   // While searching, the SAME tree renders filtered down to the matching
   // dirs (workspace title / cwd basename / session title hits; folders keep
@@ -2227,6 +2226,8 @@ function SessionRow(props: {
       anchor={ownRow}
       content={<SessionHoverContent node={session} now={props.now} t={seat.t} />}
       disabled={menuOpen}
+      copyLabel={seat.t('copy')}
+      copiedLabel={seat.t('copied')}
     />
   )
 }
@@ -2303,6 +2304,7 @@ function RepoForestView(props: {
   const state = props.props.useStore(identity)
   const workspaces = props.props.useWorkspaces(identity)
   const sessions = props.props.useSessions(identity)
+  const pendingInteractions = props.props.useSessionPendingInteraction(identity)
   const probe = props.git.probe
   const q = props.query.trim().toLowerCase()
   const callbacks = props.callbacks
@@ -2363,7 +2365,7 @@ function RepoForestView(props: {
         <>
           <div className={css.gitNote}>{t('noGitWorkspaces')}</div>
           {nogit.map(workspaceId => {
-            const leaf = sessionLeafOf(workspaceById.get(workspaceId), sessions, state)
+            const leaf = sessionLeafOf(workspaceById.get(workspaceId), sessions, state, pendingInteractions)
             if (leaf === undefined) return null
             return (
               <LeafRow
@@ -2495,6 +2497,7 @@ function sessionLeafOf(
   workspace: WorkspaceView | undefined,
   sessions: SessionListState,
   state: { groupExpansion: Record<string, boolean>; folderExpansion: Record<string, boolean> },
+  pending: SessionPendingInteractions = new Map(),
 ): WorkspaceLeaf | undefined {
   if (workspace === undefined) return undefined
   const expanded = state.groupExpansion[workspace.workspaceId] === true
@@ -2512,20 +2515,23 @@ function sessionLeafOf(
         .map(id => sessions.byId[id as SessionId])
         .filter((summary): summary is SessionSummary => summary !== undefined)
         .filter(summary => !summary.blank && summary.origin !== 'subagent')
-        .map((summary): SessionNode => ({
-          id: summary.id,
-          current: summary.id === sessions.current,
-          title: summary.blank ? '' : summary.displayTitle,
-          blank: summary.blank,
-          running: summary.running,
-          runningSubagentCount: 0,
-          completed: summary.completed === true,
-          updatedAt: summary.updatedAt,
-          recentInputs: [],
-          recentOutputs: [],
-          ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
-          ...(summary.pendingInteraction === undefined ? {} : { pendingInteraction: summary.pendingInteraction }),
-        }))
+        .map((summary): SessionNode => {
+          const pendingInteraction = pendingInteractionOf(pending.get(summary.id)?.kind)
+          return {
+            id: summary.id,
+            current: summary.id === sessions.current,
+            title: summary.blank ? '' : summary.displayTitle,
+            blank: summary.blank,
+            running: summary.running,
+            runningSubagentCount: 0,
+            completed: summary.completed === true,
+            updatedAt: summary.updatedAt,
+            recentInputs: [],
+            recentOutputs: [],
+            ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
+            ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
+          }
+        })
       : [],
   }
 }

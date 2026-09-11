@@ -36,13 +36,13 @@
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--ds-color-text-secondary, inherit);
+  color: var(--dsw-alias-label-secondary, inherit);
   cursor: pointer;
   padding: 0;
 }
 
 .iconButton:hover {
-  background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.15));
 }
 
 .searchBar {
@@ -55,7 +55,7 @@
 
 .searchIcon {
   flex: none;
-  color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.9));
 }
 
 .searchInput {
@@ -63,7 +63,7 @@
   min-width: 0;
   box-sizing: border-box;
   padding: 4px 8px;
-  border: 1px solid var(--ds-color-border, rgba(128, 128, 128, 0.35));
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
   border-radius: 6px;
   background: transparent;
   color: inherit;
@@ -126,12 +126,12 @@
   border-radius: 50%;
   padding: 0;
   background: transparent;
-  color: var(--dsw-alias-label-primary, var(--ds-color-text-primary, inherit));
+  color: var(--dsw-alias-label-primary, inherit);
   cursor: pointer;
 }
 
 .railButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover, var(--ds-color-hover, rgba(128, 128, 128, 0.15)));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.15));
 }
 
 .rail .scroll {
@@ -185,7 +185,7 @@
 /* Recency module only: the trailing divider separates it from the workspace
  * list below — the "all" section is the last block and draws no border. */
 .sectionDivider {
-  border-bottom: 1px solid var(--ds-color-border, rgba(128, 128, 128, 0.35));
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
 }
 
 .sectionTitle {
@@ -193,7 +193,7 @@
   padding: 6px 0 2px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.9));
 }
 
 .folderRow,
@@ -243,7 +243,7 @@
 .folderRow:hover,
 .workspaceRow:hover,
 .sessionRow:hover {
-  background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.15));
 }
 
 /* The current-session wash ("正在展示 ing"): the row of the session open in
@@ -263,13 +263,13 @@
   /* Same pill as the row's regular hover fill (--dsw-row-radius), so the
      current-session wash never changes the row's corner size. */
   border-radius: var(--dsw-row-radius);
-  background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, var(--ds-color-accent, #4c8dff)) 14%, transparent);
+  background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4c8dff) 14%, transparent);
 }
 
 .folderRowCurrent:hover,
 .workspaceRowCurrent:hover,
 .sessionRowCurrent:hover {
-  background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, var(--ds-color-accent, #4c8dff)) 24%, transparent);
+  background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4c8dff) 24%, transparent);
 }
 
 /* The clickable indent-guide band: one absolutely-positioned pill per
@@ -291,7 +291,7 @@
   /* 2 × GUIDE_HIT_HALF (Browser.tsx) — keep in sync. */
   width: 8px;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent, var(--ds-color-accent, #4c8dff)) 26%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent, #4c8dff) 26%, transparent);
   opacity: 0;
   cursor: pointer;
   transition: opacity 120ms ease;
@@ -308,7 +308,7 @@
   left: 50%;
   width: 2px;
   border-radius: 1px;
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent, var(--ds-color-accent, #4c8dff)) 80%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent, #4c8dff) 80%, transparent);
   opacity: 0;
   transition: opacity 120ms ease;
 }
@@ -336,7 +336,7 @@
 }
 
 .arrow {
-  color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.9));
   transition: transform 120ms ease;
 }
 
@@ -347,7 +347,7 @@
 .rowGlyph {
   display: inline-flex;
   flex: none;
-  color: var(--ds-color-text-secondary, inherit);
+  color: var(--dsw-alias-label-secondary, inherit);
 }
 
 .rowLabel {
@@ -361,7 +361,7 @@
 .rowTime {
   flex: none;
   font-size: 11px;
-  color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.9));
 }
 
 /* Drag & drop indicators: a top/bottom accent line for anchor inserts, a
@@ -375,15 +375,15 @@
 }
 
 .dropBefore {
-  box-shadow: inset 0 2px 0 0 var(--ds-color-accent, #4c8dff);
+  box-shadow: inset 0 2px 0 0 var(--dsw-alias-state-business-primary, #4c8dff);
 }
 
 .dropAfter {
-  box-shadow: inset 0 -2px 0 0 var(--ds-color-accent, #4c8dff);
+  box-shadow: inset 0 -2px 0 0 var(--dsw-alias-state-business-primary, #4c8dff);
 }
 
 .dropOn {
-  background: var(--ds-color-selection, rgba(128, 128, 128, 0.22));
+  background: var(--dsw-alias-interactive-bg-hover-accent, rgba(128, 128, 128, 0.22));
 }
 
 /* Row action menus and the plus button: revealed on row hover. */
@@ -425,7 +425,7 @@
  * not — lights its folder glyph in the business color, keeping a collapsed
  * trail marked level by level. */
 .folderActive {
-  color: var(--dsw-alias-state-business-primary, var(--ds-color-accent, #4c8dff));
+  color: var(--dsw-alias-state-business-primary, #4c8dff);
 }
 
 /* Screen-reader-only status labels (the StateDot itself is aria-hidden). */
@@ -463,7 +463,7 @@
 .searchStatus {
   padding: 6px 0;
   font-size: 11px;
-  color: var(--ds-color-text-tertiary, rgba(128, 128, 128, 0.9));
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.9));
 }
 
 .overflowButton {
@@ -474,12 +474,12 @@
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--ds-color-text-secondary, inherit);
+  color: var(--dsw-alias-label-secondary, inherit);
   cursor: pointer;
 }
 
 .overflowButton:hover {
-  background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.15));
 }
 
 /* Section headers (recents / all): title on the left, icon actions on the
@@ -516,7 +516,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 6px 10px;
-  border: 1px solid var(--ds-color-border, rgba(128, 128, 128, 0.35));
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
   border-radius: 6px;
   background: transparent;
   color: inherit;
@@ -526,11 +526,11 @@
 .dialogError {
   margin-top: 8px;
   font-size: 12px;
-  color: var(--ds-color-danger, #e5484d);
+  color: var(--dsw-alias-state-error-primary, #e5484d);
 }
 
 .dangerAction {
-  color: var(--ds-color-danger, #e5484d);
+  color: var(--dsw-alias-state-error-primary, #e5484d);
 }
 
 .moveSubject {
@@ -539,7 +539,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  color: var(--ds-color-text-secondary, inherit);
+  color: var(--dsw-alias-label-secondary, inherit);
 }
 
 .moveList {
@@ -567,22 +567,22 @@
 }
 
 .moveRow:hover {
-  background: var(--ds-color-hover, rgba(128, 128, 128, 0.15));
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.15));
 }
 
 .moveRowSelected {
-  background: var(--ds-color-selection, rgba(128, 128, 128, 0.22));
+  background: var(--dsw-alias-interactive-bg-active, rgba(128, 128, 128, 0.22));
 }
 
 .moveCheck {
   margin-left: auto;
   flex: none;
-  color: var(--ds-color-accent, inherit);
+  color: var(--dsw-alias-state-business-primary, inherit);
 }
 
 /* Parent workspace destination for a workspace dragged over a folder top edge. */
 .workspaceDropRegion {
-  --workspace-drop-accent: var(--ds-color-accent, #4c8dff);
+  --workspace-drop-accent: var(--dsw-alias-state-business-primary, #4c8dff);
   background-image: linear-gradient(
     90deg,
     color-mix(in srgb, var(--workspace-drop-accent) 7%, transparent),
@@ -724,7 +724,7 @@
 
 .hoverModeButton:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, var(--ds-color-border, rgba(128, 128, 128, 0.35)));
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.35));
 }
 
 .hoverFilesScroll::-webkit-scrollbar {
@@ -818,7 +818,7 @@
 
 .hoverFileRowSelectable:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, var(--ds-color-border, rgba(128, 128, 128, 0.35)));
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.35));
 }
 
 .hoverFileGlyph {
@@ -863,7 +863,7 @@
 
 .hoverFilesMore:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, var(--ds-color-border, rgba(128, 128, 128, 0.35)));
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.35));
 }
 
 /* Flat-list rows (list mode): bright `name` | dim `path`, both kept in full
@@ -894,12 +894,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--ds-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 10px;
   line-height: 1.4;
   padding: 1px 6px;
   border-radius: 6px;
-  color: var(--ds-color-text-2, var(--ds-color-text, #c8c9cc));
+  color: var(--dsw-alias-label-secondary, #c8c9cc);
   background: rgba(217, 154, 91, 0.13);
   border: 1px solid rgba(217, 154, 91, 0.22);
 }
@@ -913,8 +913,8 @@
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 6px;
-  color: var(--ds-color-text-3, #8b919b);
-  border: 1px dashed var(--ds-color-border-l1, rgba(128, 128, 128, 0.35));
+  color: var(--dsw-alias-label-tertiary, #8b919b);
+  border: 1px dashed var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.35));
 }
 /* Remote glyph (`⎇`) — hover card only since the row branch tag was removed
    (user feedback); the mirror's state lives in the hover detail box. */
@@ -927,7 +927,7 @@
 .gitNote{
   padding: 6px 10px 2px;
   font-size: 10.5px;
-  color: var(--ds-color-text-3, #8b919b);
+  color: var(--dsw-alias-label-tertiary, #8b919b);
 }
 
 /* Repo group row (folder-row form). */
@@ -939,9 +939,9 @@
   min-height: 30px;
   border-radius: 7px;
   cursor: pointer;
-  color: var(--ds-color-text, #e6e8ec);
+  color: var(--dsw-alias-label-primary, #e6e8ec);
 }
-.repoRow:hover{ background: var(--ds-color-fill-hover, rgba(255, 255, 255, 0.05)); }
+.repoRow:hover{ background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.05)); }
 .repoRow.filterColumn{ filter: none; }
 .repoChildren{
   display: flex;
@@ -949,12 +949,12 @@
   gap: 1px;
   margin: 1px 0 3px 16px;
   padding-left: 10px;
-  border-left: 1px solid color-mix(in srgb, var(--ds-color-border-l1, rgba(128, 128, 128, 0.35)) 70%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35)) 70%, transparent);
 }
 .sessionCount{
   flex: none;
   font-size: 10.5px;
-  color: var(--ds-color-text-3, #8b919b);
+  color: var(--dsw-alias-label-tertiary, #8b919b);
 }
 
 /* Subworkspace (tree) group header inside an expanded workspace. */
@@ -966,10 +966,10 @@
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
-  color: var(--ds-color-text-2, #c8c9cc);
+  color: var(--dsw-alias-label-secondary, #c8c9cc);
   font-weight: 600;
 }
-.subwsRow:hover{ background: var(--ds-color-fill-hover, rgba(255, 255, 255, 0.05)); }
+.subwsRow:hover{ background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.05)); }
 
 /* Unregistered worktree row (dashed) + one-click register. */
 .unregRow{
@@ -979,18 +979,18 @@
   min-height: 26px;
   border-radius: 6px;
   padding: 0 6px;
-  border: 1px dashed var(--ds-color-border-l1, rgba(128, 128, 128, 0.35));
+  border: 1px dashed var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.35));
   cursor: pointer;
-  color: var(--ds-color-text-3, #8b919b);
+  color: var(--dsw-alias-label-tertiary, #8b919b);
 }
-.unregRow:hover{ background: var(--ds-color-fill-hover, rgba(255, 255, 255, 0.05)); }
+.unregRow:hover{ background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.05)); }
 .registerButton{
   flex: none;
   font-size: 10.5px;
   padding: 1px 8px;
   border-radius: 6px;
-  color: var(--ds-color-accent, #4c8dff);
-  border: 1px solid color-mix(in srgb, var(--ds-color-accent, #4c8dff) 45%, transparent);
+  color: var(--dsw-alias-state-business-primary, #4c8dff);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #4c8dff) 45%, transparent);
 }
 
 /* Hover card git section (workspace rows). */
@@ -998,12 +998,12 @@
   margin-top: 6px;
   font-size: 11px;
   font-style: italic;
-  color: var(--ds-color-text-3, #8b919b);
+  color: var(--dsw-alias-label-tertiary, #8b919b);
 }
 .hoverGit{
   margin-top: 8px;
   padding-top: 7px;
-  border-top: 1px solid var(--ds-color-border-l1, rgba(128, 128, 128, 0.35));
+  border-top: 1px solid var(--dsw-alias-border-l1, rgba(128, 128, 128, 0.35));
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -1018,27 +1018,27 @@
   flex: none;
   width: 46px;
   font-size: 10.5px;
-  color: var(--ds-color-text-3, #8b919b);
+  color: var(--dsw-alias-label-tertiary, #8b919b);
 }
 .hoverGitValue{
-  color: var(--ds-color-text-2, #c8c9cc);
+  color: var(--dsw-alias-label-secondary, #c8c9cc);
 }
 /* Remote path of the hover card's remote section (long paths truncate). */
 .hoverGitPath{
-  color: var(--ds-color-text-2, #c8c9cc);
-  font-family: var(--ds-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--dsw-alias-label-secondary, #c8c9cc);
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 10.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .hoverGitPill{
-  font-family: var(--ds-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 10px;
   line-height: 1.4;
   padding: 1px 6px;
   border-radius: 6px;
-  color: var(--ds-color-text-2, #c8c9cc);
+  color: var(--dsw-alias-label-secondary, #c8c9cc);
   background: rgba(217, 154, 91, 0.13);
   border: 1px solid rgba(217, 154, 91, 0.22);
   max-width: 140px;
@@ -1064,5 +1064,5 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ds-color-text-2, #c8c9cc);
+  color: var(--dsw-alias-label-secondary, #c8c9cc);
 }

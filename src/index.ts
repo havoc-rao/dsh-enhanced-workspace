@@ -163,7 +163,6 @@ export function apply(ctx: Context): void {
         },
       } as const
     },
-    { authority: 'loopback' },
   )
   // The registration is a cordis effect on this context; it disposes itself
   // with the fiber (`remove` exists for eager teardown only).

@@ -7,15 +7,27 @@
  * @module dsh-enhanced-workspace/client/model
  */
 
-import {
-  type PendingInteractionStatus,
-  type SessionId,
-  type SessionListState,
-  type SessionProjectionMap,
-  type SessionSummary,
-  type WorkspaceId,
-  type WorkspaceView,
-} from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
+import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+
+/**
+ * Pending interaction kinds a session row surfaces. The framework removed its
+ * exported union with the client-runtime split; the member values are stable.
+ */
+export type PendingInteractionStatus = 'approval' | 'plan-review' | 'question'
+
+/** Pending interactions by Session, as published by the ui-session assembly. */
+export type SessionPendingInteractions = ReadonlyMap<SessionId, { readonly kind: string }>
+
+/** No pending interactions: the default for derivations that render no indicator. */
+const EMPTY_PENDING: SessionPendingInteractions = new Map()
+
+/** Map one domain-owned pending interaction kind onto the row presentation union. */
+export function pendingInteractionOf(kind: string | undefined): PendingInteractionStatus | undefined {
+  return kind === 'approval' || kind === 'plan-review' || kind === 'question' ? kind : undefined
+}
 
 /**
  * Identifies one folder record. The reserved root id (`ROOT_FOLDER_ID`) is a
@@ -969,8 +981,10 @@ function sessionNode(
   session: SessionSummary,
   descendants: ReadonlyMap<SessionId, { runningCount: number }>,
   current: SessionId | undefined,
+  pending: SessionPendingInteractions = EMPTY_PENDING,
 ): SessionNode {
   const stats = projectionSessionStats(session.projectionValues)
+  const pendingInteraction = pendingInteractionOf(pending.get(session.id)?.kind)
   return {
     id: session.id,
     current: session.id === current,
@@ -983,7 +997,7 @@ function sessionNode(
     recentInputs: stats?.recentInputs ?? [],
     recentOutputs: stats?.recentOutputs ?? [],
     ...(session.cwd === undefined ? {} : { cwd: session.cwd }),
-    ...(session.pendingInteraction === undefined ? {} : { pendingInteraction: session.pendingInteraction }),
+    ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
   }
 }
 
@@ -1009,6 +1023,7 @@ function buildLeaf(
   expandedGroups: ReadonlySet<string>,
   view: ForestView,
   descendants: ReadonlyMap<SessionId, SubagentDescendantSummary>,
+  pending: SessionPendingInteractions = EMPTY_PENDING,
   rowKey: string = workspace.workspaceId,
 ): WorkspaceLeaf {
   const members: SessionSummary[] = []
@@ -1032,7 +1047,7 @@ function buildLeaf(
     sessionCount: members.length,
     expanded,
     containsCurrent: list.current !== undefined && workspace.sessionIds.includes(list.current as SessionId),
-    sessions: expanded ? ordered.map(member => sessionNode(member, descendants, list.current)) : [],
+    sessions: expanded ? ordered.map(member => sessionNode(member, descendants, list.current, pending)) : [],
   }
 }
 
@@ -1058,8 +1073,9 @@ export function deriveWorkspaceLeaf(
   workspace: WorkspaceView,
   archivedSessionIds: readonly SessionId[],
   view: ForestView,
+  pending: SessionPendingInteractions = EMPTY_PENDING,
 ): WorkspaceLeaf {
-  return buildLeaf(workspace, list, new Set(archivedSessionIds), expandedGroupKeys(view), view, indexSubagentDescendants(list.byId))
+  return buildLeaf(workspace, list, new Set(archivedSessionIds), expandedGroupKeys(view), view, indexSubagentDescendants(list.byId), pending)
 }
 
 /**
@@ -1081,6 +1097,7 @@ export function deriveFolderForest(
   folders: FolderTree,
   archivedSessionIds: readonly SessionId[],
   view: ForestView,
+  pending: SessionPendingInteractions = EMPTY_PENDING,
 ): ForestResult {
   const archived = new Set(archivedSessionIds)
   const expandedGroups = expandedGroupKeys(view)
@@ -1111,7 +1128,7 @@ export function deriveFolderForest(
       for (const id of record.workspaceIds) {
         const workspace = workspaceById.get(id)
         if (workspace === undefined) continue
-        const leaf = buildLeaf(workspace, list, archived, expandedGroups, view, descendants)
+        const leaf = buildLeaf(workspace, list, archived, expandedGroups, view, descendants, pending)
         workspaceGroups.push(leaf)
         sessionCount += leaf.sessionCount
         containsCurrent ||= leaf.containsCurrent
@@ -1190,7 +1207,11 @@ export function deriveFolderForest(
  * @param archivedSessionIds - registry-global archive set.
  * @returns flat rows in render order.
  */
-export function deriveFlat(list: SessionListState, archivedSessionIds: readonly SessionId[]): SessionNode[] {
+export function deriveFlat(
+  list: SessionListState,
+  archivedSessionIds: readonly SessionId[],
+  pending: SessionPendingInteractions = EMPTY_PENDING,
+): SessionNode[] {
   const archived = new Set(archivedSessionIds)
   const descendants = indexSubagentDescendants(list.byId)
   const rows: SessionSummary[] = []
@@ -1200,7 +1221,7 @@ export function deriveFlat(list: SessionListState, archivedSessionIds: readonly 
     rows.push(session)
   }
   rows.sort(byRecency)
-  return rows.map(session => sessionNode(session, descendants, list.current))
+  return rows.map(session => sessionNode(session, descendants, list.current, pending))
 }
 
 /**
@@ -1385,7 +1406,7 @@ export function deriveRecentWorkspaces(
       node: {
         // The prefixed row key keeps the recency module's expand/collapse
         // independent from the workspace list's rows (no linkage).
-        ...buildLeaf(workspace, sessions, archived, expandedGroups, view, descendants, recentGroupKey(workspace.workspaceId)),
+        ...buildLeaf(workspace, sessions, archived, expandedGroups, view, descendants, EMPTY_PENDING, recentGroupKey(workspace.workspaceId)),
         updatedAt: score,
       },
       score,

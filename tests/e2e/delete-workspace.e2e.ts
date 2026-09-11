@@ -26,6 +26,12 @@ if (!rawBaseUrl) {
 }
 /** The booted DSH web base URL (guarded non-null above). */
 const BASE_URL: string = rawBaseUrl
+/** Launch-token authenticated URL: GETting it at `/` mints the session cookie
+ *  the `/api/*` channels demand (browser-auth process-token exchange). */
+const AUTH_URL = process.env.DSH_E2E_AUTH_URL
+if (!AUTH_URL) {
+  throw new Error('DSH_E2E_AUTH_URL is not set — boot a DSH web instance with the plugin mounted (see scripts/e2e-mount.sh)')
+}
 
 /** The seeded empty directory (no session ever created in it). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-delete-workspace')
@@ -39,8 +45,8 @@ let workspaceId = ''
 /** Seed one EMPTY workspace through the host's unary RPC surface (no session). */
 async function seedEmptyWorkspace(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
-  const response = await api.post(`${BASE_URL}/api/workspace.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-delete-seed', method: 'workspace.create', payload: { path: WORKSPACE_PATH } },
+  const response = await api.post(`${BASE_URL}/api/workspace/create`, {
+    data: { type: 'client-request', rpcId: 'e2e-delete-seed', method: 'workspace/create', payload: { args: { request: { path: WORKSPACE_PATH } } } },
   })
   expect(response.ok(), `workspace.create: ${response.status()} ${await response.text()}`).toBe(true)
   const body = (await response.json()) as {
@@ -52,6 +58,9 @@ async function seedEmptyWorkspace(): Promise<void> {
 
 test.beforeAll(async () => {
   api = await request.newContext({ baseURL: BASE_URL })
+  // browser-auth: the launch-token GET mints the authority-bound session
+  // cookie that every following /api/* call must carry.
+  await api.get(AUTH_URL)
   await seedEmptyWorkspace()
 })
 
@@ -61,8 +70,8 @@ test.afterAll(async () => {
   // host delete on an unknown id is an idempotent no-op, so this cannot
   // paper over a failed UI delete.
   if (workspaceId !== '') {
-    await api.post(`${BASE_URL}/api/workspace.delete`, {
-      data: { type: 'client-request', rpcId: 'e2e-delete-cleanup', method: 'workspace.delete', payload: { workspaceId } },
+    await api.post(`${BASE_URL}/api/workspace/delete`, {
+      data: { type: 'client-request', rpcId: 'e2e-delete-cleanup', method: 'workspace/delete', payload: { args: { request: { workspaceId } } } },
     }).catch(() => { /* best-effort */ })
   }
   await api?.dispose()
@@ -89,7 +98,9 @@ test('row menu 删除工作区 removes the empty workspace row and closes the di
     }
   })
 
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  // The authenticated URL (token query) — a plain origin load would answer
+  // 401 until the browser-auth exchange ran.
+  await page.goto(AUTH_URL, { waitUntil: 'domcontentloaded' })
 
   // The plugin's shadow mount is visible and renders the seeded row.
   const region = page.locator(BROWSER_SELECTOR)
@@ -131,15 +142,19 @@ test('row menu 删除工作区 removes the empty workspace row and closes the di
   ).toHaveCount(0, { timeout: 20_000 })
   await expect(dialog).toHaveCount(0, { timeout: 10_000 })
 
-  // The host registration is really gone (not just hidden by the tree).
-  const list = await api.post(`${BASE_URL}/api/workspace.list`, {
-    data: { type: 'client-request', rpcId: 'e2e-delete-list', method: 'workspace.list', payload: {} },
+  // The host registration is really gone (not just hidden by the tree): the
+  // controller's rename on the deleted id must fail. (The old unary
+  // `workspace.list` endpoint no longer exists on the Host wire — the list
+  // surface is the `workspace.follow` stream — so a failing mutation is the
+  // locale-free proof of absence.)
+  const rename = await api.post(`${BASE_URL}/api/workspace/rename`, {
+    data: { type: 'client-request', rpcId: 'e2e-delete-rename', method: 'workspace/rename', payload: { args: { request: { workspaceId, title: 'should-not-exist' } } } },
   })
-  expect(list.ok()).toBe(true)
-  const listBody = (await list.json()) as {
-    result: { ok: true; value: { items: { workspaceId: string }[] } }
+  expect(rename.ok()).toBe(true)
+  const renameBody = (await rename.json()) as {
+    result: { ok: true; value: unknown } | { ok: false; error: unknown }
   }
-  expect(listBody.result.value.items.some(item => item.workspaceId === workspaceId)).toBe(false)
+  expect(renameBody.result.ok).toBe(false)
 
   // No crash markers anywhere on the page (plugin-prefixed console failures).
   expect(pageErrors, `pageerrors: ${pageErrors.map(error => error.message).join(' | ')}`).toEqual([])

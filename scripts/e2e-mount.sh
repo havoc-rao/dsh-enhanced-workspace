@@ -155,10 +155,14 @@ popd >/dev/null
 # 等待 web 就绪。注意：输出被重定向（非 TTY）时 CLI 可能守护化——CLI 进程
 # 退出而真实服务器继续（$DSH_HOME/web.pid）；"退出"只有在 CLI 已死且没有
 # pid 文件时才判定为启动失败。
-URL=""
+# 打印的 URL 是浏览器的认证 URL（`/?token=<launch-token>`，browser-auth
+# 过程令牌交换）：lane 用它在 `/` 铸造会话 cookie 后才能打 `/api/*` 通道，
+# 否则一律 401。curl 探活只关心服务器在应答（3xx/2xx 皆可就绪），不带尾斜杠
+# ——尾斜杠会把 token 变成 `token=…/`，令牌校验直接失配。
+AUTH_URL=""
 for _ in $(seq 1 120); do
-  if URL="$(grep -oE 'dsh web: http://127\.0\.0\.1:[0-9]+' "$WEB_LOG" | head -1 | awk '{print $3}')" && [ -n "$URL" ]; then
-    if curl -s -m 3 -o /dev/null "$URL/"; then break; fi
+  if AUTH_URL="$(grep -oE 'dsh web: http://127\.0\.0\.1:[0-9]+[^ )]*' "$WEB_LOG" | head -1 | awk '{print $3}')" && [ -n "$AUTH_URL" ]; then
+    if curl -s -m 3 -o /dev/null "$AUTH_URL"; then break; fi
   fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null && [ ! -f "$DSH_HOME/web.pid" ]; then
     echo "=== dsh web 提前退出，日志尾部 ===" >&2
@@ -167,12 +171,14 @@ for _ in $(seq 1 120); do
   fi
   sleep 1
 done
-[ -n "$URL" ] || { echo "=== 120s 内未等到 dsh web 就绪，日志尾部 ===" >&2; tail -40 "$WEB_LOG" >&2 || true; exit 1; }
-say "dsh web 就绪：${URL}（pid ${SERVER_PID}）"
+[ -n "$AUTH_URL" ] || { echo "=== 120s 内未等到 dsh web 就绪，日志尾部 ===" >&2; tail -40 "$WEB_LOG" >&2 || true; exit 1; }
+BASE_URL="$(printf '%s' "$AUTH_URL" | grep -oE 'http://[^/?]+')"
+say "dsh web 就绪：${AUTH_URL}（pid ${SERVER_PID}）"
 
-# 步骤 5：运行无头渲染 lane
+# 步骤 5：运行无头渲染 lane（DSH_E2E_URL=干净 origin，DSH_E2E_AUTH_URL=带
+# launch-token 的认证 URL，lane 先 GET 它铸造 cookie）
 say "运行 Playwright 无头渲染 lane..."
-DSH_E2E_URL="$URL" DSH_E2E_WORKSPACE="$WORKSPACE_DIR" \
+DSH_E2E_URL="$BASE_URL" DSH_E2E_AUTH_URL="$AUTH_URL" DSH_E2E_WORKSPACE="$WORKSPACE_DIR" \
   pnpm exec playwright test ${GREP_FILTER:+--grep "$GREP_FILTER"}
 
 say "通过：插件挂载到真实 DSH 后无头渲染未崩溃"

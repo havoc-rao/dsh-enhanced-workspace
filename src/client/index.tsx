@@ -15,7 +15,8 @@
  * @module dsh-enhanced-workspace/client
  */
 
-import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 // Type-only (erased — never reaches the purity gate): the client Connection
 // handle that carries the generic RPC caller. `ctx.connection` itself is not
 // typed on the client Context, so the handle is read like the gateway does —
@@ -25,6 +26,17 @@ import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client
 // 'sidebar.workspaces' owner share (wide/expandSidebar) into the uislots
 // SlotMap that register() constrains its keys against.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+// Type-only: pulls the SlotRegistry service merge (`ctx.slots`).
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the Workspace selector share (`useWorkspaces`) into
+// GlobalStandardProps.
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+// Type-only: pulls the Session selector shares (`useSessions`,
+// `useSessionPendingInteraction`) into GlobalStandardProps.
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+// Type-only: pulls ui-workspace's Context merge (`ctx.uiWorkspace`, the
+// workspace navigation service carrying startSession/pickDirectory).
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 // Type-only: pulls dsh-client-locale's Context merge — `ctx.locale` (the
 // LocaleRuntime registering this plugin's dictionary) is declared there.
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -88,8 +100,16 @@ async function waitForNewSessionId(
   }
 }
 
-/** Required services (cordis fiber inject). */
-export const inject = ['slots', 'sessions', 'workspaces', 'locale', 'connection']
+/**
+ * Required services (cordis fiber inject). The target slot is declared by
+ * the built-in ui-workspace, whose activation order relative to this one is
+ * NOT constrained — `slots.inject()` covers the slot declaration itself, and
+ * `uiWorkspace` (the navigation service carrying startSession/pickDirectory)
+ * is listed so this fiber waits for it too, the same convention every
+ * in-harness consumer of the service follows (ui-sidebar, ui-conversation,
+ * ui-directory-picker-browse).
+ */
+export const inject = ['slots', 'sessions', 'workspaces', 'uiWorkspace', 'locale', 'connection']
 
 /**
  * Register the enhanced browser once the slot declaration is on the ledger
@@ -124,7 +144,7 @@ export function apply(ctx: ClientContext): void {
         subscribe: listener => ctx.slots.subscribe(DIRECTORY_FLOW_SLOT, listener),
       },
     },
-    startSession: (workspaceId) => { ctx.workspaces.startSession(workspaceId) },
+    startSession: (workspaceId) => { ctx.uiWorkspace.startSession(workspaceId) },
     open: (sessionId) => { ctx.sessions.open(sessionId) },
     renameSession: async (sessionId, title) => {
       const session = ctx.sessions.binding(sessionId)?.session
@@ -149,7 +169,7 @@ export function apply(ctx: ClientContext): void {
       await ctx.workspaces.insertSessionBefore(workspaceId, sessionId, beforeSessionId)
     },
     createWorkspace: input => ctx.workspaces.create(input),
-    pickDirectory: () => ctx.workspaces.pickDirectory(),
+    pickDirectory: () => ctx.uiWorkspace.pickDirectory(),
     probeGit,
     remoteGit,
     // The client sessions face is read-only (+ open); starting a session in
@@ -162,7 +182,7 @@ export function apply(ctx: ClientContext): void {
       // id: the carry-over is then skipped rather than renaming a stranger.
       const list = ctx.sessions.list
       const before = new Set<string>(list.getSnapshot().ids.map(id => id as string))
-      ctx.workspaces.startSession(workspaceId)
+      ctx.uiWorkspace.startSession(workspaceId)
       if (title === undefined || title.trim() === '') return
       const fresh = await waitForNewSessionId(list, before, CONTINUE_TITLE_WAIT_MS)
       if (fresh === undefined) return
@@ -172,7 +192,7 @@ export function apply(ctx: ClientContext): void {
     persistence: buildPersistence(),
   })
 
-  ctx.slots.register(
+  ctx.slots.inject('sidebar.workspaces', () => ctx.slots.register(
     {
       name: 'sidebar.workspaces',
       priority: -1,
@@ -191,5 +211,5 @@ export function apply(ctx: ClientContext): void {
       registrant: 'dsh-enhanced-workspace',
     },
     EnhancedWorkspaceBrowser,
-  )
+  ))
 }

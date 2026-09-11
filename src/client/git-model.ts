@@ -16,7 +16,8 @@
  * @module dsh-enhanced-workspace/client/git-model
  */
 
-import type { SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { GitProbeResultJSON, GitTreeInfoJSON } from '../shared/git.ts'
 
 /** Normalize a path for binding lookups (browser-safe, no node:path). */

@@ -9,8 +9,8 @@
  * @module dsh-enhanced-workspace/client/store
  */
 
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import {
   RECENT_GROUP_KEY_PREFIX,
   adoptWorkspaceIn,

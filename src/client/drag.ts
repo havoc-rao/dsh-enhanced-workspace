@@ -21,7 +21,7 @@
  * @module dsh-enhanced-workspace/client/drag
  */
 
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { FolderId, folderOfWorkspace, ROOT_FOLDER_ID, type FolderId as FolderIdBrand, type FolderTree } from './model.ts'
 
 /** What is being dragged. */
