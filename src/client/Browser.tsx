@@ -58,8 +58,15 @@ import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-sess
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import {
   DIRECTORY_FLOW_SLOT,
+  SEARCH_GLOBAL_KEY,
+  SEARCH_INPUT_SELECTOR,
+  SEARCH_RAIL_BUTTON_SELECTOR,
+  SEARCH_SLOT,
+  installSearchHandle,
   type EnhancedDirectoryFlowOwnerProps,
+  type EnhancedSearchOwnerProps,
   type EnhancedWorkspaceBrowserProps,
+  type EnhancedWorkspaceGlobal,
 } from './contract.ts'
 import {
   folderDropZone,
@@ -457,6 +464,58 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     return () => { window.clearTimeout(timer) }
   }, [wide, searchOnExpand])
 
+  // ── External search trigger surface ─────────────────────────────────────
+  // The search hole (`SEARCH_SLOT`) exists so an external plugin (dsh-hotkey)
+  // can drive THIS search state instead of guessing at DOM: the handle below
+  // is published through the slot's common inject face and mirrored on
+  // `window.__DSH_ENHANCED_WORKSPACE__`. The handle's shape is deliberately
+  // one capability per method:
+  //  - `focusSearch()` runs the SAME two-step the rail button runs — arm the
+  //    `searchOnExpand` gesture, then request the shell expansion — so
+  //    "focus while collapsed" and "focus while wide" are one code path (the
+  //    effect above is the only place that touches the input's focus: no
+  //    duplicate, drift-prone focus logic here). `expandSidebar()` is a no-op
+  //    request while already wide, and the slide-length delay before the
+  //    focus is the built-in gesture's timing, not a divergence;
+  //  - `setQuery()` replaces the `query` state directly (React state setters
+  //    are safe to call through a stable wrapper), and the value survives a
+  //    collapsed→wide fold.
+  const focusSearch = useCallback((): void => {
+    setSearchOnExpand(true)
+    expandSidebar()
+  }, [expandSidebar])
+  const setSearchQuery = useCallback((next: string): void => { setQuery(next) }, [])
+  const readSearchInput = useCallback((): HTMLInputElement | null => searchInputRef.current, [])
+  // Publish/withdraw the handle with the region's mount. `installSearchHandle`
+  // restores the previous owner on cleanup, so StrictMode's setup/cleanup
+  // replay and spec remounts never leave a dead handle behind.
+  useEffect(
+    () => installSearchHandle({ focus: focusSearch, setQuery: setSearchQuery, input: readSearchInput }),
+    [focusSearch, setSearchQuery, readSearchInput],
+  )
+  // Imperative mirror for hotkey actions: their `run` executes outside React
+  // and cannot hold slot props; `contract.ts` owns the key/shape, this only
+  // wires the live callbacks.
+  useEffect(() => {
+    const mirror: EnhancedWorkspaceGlobal = {
+      focusSearch,
+      setSearchQuery,
+      searchInput: readSearchInput,
+      searchAvailable: () => true,
+      querySelector: SEARCH_INPUT_SELECTOR,
+      railButtonSelector: SEARCH_RAIL_BUTTON_SELECTOR,
+    }
+    const host = window as unknown as Record<string, EnhancedWorkspaceGlobal | undefined>
+    const previous = host[SEARCH_GLOBAL_KEY]
+    host[SEARCH_GLOBAL_KEY] = mirror
+    return () => {
+      if (host[SEARCH_GLOBAL_KEY] === mirror) {
+        if (previous === undefined) delete host[SEARCH_GLOBAL_KEY]
+        else host[SEARCH_GLOBAL_KEY] = previous
+      }
+    }
+  }, [focusSearch, setSearchQuery, readSearchInput])
+
   // Read once per mount, independently of baseline arrival. Cancellation
   // detaches obsolete effects (including StrictMode's setup/cleanup replay).
   const loadRef = useRef<ReturnType<typeof persistence.load> | null>(null)
@@ -671,6 +730,11 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     if (directoryFlowAvailable) setFlowOpen(true)
     else void pickDirectory().then(path => { if (path !== null) void addWorkspace(path) })
   }
+
+  // Owner share of the search hole. Deliberately empty (the slot publishes
+  // the inject handle, not a conversation); the stable reference keeps the
+  // renderSlot occurrence from churning child registrations on every render.
+  const searchOwner = useMemo<EnhancedSearchOwnerProps>(() => ({}), [])
 
   const view = useMemo(
     () => ({
@@ -985,10 +1049,20 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
               ref={searchInputRef}
               className={css.searchInput}
               type="search"
+              aria-label={t('searchAria')}
+              /* Stable external marker: the DOM fallback trigger path
+                 (`SEARCH_INPUT_ATTR_VALUE`, contract.ts). Class names are
+                 hashed per build; this attribute is the contract. */
+              data-dsh-enhanced-workspace="search"
               placeholder={t('searchPlaceholder')}
               value={query}
               onChange={event => setQuery(event.target.value)}
             />
+            {/* The search hole: an optional occupant (e.g. a hotkey plugin's
+                companion control) renders beside the field while the browser
+                is wide. Its props carry the slot's common `inject` face —
+                the live search handle (`focus` / `setQuery` / `input`). */}
+            {renderSlot(SEARCH_SLOT, searchOwner)}
           </div>
         )
         : (
@@ -1012,10 +1086,11 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 type="button"
                 className={css.railButton}
                 aria-label={t('searchAria')}
-                onClick={() => {
-                  setSearchOnExpand(true)
-                  expandSidebar()
-                }}
+                /* Stable external marker (SEARCH_RAIL_BUTTON_ATTR_VALUE):
+                   a DOM fallback clicks this while the input is absent, then
+                   waits for the fold and focuses the input. */
+                data-dsh-enhanced-workspace="search-button"
+                onClick={focusSearch}
               >
                 <IconSearchOutline16 size={18} />
               </button>

@@ -199,6 +199,15 @@ tests/
   `src/client/contract.ts` 的 `DIRECTORY_FLOW_SLOT`（跨插件字符串协议，
   两端各自持有字面量；dsh-remote 侧以构建期 ENV `DSH_REMOTE_DIRECTORY_FLOW_SLOT`
   设定，默认官方 key）。
+- **搜索的外部触发同样走自有 hole**：`SEARCH_SLOT =
+  'enhanced-workspace.workspace.search'`（single/root，owner 空），把
+  `EnhancedSearchHandle`（`focus` / `setQuery` / `input` / `available`）作为
+  **slot 级公共 inject face** 发给注册者，并镜像到
+  `window.__DSH_ENHANCED_WORKSPACE__`；输入框带稳定
+  `data-dsh-enhanced-workspace="search"`（折叠态 rail 按钮为 `"search-button"`）
+  作 DOM 兜底。外部热键插件（dsh-hotkey）按「slot 句柄 → 全局镜像 → DOM」
+  三级触发，折叠态自动先 `expandSidebar()` 再落焦（与 rail 按钮同一手势）。
+  完整契约与 dsh-hotkey 示例见 `docs/external-search-trigger.md`。
 - **跨标签页一致性 best-effort**：目录树是插件本地权威；两标签页并发改树
   为 last-writer-wins，不做冲突合并（Host 顺序 reconcile 双向可能打架，
   失败仅 console.warn）。文档化：同 profile 建议单标签页整理目录。

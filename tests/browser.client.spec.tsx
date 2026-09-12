@@ -13,7 +13,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
 import { WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
-import { DIRECTORY_FLOW_SLOT, type EnhancedDirectoryFlowOwnerProps, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
+import {
+  DIRECTORY_FLOW_SLOT,
+  SEARCH_GLOBAL_KEY,
+  SEARCH_INPUT_SELECTOR,
+  SEARCH_RAIL_BUTTON_SELECTOR,
+  SEARCH_SLOT,
+  commitSearchQueryFromDom,
+  searchHandle,
+  type EnhancedDirectoryFlowOwnerProps,
+  type EnhancedSearchHandle,
+  type EnhancedSearchOwnerProps,
+  type EnhancedWorkspaceBrowserProps,
+  type EnhancedWorkspaceGlobal,
+} from '../src/client/contract.ts'
 import { ROOT_FOLDER_ID, recentGroupKey } from '../src/client/model.ts'
 import { zh } from '../src/client/locales.ts'
 import type { EnhancedWorkspaceState } from '../src/client/store.ts'
@@ -92,6 +105,14 @@ let sessionsState: typeof SESSIONS_STATE = SESSIONS_STATE
 let directoryFlowOccupied = false
 let flowOwners: EnhancedDirectoryFlowOwnerProps[] = []
 
+/** Search-hole fixture: the owner object of every search `renderSlot` call,
+ *  and the handle the (real) slot inject face would deliver to an occupant. */
+let searchOwners: EnhancedSearchOwnerProps[] = []
+let searchOccupied = false
+/** The search handle captured the way a real external occupant receives it
+ *  (slot props); asserted to be the shared contract singleton. */
+let capturedSearchHandle: EnhancedSearchHandle | null = null
+
 /** Minimal locale seat over the zh dictionary (the en translation shares the key union). */
 const t = ((key: string, params?: Record<string, string | number>): string => {
   const template = zh[key as keyof typeof zh]
@@ -132,7 +153,16 @@ async function renderBrowser(
     t,
     useDirectoryFlow: (selector: (occupied: boolean) => unknown) => selector(directoryFlowOccupied),
     renderSlot: ((key: string, owner: unknown) => {
-      expect(key).toBe(DIRECTORY_FLOW_SLOT)
+      expect([DIRECTORY_FLOW_SLOT, SEARCH_SLOT]).toContain(key)
+      if (key === SEARCH_SLOT) {
+        // The real slot machinery merges the declaration's common inject face
+        // (`EnhancedSearchHandle`) into the occupant's props; the fixture
+        // mirrors that by capturing the shared handle — exactly what an
+        // external occupant reads.
+        searchOwners.push(owner as EnhancedSearchOwnerProps)
+        capturedSearchHandle = searchHandle
+        return searchOccupied ? <div data-testid="search-occupant" /> : null
+      }
       const flowOwner = owner as EnhancedDirectoryFlowOwnerProps
       flowOwners.push(flowOwner)
       // A visible occupant only while the owner requests the interaction —
@@ -283,6 +313,9 @@ beforeEach(() => {
   sessionsState = SESSIONS_STATE
   directoryFlowOccupied = false
   flowOwners = []
+  searchOccupied = false
+  searchOwners = []
+  capturedSearchHandle = null
   ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 })
 
@@ -1110,6 +1143,117 @@ describe('rail fold (shell collapse parity)', () => {
     // Clearing the restored input restores the whole tree.
     typeText(container.querySelector<HTMLInputElement>('input[type="search"]')!, '')
     expect(treeRowByText('文档'), 'clearing restores the full list').toBeDefined()
+  })
+})
+
+describe('external search trigger surface (slot handle + global mirror + DOM fallback)', () => {
+  it('wide: the shared handle seed + focus drives the real input and filter, and the global mirror exposes it', async () => {
+    vi.useFakeTimers()
+    try {
+      await renderBrowser()
+      const input = container.querySelector<HTMLInputElement>(SEARCH_INPUT_SELECTOR)
+      expect(input, 'the DOM fallback marker addresses the input').not.toBeNull()
+      expect(input!.getAttribute('aria-label'), 'the localized aria label is the second DOM anchor').toBe(zh.searchAria)
+      // The slot fixture captured the same singleton an external occupant gets.
+      expect(capturedSearchHandle).not.toBeNull()
+      expect(searchHandle.available, 'the mounted region publishes a live handle').toBe(true)
+      expect(searchHandle.input()).toBe(input)
+
+      act(() => { searchHandle.setQuery('文档') })
+      expect(input!.value, 'the handle writes React state, not DOM value').toBe('文档')
+      expect(treeRowByText('文档'), 'the seeded query filters the tree').toBeDefined()
+      expect(treeRowByText('绘画收集')).toBeUndefined()
+
+      input!.blur()
+      act(() => { searchHandle.focus() })
+      act(() => { vi.advanceTimersByTime(300) })
+      expect(document.activeElement, 'focus lands in the search input').toBe(input)
+
+      act(() => { searchHandle.setQuery('') })
+      expect(treeRowByText('绘画收集'), 'clearing through the handle restores the list').toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the global mirror delegates to the same handle and publishes the DOM selector constants', async () => {
+    vi.useFakeTimers()
+    try {
+      await renderBrowser()
+      const host = window as unknown as Record<string, EnhancedWorkspaceGlobal | undefined>
+      const mirror = host[SEARCH_GLOBAL_KEY]
+      expect(mirror, 'the mounted browser installs the imperative mirror').toBeDefined()
+      expect(mirror!.searchAvailable()).toBe(true)
+      expect(mirror!.querySelector).toBe(SEARCH_INPUT_SELECTOR)
+      expect(mirror!.railButtonSelector).toBe(SEARCH_RAIL_BUTTON_SELECTOR)
+      act(() => { mirror!.setSearchQuery('文档') })
+      expect(treeRowByText('文档')).toBeDefined()
+      act(() => { mirror!.focusSearch() })
+      act(() => { vi.advanceTimersByTime(300) })
+      expect(document.activeElement).toBe(container.querySelector(SEARCH_INPUT_SELECTOR))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('collapsed: the handle arms the built-in expand gesture and lands focus after the fold', async () => {
+    vi.useFakeTimers()
+    try {
+      const props = await renderBrowser(defaultPersistence(), false, false)
+      expect(container.querySelector(SEARCH_INPUT_SELECTOR), 'no input while collapsed').toBeNull()
+      act(() => { searchHandle.setQuery('文档') })
+      act(() => { searchHandle.focus() })
+      expect(props.expandSidebar, 'focus requests the shell expansion').toHaveBeenCalled()
+
+      await rerenderWith({ wide: true })
+      expect(document.activeElement, 'focus waits for the slide').not.toBe(container.querySelector(SEARCH_INPUT_SELECTOR))
+      act(() => { vi.advanceTimersByTime(300) })
+      expect(document.activeElement, 'the collapsed trigger lands in the input').toBe(container.querySelector(SEARCH_INPUT_SELECTOR))
+      expect(treeRowByText('文档'), 'the query seeded while collapsed survived the fold').toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('DOM fallback: commitSearchQueryFromDom writes through React and the rail button expands the shell', async () => {
+    vi.useFakeTimers()
+    try {
+      const props = await renderBrowser(defaultPersistence(), false, false)
+      expect(commitSearchQueryFromDom('文档'), 'no input while collapsed: the caller expands first').toBe(false)
+      const rail = container.querySelector<HTMLButtonElement>(SEARCH_RAIL_BUTTON_SELECTOR)
+      expect(rail, 'the rail button carries its stable marker').not.toBeNull()
+      click(rail!)
+      expect(props.expandSidebar).toHaveBeenCalled()
+
+      await rerenderWith({ wide: true })
+      act(() => { vi.advanceTimersByTime(300) })
+      expect(commitSearchQueryFromDom('文档'), 'the mounted input accepted the DOM commit').toBe(true)
+      expect(container.querySelector<HTMLInputElement>(SEARCH_INPUT_SELECTOR)!.value).toBe('文档')
+      expect(treeRowByText('文档'), 'the DOM-committed query filters the tree').toBeDefined()
+      expect(treeRowByText('绘画收集')).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('occupied search hole: the occupant renders beside the field and its props carry the handle', async () => {
+    searchOccupied = true
+    await renderBrowser()
+    expect(searchOwners.length, 'the hole renders from the first wide render').toBeGreaterThan(0)
+    expect(container.querySelector('[data-testid="search-occupant"]'), 'the occupant mounts inside the search bar').not.toBeNull()
+    // The occupant's props ARE the inject face in the real renderer: the same
+    // handle identity the external action path uses.
+    expect(capturedSearchHandle).toBe(searchHandle)
+  })
+
+  it('unmount withdraws the handle and the global mirror (no dead external trigger)', async () => {
+    await renderBrowser()
+    expect(searchHandle.available).toBe(true)
+    act(() => { root.unmount() })
+    expect(searchHandle.available, 'the region owns the handle lifecycle').toBe(false)
+    expect(searchHandle.input(), 'no live input after unmount').toBeNull()
+    expect((window as unknown as Record<string, unknown>)[SEARCH_GLOBAL_KEY], 'the mirror is withdrawn').toBeUndefined()
+    expect(() => { searchHandle.focus(); searchHandle.setQuery('x') }, 'externally calling a dead handle is a no-op').not.toThrow()
   })
 })
 

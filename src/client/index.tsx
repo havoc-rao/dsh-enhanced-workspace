@@ -43,6 +43,8 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { EnhancedWorkspaceBrowser } from './Browser.tsx'
 import {
   DIRECTORY_FLOW_SLOT,
+  SEARCH_SLOT,
+  searchHandle,
   type EnhancedWorkspaceInjected,
   type EnhancedWorkspacePersistence,
 } from './contract.ts'
@@ -202,8 +204,17 @@ export function apply(ctx: ClientContext): void {
       // shadowing — re-declaring it throws (one declarer per slot key) and a
       // declaration-less entry has no render authorization for it; the logo
       // sub-slots share the same fate (design doc §7.1).
+      //
+      // The search hole rides the same convention. Its common `inject` face
+      // publishes the live `EnhancedSearchHandle` to every occupant AND to
+      // any plugin that waits on the declaration through
+      // `ctx.slots.inject(SEARCH_SLOT, …)`; `searchHandle` is the same
+      // singleton mirrored on `window.__DSH_ENHANCED_WORKSPACE__` and on the
+      // search input's stable DOM attribute — the three external trigger
+      // paths documented in contract.ts.
       children: {
         [DIRECTORY_FLOW_SLOT]: { kind: 'single', scope: 'root' },
+        [SEARCH_SLOT]: { kind: 'single', scope: 'root', inject: searchHandle },
       },
       store: createEnhancedWorkspaceStore(),
       inject: injected,

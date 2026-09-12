@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
 import { EnhancedWorkspaceBrowser } from '../src/client/Browser.tsx'
 import { WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
-import { DIRECTORY_FLOW_SLOT, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
+import { DIRECTORY_FLOW_SLOT, SEARCH_SLOT, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { zh } from '../src/client/locales.ts'
 import { createEnhancedWorkspaceStore, type EnhancedWorkspaceState } from '../src/client/store.ts'
 import type { GitProbeResultJSON, RemoteGitMarker } from '../src/shared/git.ts'
@@ -149,7 +149,9 @@ async function renderBrowser(probe: GitProbeResultJSON | null = PROBE, markers: 
     t,
     useDirectoryFlow: (selector: (occupied: boolean) => unknown) => selector(false),
     renderSlot: ((_key: string) => {
-      expect(_key).toBe(DIRECTORY_FLOW_SLOT)
+      // The region renders both plugin-owned holes while wide; this spec's
+      // git assertions are occupant-agnostic, so every key renders nothing.
+      expect([DIRECTORY_FLOW_SLOT, SEARCH_SLOT]).toContain(_key)
       return null
     }) as unknown as EnhancedWorkspaceBrowserProps['renderSlot'],
     startSession: vi.fn(),
