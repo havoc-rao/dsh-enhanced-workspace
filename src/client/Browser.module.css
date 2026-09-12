@@ -964,6 +964,10 @@
   gap: 6px;
   min-height: 26px;
   border-radius: 6px;
+  /* relative: anchors the indent-guide bands (.guideHit) like every other
+     tree row — the header carries the workspace's stroke columns, so its
+     bands (and hover highlight) stay consistent with the session rows. */
+  position: relative;
   cursor: pointer;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary, #c8c9cc);

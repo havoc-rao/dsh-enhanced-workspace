@@ -141,6 +141,8 @@ async function renderBrowser(probe: GitProbeResultJSON | null = PROBE, markers: 
     expandSidebar: vi.fn(),
     useWorkspaces: (selector: (snapshot: typeof WORKSPACES_STATE) => unknown) => selector(WORKSPACES_STATE),
     useSessions: (selector: (snapshot: typeof SESSIONS_STATE) => unknown) => selector(SESSIONS_STATE),
+    // No fixture session carries a pending interaction: the empty snapshot.
+    useSessionPendingInteraction: (selector: (snapshot: ReadonlyMap<string, unknown>) => unknown) => selector(new Map()),
     useStore: (selector: (snapshot: EnhancedWorkspaceState) => unknown) =>
       useSyncExternalStore(instance.store.subscribe, () => selector(instance.store.getSnapshot())),
     actions: instance.actions,
@@ -234,6 +236,15 @@ describe('git-worktree browser layer', () => {
     // group headers group their own sessions
     const groups = [...container.querySelectorAll<HTMLElement>('[class*="subwsRow"]')]
     expect(groups.map(g => g.textContent).join('|')).toContain('hotfix/login')
+    // Guide continuity through the split: the group headers carry the
+    // workspace's own stroke column plus the hover bands, and the
+    // session-list container paints the strokes across headers and rows —
+    // the vertical line never fragments at a header row.
+    const ownHeader = groups.find(g => g.textContent?.includes('本工作区'))!
+    expect(ownHeader.style.backgroundImage).toContain('transparent 8px')
+    expect(ownHeader.querySelectorAll('[class*="guideHit"]'), 'a top-level workspace has one column (its own)').toHaveLength(1)
+    const sessionListBox = container.querySelector<HTMLElement>('[class*="sessionList"]')
+    expect(sessionListBox?.style.backgroundImage).toContain('transparent 8px')
   })
 
   it('renders repo groups, flattens no-git workspaces, and registers an unregistered tree', async () => {

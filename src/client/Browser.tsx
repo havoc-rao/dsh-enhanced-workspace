@@ -161,11 +161,13 @@ const GUIDE_HIT_HALF = 4
  * One row's indent-guide background layer set: a 1px vertical stroke under
  * every ancestor folder at that ancestor's icon column (column k sits at
  * `8 + 8k` — the same grid as the rows' own indents, so each stroke aligns
- * with the folder row that owns that level), plus — on expanded FOLDER rows
- * only — the horizontal corner segment joining the deepest ancestor stroke
- * to the folder icon (the "├─" joint). Workspace rows and collapsed folders
- * keep just the verticals, so the folder structure reads at a glance exactly
- * like the VSCode explorer.
+ * with the folder row that owns that level), plus — on expanded rows
+ * (folders, and workspaces with their session list open) — the horizontal
+ * corner segment joining the deepest ancestor stroke to the row's icon (the
+ * "├─" joint) WITH the vertical trunk at the row's own column continuing
+ * below that corner, so the subtree's stroke starts flush with the joint.
+ * Collapsed rows keep just the verticals, so the folder structure reads at
+ * a glance exactly like the VSCode explorer.
  *
  * Neighboring rows decide where strokes stop: a row at ancestor-count A
  * draws only the A ancestor columns, so the first shallower sibling below a
@@ -194,6 +196,16 @@ export function guideBackground(ancestorCount: number, isOpenDir: boolean, highl
     image.push(`linear-gradient(0deg, transparent calc(50% - 0.5px), ${GUIDE_STROKE} calc(50% - 0.5px), ${GUIDE_STROKE} calc(50% + 0.5px), transparent calc(50% + 0.5px))`)
     size.push(`${FOLDER_INDENT_STEP_PX}px 100%`)
     position.push(`${from}px 0`)
+    repeat.push('no-repeat')
+    // The corner's own trunk: the vertical stroke at the row's OWN column
+    // (one indent step right of the corner) runs from the corner down to
+    // the row's bottom, so the first child / session-row segment starts
+    // flush with the joint — the better-sidebar branch glyph carries the
+    // vertical through the corner row. Without it the line reads as two
+    // detached fragments: a corner, then a fresh segment starting below.
+    image.push(`linear-gradient(0deg, transparent calc(50% + 0.5px), ${GUIDE_STROKE} calc(50% + 0.5px), ${GUIDE_STROKE} 100%, transparent 100%)`)
+    size.push('1px 100%')
+    position.push(`${ancestorCount * FOLDER_INDENT_STEP_PX + FOLDER_INDENT_BASE_PX}px 0`)
     repeat.push('no-repeat')
   }
   for (let k = 0; k < ancestorCount; k++) {
@@ -2037,8 +2049,12 @@ function LeafRow(props: {
             // Subworkspace grouping: the workspace's sessions split by their
             // cwd's tree (own tree / linked tree / no git). Group headers
             // toggle through `tw:`-prefixed group keys (cleared by the
-            // section collapse-all like every non-recent key).
-            <div className={css.sessionList}>
+            // section collapse-all like every non-recent key). The LIST
+            // container paints the full stroke set (folder columns + the
+            // workspace's own column), so the lines run continuously through
+            // the group headers, the overflow button, and the 1px row gaps —
+            // the session rows' own layers keep only the hover highlight.
+            <div className={css.sessionList} style={{ ...guideBackground(sessionColumns.length, false) }}>
               {gitGroups.map(group => {
                 const subKey = `${SUBWS_GROUP_KEY_PREFIX}${leaf.key}:${group.key}`
                 const groupOpen = props.expandedKeys?.has(subKey) ?? false
@@ -2055,9 +2071,17 @@ function LeafRow(props: {
                       className={css.subwsRow}
                       role="treeitem"
                       aria-expanded={groupOpen}
-                      style={{ paddingLeft: `${indentPx + SESSION_INDENT_OFFSET_PX}px` }}
+                      style={{
+                        paddingLeft: `${indentPx + SESSION_INDENT_OFFSET_PX}px`,
+                        // The header hangs off the workspace like a folder of
+                        // its group's sessions: same ancestor strokes (the
+                        // container's layer carries them through the row —
+                        // this row's layer only lights the hovered one).
+                        ...guideBackground(sessionColumns.length, false, guideHighlightColumn(props.guide.hover, sessionColumns)),
+                      }}
                       onClick={() => { callbacks.onToggleGroup(subKey) }}
                     >
+                      {guideHitBands(subKey, sessionColumns, props.guide.onHover)}
                       <span className={css.chevron}>
                         <IconTriangleRightFill14 className={groupOpen ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
                       </span>
@@ -2097,7 +2121,7 @@ function LeafRow(props: {
             </div>
           )
           : (
-          <div className={css.sessionList}>
+          <div className={css.sessionList} style={{ ...guideBackground(sessionColumns.length, false) }}>
             {shownSessions.map(session => (
               <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx} columns={sessionColumns} guide={props.guide} now={props.now} />
             ))}

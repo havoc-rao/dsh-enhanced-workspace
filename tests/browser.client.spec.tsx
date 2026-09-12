@@ -123,6 +123,8 @@ async function renderBrowser(
     expandSidebar: vi.fn(),
     useWorkspaces: (selector: (snapshot: typeof WORKSPACES_STATE) => unknown) => selector(workspacesState),
     useSessions: (selector: (snapshot: typeof SESSIONS_STATE) => unknown) => selector(sessionsState),
+    // No fixture session carries a pending interaction: the empty snapshot.
+    useSessionPendingInteraction: (selector: (snapshot: ReadonlyMap<string, unknown>) => unknown) => selector(new Map()),
     useStore: (selector: (snapshot: EnhancedWorkspaceState) => unknown) =>
       useSyncExternalStore(instance.store.subscribe, () => selector(instance.store.getSnapshot())),
     actions: instance.actions,
@@ -1125,9 +1127,18 @@ describe('indent guides (better-sidebar FileTree parity)', () => {
     expect(deep.backgroundImage).not.toContain('transparent 32px')
     expect(deep.backgroundSize).toContain('8px 100%')
     expect(deep.backgroundPosition).toContain('24px 0')
-    // Collapsed deep row: the corner is gone, the verticals stay.
+    // The corner carries its OWN trunk below: a 1px vertical at the row's
+    // icon column (one indent step right of the corner) from the corner
+    // down to the row bottom, so the first child-row segment starts flush
+    // with the "├─" joint instead of leaving a gap under it.
+    expect(deep.backgroundImage).toContain('transparent 100%)')
+    expect(deep.backgroundSize).toContain('1px 100%')
+    expect(deep.backgroundPosition).toContain('32px 0')
+    // Collapsed deep row: the corner AND its trunk are gone, the verticals
+    // stay.
     const collapsed = guideBackground(3, false)
     expect(collapsed.backgroundImage).not.toContain('linear-gradient(0deg')
+    expect(collapsed.backgroundImage).not.toContain('transparent 100%)')
     // The hovered column swaps to the bright, 2px-wide stroke; the other
     // columns keep the faint 1px stroke.
     const highlighted = guideBackground(2, false, 1)
@@ -1216,8 +1227,20 @@ describe('indent guides (better-sidebar FileTree parity)', () => {
     expect(sessionRow.style.backgroundImage).toContain('transparent 8px')
     expect(sessionRow.style.backgroundImage).toContain('transparent 16px')
     // The workspace row paints the corner (joins alpha's stroke to its icon)
-    // while its session list is open — like an expanded folder row.
+    // while its session list is open — like an expanded folder row — and the
+    // corner carries its own trunk down to the row bottom, so the workspace
+    // column starts flush with the corner (not detached at the first row).
     expect(artRow.style.backgroundImage).toContain('linear-gradient(0deg')
+    expect(artRow.style.backgroundImage).toContain('transparent 100%)')
+    // The session-LIST container paints the full stroke set on its box, so
+    // the lines read continuous across the 1px hairline row gaps (and any
+    // in-list separator rows); each row's own layer keeps the highlight.
+    // (The session row's immediate parent is the HoverCard anchor span —
+    // the list box is one level up.)
+    const sessionList = sessionRow.parentElement!.parentElement!
+    expect(sessionList.className).toContain('sessionList')
+    expect(sessionList.style.backgroundImage).toContain('transparent 8px')
+    expect(sessionList.style.backgroundImage).toContain('transparent 16px')
 
     // Hover the workspace's band: the whole line lights up across EVERY
     // session row of the list; the workspace row itself stays unlit.
