@@ -65,12 +65,16 @@ function hoverTimeLabel(updatedAt: number, now: number, t: HoverTranslate): stri
 }
 
 /** Hover-card body: display directory path and absolute creation time. */
-export function WorkspaceHoverContent({ label, cwd, createdAt, t, git, remote }: {
+export function WorkspaceHoverContent({ label, cwd, createdAt, t, git, remote, workingSessions }: {
   label: string
   /** The workspace's host directory; absent keeps the card title + time only. */
   cwd: string | undefined
   createdAt: number
   t: HoverTranslate
+  /** Sessions currently working inside the workspace (own or subagent
+   *  activity — the same criterion as the collapsed-dir row's loading
+   *  dot). Absent / 0 keeps the status line off the card. */
+  workingSessions?: number
   /** Git binding of the workspace path: the tree it sits in plus its peer
    *  trees (same repo). `null` = probed and no git; `undefined` = probe
    *  unavailable (no git section at all). */
@@ -96,6 +100,15 @@ export function WorkspaceHoverContent({ label, cwd, createdAt, t, git, remote }:
       </div>
       {cwd !== undefined && <div className={css.hoverPath}>{cwd}</div>}
       <div className={css.hoverTime}>{createdLabel(createdAt, t)}</div>
+      {/* The collapsed-dir busy marker's detail: when the workspace's
+          sessions are working (the row's loading dot), the card spells the
+          live count in the session card's own status-line language. */}
+      {workingSessions !== undefined && workingSessions > 0 && (
+        <div className={css.hoverStatus}>
+          <StateDot state="ongoing" />
+          <span>{workspaceWorkingLabel(workingSessions, t)}</span>
+        </div>
+      )}
       {remote !== undefined && (
         <div className={css.hoverGit}>
           <div className={css.hoverGitRow}>
@@ -162,6 +175,17 @@ function basenameOf(p: string): string {
 interface HoverStatus {
   state: StateDotState
   label: string
+}
+
+/**
+ * The collapsed-dir busy label: "n 个会话正在工作" — the workspace row's
+ * loading-dot title/aria and the workspace hover card's status line share
+ * this spelling (plural-picked so the en copy stays grammatical).
+ */
+export function workspaceWorkingLabel(n: number, t: HoverTranslate): string {
+  return n === 1
+    ? t('workspaceSessionsWorkingOne', { n })
+    : t('workspaceSessionsWorkingOther', { n })
 }
 
 /**

@@ -37,11 +37,13 @@ import {
   sessionStatusDot,
   treeOrder,
   UNGROUPED_KEY,
+  workingSessionCount,
   type FolderRecord,
   type FolderTree,
   type ForestResult,
   type ForestView,
   type LiveKeysSlice,
+  type SubagentDescendantSummary,
 } from '../src/client/model.ts'
 
 const F = (id: string): FolderId => FolderId(id)
@@ -436,6 +438,34 @@ describe('sessionStatusDot / dirActive', () => {
     // session still leaves every father dir lit level by level.
     expect(dirActive(true)).toBe(true)
     expect(dirActive(false)).toBe(false)
+  })
+
+  it('counts a workspace group\'s working sessions (own or subagent activity; pending is waiting, not working)', () => {
+    // Same criterion as the session rows' loading dot ('ongoing'); the count
+    // must come from the member summaries so a COLLAPSED leaf (whose session
+    // rows list is empty) still knows it.
+    const summary = (id: string, overrides: Partial<SessionSummary> = {}): SessionSummary => ({
+      id: S(id),
+      displayTitle: id,
+      running: false,
+      blank: false,
+      updatedAt: 100,
+      ...overrides,
+    })
+    // indexSubagentDescendants is private; feed the projected map the same
+    // shape sessionNode consumes (running descendants per parent id).
+    const descendants = new Map<SessionId, SubagentDescendantSummary>([
+      [S('s2'), { count: 1, runningCount: 1 }],
+    ])
+    expect(workingSessionCount([], descendants)).toBe(0)
+    expect(workingSessionCount([summary('u')], descendants)).toBe(0) // idle
+    expect(workingSessionCount([
+      summary('u'),
+      summary('s1', { running: true }),
+      summary('s2'), // a subagent is running under it
+      summary('s3', { blank: true, running: true }), // not a visible member
+      summary('s4', { completed: true }), // finished: not working
+    ], descendants)).toBe(2)
   })
 })
 

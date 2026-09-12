@@ -12,6 +12,7 @@ import { act } from 'react-dom/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
+import { WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
 import { DIRECTORY_FLOW_SLOT, type EnhancedDirectoryFlowOwnerProps, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { ROOT_FOLDER_ID, recentGroupKey } from '../src/client/model.ts'
 import { zh } from '../src/client/locales.ts'
@@ -710,6 +711,82 @@ describe('enhanced workspace browser', () => {
     expect(sessionRowOf('配色研究').querySelector('[data-state="done"]'), 'completed session shows the done dot').not.toBeNull()
     expect(sessionRowOf('配色研究').className, 'other session rows keep their plain surface').not.toContain('sessionRowCurrent')
     expect(sessionRowOf('空闲会话').querySelector('[data-state]'), 'idle sessions show no dot').toBeNull()
+  })
+
+  it('marks a collapsed workspace whose sessions are still working with the row loading dot; the hover card spells the count', async () => {
+    // s1（绘画收集 的会话）正在运行；其余已完成。无「当前会话」——busy 点
+    // 与 current 无关，只跟「收起 && 内部有会话正在工作」挂钩。
+    sessionsState = {
+      ...SESSIONS_STATE,
+      byId: {
+        ...SESSIONS_BY_ID,
+        s1: { ...SESSIONS_BY_ID['s1']!, running: true, completed: false },
+      },
+    } as typeof SESSIONS_STATE
+    await renderBrowser()
+
+    // 收起（无当前会话时是默认态）即显示 busy 点——不依赖 hover，占操作
+    // 按钮槽位的尾端。
+    let artRow = treeRowByText('绘画收集')!
+    expect(artRow.getAttribute('aria-expanded')).toBe('false')
+    let busy = artRow.querySelector('[class*="rowBusy"]')
+    expect(busy, 'collapsed dir with a working session carries the loading dot').not.toBeNull()
+    expect(busy!.querySelector('[data-state="ongoing"]'), 'it is the session rows\' own pixel-chase loading dot').not.toBeNull()
+    expect(busy!.getAttribute('title'), 'the dot carries the busy-count label').toBe('1 个会话正在工作')
+    expect(busy!.textContent, 'screen-reader copy matches the title').toContain('1 个会话正在工作')
+
+    // 展开会话列表：busy 点退场（会话行自己的 loading 点在场）。
+    click(artRow)
+    artRow = treeRowByText('绘画收集')!
+    expect(artRow.getAttribute('aria-expanded')).toBe('true')
+    expect(artRow.querySelector('[class*="rowBusy"]'), 'expanded dir: the session rows carry the dots').toBeNull()
+
+    // 再收起：点回来，且一直跟着状态走。
+    click(artRow)
+    artRow = treeRowByText('绘画收集')!
+    expect(artRow.getAttribute('aria-expanded')).toBe('false')
+    expect(artRow.querySelector('[class*="rowBusy"]'), 'recollapsed dir regains the dot').not.toBeNull()
+    // 无运行中会话的工作区（文档，s7 已完成）不显示点。
+    expect(treeRowByText('文档')!.querySelector('[class*="rowBusy"]'), 'idle workspace keeps no dot').toBeNull()
+
+    // hover 二选一：loading 点让位给操作按钮（菜单 + 新建），点直接消失。
+    hover(artRow)
+    artRow = treeRowByText('绘画收集')!
+    expect(artRow.querySelector('[class*="rowBusy"]'), 'hover swaps the loading dot out for the action buttons').toBeNull()
+    expect(artRow.querySelectorAll('button[aria-label*="绘画收集"]').length, 'the revealed row actions occupy the freed slot').toBeGreaterThan(0)
+    // 离开后 loading 点回来。
+    act(() => {
+      artRow.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+    })
+    expect(treeRowByText('绘画收集')!.querySelector('[class*="rowBusy"]'), 'leaving the row restores the loading dot').not.toBeNull()
+
+    // 全部回闲：收起状态下点也熄灭。
+    act(() => {
+      sessionsState = {
+        ...sessionsState,
+        byId: {
+          ...sessionsState.byId,
+          s1: { ...SESSIONS_BY_ID['s1']!, running: false, completed: true },
+        },
+      } as typeof SESSIONS_STATE
+      root.render(<EnhancedWorkspaceBrowser {...latestProps} />)
+    })
+    expect(treeRowByText('绘画收集')!.querySelector('[class*="rowBusy"]'), 'idle collapsed dir drops the dot').toBeNull()
+
+    // 工作区 hover 卡（卡片组件级，HoverCard 壳是 ui-primitives 行为）：
+    // 「n 个会话正在工作」状态行 + loading 点。
+    const holder = document.createElement('div')
+    document.body.appendChild(holder)
+    const hoverRoot = createRoot(holder)
+    await act(async () => {
+      hoverRoot.render(
+        <WorkspaceHoverContent label="绘画收集" cwd="/projects/w-art" createdAt={0} t={t} workingSessions={1} />,
+      )
+    })
+    expect(holder.textContent).toContain('1 个会话正在工作')
+    expect(holder.querySelector('[data-state="ongoing"]'), 'the card status line carries the loading dot').not.toBeNull()
+    await act(async () => { hoverRoot.unmount() })
+    holder.remove()
   })
 
   it('marks every collapsed ancestor dir on the path to the current session, level by level', async () => {

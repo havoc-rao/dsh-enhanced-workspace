@@ -404,6 +404,18 @@
   opacity: 1;
 }
 
+/* Collapsed-workspace busy marker: a folded dir whose sessions are still
+   working carries the session rows' own loading dot (pixel-chase 'ongoing'),
+   seated at the trailing edge of the hover-revealed action buttons' slot.
+   The slot is either/or — the dot renders at rest (in place of the buttons),
+   and row hover swaps it out for the actions (the dot unmounts in
+   Browser.tsx LeafRow, the buttons reveal through the rules above). */
+.rowBusy {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
 .sessionList {
   display: flex;
   flex-direction: column;

@@ -79,7 +79,7 @@ import {
   type InputDialogState,
   type MoveToDialogState,
 } from './Dialogs.tsx'
-import { SessionHoverContent, WorkspaceHoverContent } from './HoverCards.tsx'
+import { SessionHoverContent, WorkspaceHoverContent, workspaceWorkingLabel } from './HoverCards.tsx'
 import {
   deriveFlat,
   deriveFolderForest,
@@ -1825,6 +1825,9 @@ function LeafRow(props: {
 }): ReactNode {
   const { leaf, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
+  // Row hover flips the actions slot between the collapsed-dir busy marker
+  // (loading dot, at rest) and the action buttons (on hover) — either/or.
+  const [rowHovered, setRowHovered] = useState(false)
   const hasAccount = leaf.workspaceId !== undefined
   const overflowExpanded = props.sessionsOverflow.includes(leaf.key)
   const shownSessions = overflowExpanded
@@ -1881,6 +1884,16 @@ function LeafRow(props: {
   // hovered ancestor's column stroke paint it highlighted.
   const folderColumns = folderGuideColumns(props.ancestors, callbacks.onToggleFolder)
   const highlightCol = guideHighlightColumn(props.guide.hover, folderColumns)
+  // Collapsed-dir busy marker: a folded workspace whose sessions are still
+  // working (own or subagent activity — the session rows' loading-dot
+  // criterion) carries the same pixel-chase dot here, seated in the
+  // hover-revealed action buttons' slot. The slot is EITHER/OR: at rest the
+  // dot shows in place of the buttons; on row hover the dot gives way
+  // entirely and the actions (menu + new session) take the slot — never
+  // both at once.
+  const busyLabel = hasAccount && !leaf.expanded && leaf.workingSessions > 0 && !rowHovered
+    ? workspaceWorkingLabel(leaf.workingSessions, callbacks.t)
+    : undefined
   // Session rows hang one level deeper: besides the folder columns they
   // draw the workspace's OWN column (the deepest stroke, at this row's icon
   // column), whose band collapses the session list — the workspace is the
@@ -1933,6 +1946,8 @@ function LeafRow(props: {
         })
       }) : undefined}
       onDragEnd={hasAccount ? () => props.drag.onDragEnd() : undefined}
+      onMouseEnter={() => setRowHovered(true)}
+      onMouseLeave={() => setRowHovered(false)}
       onClick={() => {
         if (hasAccount) callbacks.onWorkspaceClick(leaf.key)
         else callbacks.onToggleGroup(leaf.key)
@@ -2012,6 +2027,16 @@ function LeafRow(props: {
           </>
         )}
       </span>
+      {/* The collapsed-dir busy marker occupies the actions slot (right
+          edge, where the hover-revealed buttons live): the loading dot the
+          session rows use, shown at rest — on row hover it yields the slot
+          to the action buttons (either/or, never both). */}
+      {busyLabel !== undefined && (
+        <span className={css.rowBusy} title={busyLabel}>
+          <StateDot state="ongoing" />
+          <span className={css.visuallyHidden}>{busyLabel}</span>
+        </span>
+      )}
     </div>
   )
   // The workspace hover card (built-in parity): real Workspace rows show
@@ -2029,6 +2054,7 @@ function LeafRow(props: {
             cwd={leaf.cwd}
             createdAt={leaf.createdAt ?? 0}
             t={callbacks.t}
+            workingSessions={leaf.workingSessions}
             {...(hoverGit === undefined ? {} : { git: hoverGit })}
             {...(remoteMarker === undefined ? {} : { remote: remoteMarker })}
           />
@@ -2525,6 +2551,12 @@ function sessionLeafOf(
 ): WorkspaceLeaf | undefined {
   if (workspace === undefined) return undefined
   const expanded = state.groupExpansion[workspace.workspaceId] === true
+  // The row's visible members (blank / subagent rows off the rows and off
+  // the working count — the same filter the session rows below apply).
+  const members = workspace.sessionIds
+    .map(id => sessions.byId[id as SessionId])
+    .filter((summary): summary is SessionSummary => summary !== undefined)
+    .filter(summary => !summary.blank && summary.origin !== 'subagent')
   return {
     key: workspace.workspaceId,
     workspaceId: workspace.workspaceId,
@@ -2534,28 +2566,30 @@ function sessionLeafOf(
     sessionCount: workspace.sessionIds.length,
     expanded,
     containsCurrent: sessions.current !== undefined && workspace.sessionIds.includes(sessions.current as SessionId),
+    // Repo-group rows carry no subagent descendant index (their session
+    // rows render runningSubagentCount: 0 too) — own activity only.
+    workingSessions: members.reduce(
+      (count, summary) => (summary.running ? count + 1 : count),
+      0,
+    ),
     sessions: expanded
-      ? workspace.sessionIds
-        .map(id => sessions.byId[id as SessionId])
-        .filter((summary): summary is SessionSummary => summary !== undefined)
-        .filter(summary => !summary.blank && summary.origin !== 'subagent')
-        .map((summary): SessionNode => {
-          const pendingInteraction = pendingInteractionOf(pending.get(summary.id)?.kind)
-          return {
-            id: summary.id,
-            current: summary.id === sessions.current,
-            title: summary.blank ? '' : summary.displayTitle,
-            blank: summary.blank,
-            running: summary.running,
-            runningSubagentCount: 0,
-            completed: summary.completed === true,
-            updatedAt: summary.updatedAt,
-            recentInputs: [],
-            recentOutputs: [],
-            ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
-            ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
-          }
-        })
+      ? members.map((summary): SessionNode => {
+        const pendingInteraction = pendingInteractionOf(pending.get(summary.id)?.kind)
+        return {
+          id: summary.id,
+          current: summary.id === sessions.current,
+          title: summary.blank ? '' : summary.displayTitle,
+          blank: summary.blank,
+          running: summary.running,
+          runningSubagentCount: 0,
+          completed: summary.completed === true,
+          updatedAt: summary.updatedAt,
+          recentInputs: [],
+          recentOutputs: [],
+          ...(summary.cwd === undefined ? {} : { cwd: summary.cwd }),
+          ...(pendingInteraction === undefined ? {} : { pendingInteraction }),
+        }
+      })
       : [],
   }
 }
