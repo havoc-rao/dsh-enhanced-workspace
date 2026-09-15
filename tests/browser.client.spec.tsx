@@ -10,8 +10,14 @@ import { StrictMode, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SessionId, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionPendingInteraction } from '@deepseek-ai/dsh-client-ui-session/client'
+// Type-only: the service fixture seat is typed against the provider's v1
+// contract (runtime fixtures are constructed from the real components below
+// in file-tree-ui.client.spec.tsx).
+import type { FileTreeUiServiceV1 } from 'dsh-file-tree-ui/client-contract'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
 import { SessionHoverContent, WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
 import {
@@ -105,6 +111,11 @@ let sessionsState: typeof SESSIONS_STATE = SESSIONS_STATE
 let directoryFlowOccupied = false
 let flowOwners: EnhancedDirectoryFlowOwnerProps[] = []
 
+/** fileTreeUi v1 service seat fixture: undefined by default (the missing
+ *  provider posture → built-in session rows); a spec flips it to a service
+ *  fixture and re-renders to exercise the service path. */
+let fileTreeUiSeat: FileTreeUiServiceV1 | undefined = undefined
+
 /** Search-hole fixture: the owner object of every search `renderSlot` call,
  *  and the handle the (real) slot inject face would deliver to an occupant. */
 let searchOwners: EnhancedSearchOwnerProps[] = []
@@ -152,6 +163,7 @@ async function renderBrowser(
     actions: instance.actions,
     t,
     useDirectoryFlow: (selector: (occupied: boolean) => unknown) => selector(directoryFlowOccupied),
+    useFileTreeUi: (selector: (value: FileTreeUiServiceV1 | undefined) => unknown) => selector(fileTreeUiSeat),
     renderSlot: ((key: string, owner: unknown) => {
       expect([DIRECTORY_FLOW_SLOT, SEARCH_SLOT]).toContain(key)
       if (key === SEARCH_SLOT) {
@@ -316,6 +328,9 @@ beforeEach(() => {
   searchOccupied = false
   searchOwners = []
   capturedSearchHandle = null
+  // Default posture: no fileTreeUi provider (missing service) — the browser
+  // renders its built-in session rows.
+  fileTreeUiSeat = undefined
   ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 })
 

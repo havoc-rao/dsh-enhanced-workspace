@@ -7,7 +7,8 @@
  * presentation helpers.
  */
 import { describe, expect, it } from 'vitest'
-import type { SessionId, WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { GitProbeResultJSON, RemoteGitMarker } from '../src/shared/git.ts'
 import {
   isRemoteGitMarker,

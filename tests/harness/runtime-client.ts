@@ -1,8 +1,9 @@
 /**
  * Vitest-only stand-in for `@deepseek-ai/dsh-client-runtime/client`, resolved
- * through a `resolve.alias` in vitest.config.ts — production bundles and
- * `pnpm typecheck` keep resolving the real package (tsdown externalizes it as
- * a platform module; tsc reads its published declarations).
+ * through a `resolve.alias` in vitest.config.ts — a guard for any future
+ * value-import of the runtime specifier (the current suite only type-imports
+ * it, and the type surface now comes from the resolvable api packages, so
+ * `pnpm typecheck` needs no runtime declarations either).
  *
  * Why this exists: the published runtime client bundle is the DSH client wire
  * layer — `window.__ModuleLoader__.load({ id, factory })`, a loader-shaped
@@ -62,14 +63,21 @@ const packageJsonPath = require.resolve('@deepseek-ai/dsh-client-runtime/package
 const bundleSource = readFileSync(join(dirname(packageJsonPath), 'lib', 'client.js'), 'utf8')
 new Function('window', bundleSource)(loaderWindow)
 
-/** The real engine surface (typed from the real package declarations). */
-export type RuntimeClientModule = typeof import('@deepseek-ai/dsh-client-runtime/client')
+/** The real engine surface (typed from the store-engine package so this
+ *  harness stays free of the runtime wire package, which the local registry
+ *  does not publish a resolvable `/client` types entry for — the platform
+ *  store engine live here is `@deepseek-ai/dsh-client-store`). */
+import type {
+  createSnapshotStore as CreateSnapshotStoreDef,
+  defineStore as DefineStoreDef,
+  shallowEqual as ShallowEqualDef,
+} from '@deepseek-ai/dsh-client-store'
 
 /** The genuine store engine: declare a store → `EngineStoreHandle<T, A>`. */
-export const defineStore = captured.defineStore as RuntimeClientModule['defineStore']
+export const defineStore = captured.defineStore as unknown as typeof DefineStoreDef
 
 /** The genuine bare snapshot store (flush + optional persistence). */
-export const createSnapshotStore = captured.createSnapshotStore as RuntimeClientModule['createSnapshotStore']
+export const createSnapshotStore = captured.createSnapshotStore as unknown as typeof CreateSnapshotStoreDef
 
 /** The genuine shallow-equality helper travelling with the engine. */
-export const shallowEqual = captured.shallowEqual as RuntimeClientModule['shallowEqual']
+export const shallowEqual = captured.shallowEqual as unknown as typeof ShallowEqualDef

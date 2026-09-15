@@ -43,11 +43,15 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { EnhancedWorkspaceBrowser } from './Browser.tsx'
 import {
   DIRECTORY_FLOW_SLOT,
+  FILE_TREE_UI_SERVICE,
+  FILE_TREE_UI_PROTOCOL_VERSION,
+  resolveFileTreeUiServiceV1,
   SEARCH_SLOT,
   searchHandle,
   type EnhancedWorkspaceInjected,
   type EnhancedWorkspacePersistence,
 } from './contract.ts'
+import type { FileTreeUiServiceV1 } from 'dsh-file-tree-ui/client-contract'
 import { NS, en, zh, type EnhancedWorkspaceKey } from './locales.ts'
 import { createGitProbe, createPersistence } from './persistence.ts'
 import { createRemoteGitSource } from './remote-git.ts'
@@ -82,6 +86,48 @@ if (process.env.NODE_ENV === 'development') {
 
 /** How long the title carry-over waits for the fresh session id to land. */
 const CONTINUE_TITLE_WAIT_MS = 3000
+
+/** The consumer-side diagnostic text (provider contract header recipe,
+ *  Chinese, one-shot per degraded episode to avoid console spam). */
+const FILE_TREE_UI_DIAGNOSTIC = '[dsh-file-tree-ui] 服务缺失或协议不兼容：'
+  + `fileTreeUi 应为 v${FILE_TREE_UI_PROTOCOL_VERSION}（renderRow/`
+  + 'renderGuideLayer/renderRowMenu 均为函数）；当前值将被忽略并回退本地渲染。'
+
+/**
+ * Build the snapshot reader for the OPTIONAL fileTreeUi v1 service seat.
+ *
+ * The service is never declared in this plugin's cordis `inject` array
+ * (cordis has no optional inject — a hard injection would fail the whole
+ * page for users who upgraded the consumer without the provider). Instead
+ * the seat is a snapshot/subscribe pair: the reader re-reads
+ * `ctx.get('fileTreeUi')` on every snapshot call (each fiber activation
+ * re-reads — no handle is cached across lifecycles; provider unload flips
+ * the snapshot back to undefined) and the `internal/service` event tracks
+ * provide/unload changes. Missing / protocol-mismatched / unloaded values
+ * resolve to undefined and the diagnostic warns exactly once per degraded
+ * episode (a later valid read re-arms the warning).
+ * @param get - the raw service getter (bound to the live ctx).
+ * @param warn - diagnostic sink (console.warn in production).
+ * @returns the snapshot reader.
+ */
+export function createFileTreeUiResolver(
+  get: () => unknown,
+  warn: (message: string) => void = message => console.warn(message),
+): () => FileTreeUiServiceV1 | undefined {
+  let degraded = false
+  return () => {
+    const resolved = resolveFileTreeUiServiceV1(get())
+    if (resolved !== undefined) {
+      degraded = false
+      return resolved
+    }
+    if (!degraded) {
+      degraded = true
+      warn(FILE_TREE_UI_DIAGNOSTIC)
+    }
+    return undefined
+  }
+}
 
 /**
  * Poll the observable sessions list until an id outside `before` appears.
@@ -135,6 +181,12 @@ export function apply(ctx: ClientContext): void {
   // and the silent-degrade posture.
   const remoteGit = createRemoteGitSource()
 
+  // Optional fileTreeUi v1 service seat: one per apply() (per fiber
+  // lifecycle), so the warn-once state survives repeated snapshot reads
+  // while the reader itself never caches a service handle across
+  // activations — getSnapshot re-reads ctx.get every call.
+  const readFileTreeUi = createFileTreeUiResolver(() => ctx.get(FILE_TREE_UI_SERVICE))
+
   const injected = (): EnhancedWorkspaceInjected => ({
     // Picking-share hooks compartment: the renderer binds `directoryFlow`
     // into the `useDirectoryFlow` selector hook on the browser props, so the
@@ -144,6 +196,15 @@ export function apply(ctx: ClientContext): void {
       directoryFlow: {
         getSnapshot: () => ctx.slots.entries(DIRECTORY_FLOW_SLOT).length > 0,
         subscribe: listener => ctx.slots.subscribe(DIRECTORY_FLOW_SLOT, listener),
+      },
+      // The optional fileTreeUi v1 service seat (see createFileTreeUiResolver
+      // above): a snapshot/subscribe pair. The readonly `internal/service`
+      // bus fires on every provide/unload change; the snapshot re-reads the
+      // live value each time, so a late provider arrival lights up the rows
+      // without a remount and an unload falls back to the local rendering.
+      fileTreeUi: {
+        getSnapshot: () => readFileTreeUi(),
+        subscribe: listener => ctx.on('internal/service', listener),
       },
     },
     startSession: (workspaceId) => { ctx.uiWorkspace.startSession(workspaceId) },

@@ -108,6 +108,7 @@
     "@types/react-dom": "~18.3.1",
     "anser": "^2.3.5",
     "clsx": "^2.0.0",
+    "dsh-file-tree-ui": "link:../dsh-file-tree-ui",
     "immer": "^10.1.1",
     "jsdom": "^29.1.1",
     "katex": "^0.16.47",

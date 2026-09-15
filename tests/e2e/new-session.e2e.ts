@@ -85,7 +85,11 @@ test('the workspace row plus button starts a new session (empty workspace)', asy
   page.on('console', message => {
     const text = message.text()
     if (
-      message.type() === 'error' && text.includes('dsh-enhanced-workspace')
+      message.type() === 'error'
+      // 只收集插件专属错误（写法同 mount lane）：harness dev 构建的
+      // hydration 警告组件栈含 combo bundle URL，不能按裸包名误报。
+      && (text.includes('dsh-enhanced-workspace:')
+        || text.includes('[dsh-enhanced-workspace]'))
       // uiWorkspace.startSession's own non-fatal failure warning — the exact
       // symptom of a dead new-session flow.
       || text.includes('new session failed')

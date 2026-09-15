@@ -93,7 +93,12 @@ test('row menu 删除工作区 removes the empty workspace row and closes the di
   const consoleErrors: string[] = []
   page.on('pageerror', error => { pageErrors.push(error) })
   page.on('console', message => {
-    if (message.type() === 'error' && message.text().includes('dsh-enhanced-workspace')) {
+    // 只收集插件专属错误（写法同 mount lane）：harness dev 构建的
+    // hydration 警告组件栈含 combo bundle URL，不能按裸包名误报——
+    // 带冒号后缀的插件文案与 [dsh-enhanced-workspace] 前缀才是插件的。
+    if (message.type() === 'error'
+      && (message.text().includes('dsh-enhanced-workspace:')
+        || message.text().includes('[dsh-enhanced-workspace]'))) {
       consoleErrors.push(message.text())
     }
   })

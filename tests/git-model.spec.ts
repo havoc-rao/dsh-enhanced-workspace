@@ -7,8 +7,8 @@
  * gh-pages unregistered, hammerspoon anywhere = no git).
  */
 import { describe, expect, it } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { GitProbeResultJSON } from '../src/shared/git.ts'
 import {
   aggregateWorkspaceTrees,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { WorkspaceId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { FolderId, FolderTree } from '../src/client/model.ts'
 import { ROOT_FOLDER_ID, createFolderIn, moveWorkspaceIn, FolderId as folderIdOf } from '../src/client/model.ts'
 import { folderDropZone, resolveFolderDrop, resolveWorkspaceDrop, rowDropZone } from '../src/client/drag.ts'

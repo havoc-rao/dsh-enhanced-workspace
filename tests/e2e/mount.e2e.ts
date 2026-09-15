@@ -90,7 +90,13 @@ test('the enhanced workspace region shadows the sidebar and renders rows without
   const pluginConsoleErrors: string[] = []
   page.on('pageerror', error => { pageErrors.push(error) })
   page.on('console', message => {
-    if (message.type() === 'error' && message.text().includes('dsh-enhanced-workspace')) {
+    // 只收集插件专属错误（写法同上游组合 lane）：harness dev 构建的
+    // hydration 警告组件栈含 combo bundle URL（…/dsh-enhanced-workspace/
+    // client.js 等），不能据此误报——带冒号后缀的插件文案（本插件
+    // warn/error 前缀形式）与 [dsh-enhanced-workspace] 括号前缀才是插件的。
+    if (message.type() === 'error'
+      && (message.text().includes('dsh-enhanced-workspace:')
+        || message.text().includes('[dsh-enhanced-workspace]'))) {
       pluginConsoleErrors.push(message.text())
     }
   })
