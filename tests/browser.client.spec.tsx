@@ -746,9 +746,10 @@ describe('enhanced workspace browser', () => {
     expect(sessionRowOf('空闲会话').querySelector('[data-state]'), 'idle sessions show no dot').toBeNull()
   })
 
-  it('marks a collapsed workspace whose sessions are still working with the row loading dot; the hover card spells the count', async () => {
-    // s1（绘画收集 的会话）正在运行；其余已完成。无「当前会话」——busy 点
-    // 与 current 无关，只跟「收起 && 内部有会话正在工作」挂钩。
+  it('marks a collapsed workspace with its hidden sessions\' top status dot: working loading / completed green; the hover card spells every count', async () => {
+    // s1（绘画收集 的会话）正在运行；其余已完成；文档工作区 s7 已完成。
+    // 无「当前会话」——这个标记与 current 无关，只跟「收起 && 内部有会话
+    // 状态」挂钩。
     sessionsState = {
       ...SESSIONS_STATE,
       byId: {
@@ -758,17 +759,22 @@ describe('enhanced workspace browser', () => {
     } as typeof SESSIONS_STATE
     await renderBrowser()
 
-    // 收起（无当前会话时是默认态）即显示 busy 点——不依赖 hover，占操作
+    // 收起（无当前会话时是默认态）即显示标记点——不依赖 hover，占操作
     // 按钮槽位的尾端。
     let artRow = treeRowByText('绘画收集')!
     expect(artRow.getAttribute('aria-expanded')).toBe('false')
     let busy = artRow.querySelector('[class*="rowBusy"]')
     expect(busy, 'collapsed dir with a working session carries the loading dot').not.toBeNull()
     expect(busy!.querySelector('[data-state="ongoing"]'), 'it is the session rows\' own pixel-chase loading dot').not.toBeNull()
-    expect(busy!.getAttribute('title'), 'the dot carries the busy-count label').toBe('1 个会话正在工作')
+    expect(busy!.getAttribute('title'), 'the dot carries the working-count label').toBe('1 个会话正在工作')
     expect(busy!.textContent, 'screen-reader copy matches the title').toContain('1 个会话正在工作')
+    // 只有已完成会话的工作区（文档，s7 已完成）收起时带绿点。
+    const docsBusy = treeRowByText('文档')!.querySelector('[class*="rowBusy"]')
+    expect(docsBusy, 'collapsed workspace with only completed sessions carries the green done dot').not.toBeNull()
+    expect(docsBusy!.querySelector('[data-state="done"]'), 'completed sub-sessions reflect the green dot').not.toBeNull()
+    expect(docsBusy!.getAttribute('title')).toBe('1 个会话已完成')
 
-    // 展开会话列表：busy 点退场（会话行自己的 loading 点在场）。
+    // 展开会话列表：标记点退场（会话行自己的点在场）。
     click(artRow)
     artRow = treeRowByText('绘画收集')!
     expect(artRow.getAttribute('aria-expanded')).toBe('true')
@@ -779,21 +785,19 @@ describe('enhanced workspace browser', () => {
     artRow = treeRowByText('绘画收集')!
     expect(artRow.getAttribute('aria-expanded')).toBe('false')
     expect(artRow.querySelector('[class*="rowBusy"]'), 'recollapsed dir regains the dot').not.toBeNull()
-    // 无运行中会话的工作区（文档，s7 已完成）不显示点。
-    expect(treeRowByText('文档')!.querySelector('[class*="rowBusy"]'), 'idle workspace keeps no dot').toBeNull()
 
-    // hover 二选一：loading 点让位给操作按钮（菜单 + 新建），点直接消失。
+    // hover 二选一：点让位给操作按钮（菜单 + 新建），点直接消失。
     hover(artRow)
     artRow = treeRowByText('绘画收集')!
-    expect(artRow.querySelector('[class*="rowBusy"]'), 'hover swaps the loading dot out for the action buttons').toBeNull()
+    expect(artRow.querySelector('[class*="rowBusy"]'), 'hover swaps the dot out for the action buttons').toBeNull()
     expect(artRow.querySelectorAll('button[aria-label*="绘画收集"]').length, 'the revealed row actions occupy the freed slot').toBeGreaterThan(0)
-    // 离开后 loading 点回来。
+    // 离开后点回来。
     act(() => {
       artRow.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
     })
-    expect(treeRowByText('绘画收集')!.querySelector('[class*="rowBusy"]'), 'leaving the row restores the loading dot').not.toBeNull()
+    expect(treeRowByText('绘画收集')!.querySelector('[class*="rowBusy"]'), 'leaving the row restores the dot').not.toBeNull()
 
-    // 全部回闲：收起状态下点也熄灭。
+    // s1 也变为已完成：工作态的点换成绿色完成点（w-art 全体完成）。
     act(() => {
       sessionsState = {
         ...sessionsState,
@@ -804,20 +808,32 @@ describe('enhanced workspace browser', () => {
       } as typeof SESSIONS_STATE
       root.render(<EnhancedWorkspaceBrowser {...latestProps} />)
     })
-    expect(treeRowByText('绘画收集')!.querySelector('[class*="rowBusy"]'), 'idle collapsed dir drops the dot').toBeNull()
+    const doneBusy = treeRowByText('绘画收集')!.querySelector('[class*="rowBusy"]')
+    expect(doneBusy, 'an all-completed collapsed dir keeps the done dot').not.toBeNull()
+    expect(doneBusy!.querySelector('[data-state="ongoing"]'), 'no loading dot once nothing works').toBeNull()
+    expect(doneBusy!.querySelector('[data-state="done"]'), 'the green done dot takes over').not.toBeNull()
+    expect(doneBusy!.getAttribute('title')).toBe('6 个会话已完成')
 
     // 工作区 hover 卡（卡片组件级，HoverCard 壳是 ui-primitives 行为）：
-    // 「n 个会话正在工作」状态行 + loading 点。
+    // 每个非零计数一条状态行 + 对应颜色的点。
     const holder = document.createElement('div')
     document.body.appendChild(holder)
     const hoverRoot = createRoot(holder)
     await act(async () => {
       hoverRoot.render(
-        <WorkspaceHoverContent label="绘画收集" cwd="/projects/w-art" createdAt={0} t={t} workingSessions={1} />,
+        <WorkspaceHoverContent label="绘画收集" cwd="/projects/w-art" createdAt={0} t={t} status={{ ongoing: 1 }} />,
       )
     })
     expect(holder.textContent).toContain('1 个会话正在工作')
     expect(holder.querySelector('[data-state="ongoing"]'), 'the card status line carries the loading dot').not.toBeNull()
+    // 完成 + 工作并存：绿点状态行一起列出（工作优先在前）。
+    await act(async () => {
+      hoverRoot.render(
+        <WorkspaceHoverContent label="绘画收集" cwd="/projects/w-art" createdAt={0} t={t} status={{ ongoing: 1, done: 2 }} />,
+      )
+    })
+    expect(holder.textContent).toContain('2 个会话已完成')
+    expect(holder.querySelector('[data-state="done"]'), 'the card status line carries the green done dot').not.toBeNull()
     await act(async () => { hoverRoot.unmount() })
     holder.remove()
   })

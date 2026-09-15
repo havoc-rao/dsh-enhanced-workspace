@@ -37,7 +37,7 @@ import {
   sessionStatusDot,
   treeOrder,
   UNGROUPED_KEY,
-  workingSessionCount,
+  workspaceSessionStatus,
   type FolderRecord,
   type FolderTree,
   type ForestResult,
@@ -440,10 +440,10 @@ describe('sessionStatusDot / dirActive', () => {
     expect(dirActive(false)).toBe(false)
   })
 
-  it('counts a workspace group\'s working sessions (own or subagent activity; pending is waiting, not working)', () => {
-    // Same criterion as the session rows' loading dot ('ongoing'); the count
-    // must come from the member summaries so a COLLAPSED leaf (whose session
-    // rows list is empty) still knows it.
+  it('aggregates a workspace group\'s status counts: waiting > working > completed; blanks never count', () => {
+    // Same per-session outranking as the session rows' dots; the counts must
+    // come from the member summaries so a COLLAPSED leaf (whose session rows
+    // list is empty) still carries the marker.
     const summary = (id: string, overrides: Partial<SessionSummary> = {}): SessionSummary => ({
       id: S(id),
       displayTitle: id,
@@ -457,15 +457,20 @@ describe('sessionStatusDot / dirActive', () => {
     const descendants = new Map<SessionId, SubagentDescendantSummary>([
       [S('s2'), { count: 1, runningCount: 1 }],
     ])
-    expect(workingSessionCount([], descendants)).toBe(0)
-    expect(workingSessionCount([summary('u')], descendants)).toBe(0) // idle
-    expect(workingSessionCount([
+    const pending = new Map<SessionId, { readonly kind: string }>([
+      [S('s5'), { kind: 'approval' }],
+    ])
+    expect(workspaceSessionStatus([], descendants)).toEqual({})
+    expect(workspaceSessionStatus([summary('u')], descendants, pending)).toEqual({}) // idle: no state
+    expect(workspaceSessionStatus([
       summary('u'),
-      summary('s1', { running: true }),
-      summary('s2'), // a subagent is running under it
-      summary('s3', { blank: true, running: true }), // not a visible member
-      summary('s4', { completed: true }), // finished: not working
-    ], descendants)).toBe(2)
+      summary('s1', { running: true }), // own activity → working
+      summary('s2'), // subagent running under it → working
+      summary('s3', { completed: true }), // completed → done
+      summary('s4', { completed: true, running: true }), // activity outranks completion
+      summary('s5'), // pending interaction → waiting (outranks idle)
+      summary('s6', { blank: true, running: true }), // not a visible session
+    ], descendants, pending)).toEqual({ warning: 1, ongoing: 3, done: 1 })
   })
 })
 

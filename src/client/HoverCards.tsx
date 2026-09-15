@@ -21,6 +21,7 @@ import {
   relativeTime,
   type RecentFileTreeRow,
   type SessionNode,
+  type WorkspaceSessionStatus,
 } from './model.ts'
 import type { GitTreeInfoJSON, RemoteGitMarker } from '../shared/git.ts'
 import {
@@ -65,16 +66,17 @@ function hoverTimeLabel(updatedAt: number, now: number, t: HoverTranslate): stri
 }
 
 /** Hover-card body: display directory path and absolute creation time. */
-export function WorkspaceHoverContent({ label, cwd, createdAt, t, git, remote, workingSessions }: {
+export function WorkspaceHoverContent({ label, cwd, createdAt, t, git, remote, status }: {
   label: string
   /** The workspace's host directory; absent keeps the card title + time only. */
   cwd: string | undefined
   createdAt: number
   t: HoverTranslate
-  /** Sessions currently working inside the workspace (own or subagent
-   *  activity — the same criterion as the collapsed-dir row's loading
-   *  dot). Absent / 0 keeps the status line off the card. */
-  workingSessions?: number
+  /** Aggregated session-status counts of the workspace's visible sessions
+   *  (waiting / working / completed) — the collapsed-dir marker's data;
+   *  every nonzero count renders a live status line. Absent keeps the
+   *  status section off the card. */
+  status?: WorkspaceSessionStatus
   /** Git binding of the workspace path: the tree it sits in plus its peer
    *  trees (same repo). `null` = probed and no git; `undefined` = probe
    *  unavailable (no git section at all). */
@@ -100,15 +102,19 @@ export function WorkspaceHoverContent({ label, cwd, createdAt, t, git, remote, w
       </div>
       {cwd !== undefined && <div className={css.hoverPath}>{cwd}</div>}
       <div className={css.hoverTime}>{createdLabel(createdAt, t)}</div>
-      {/* The collapsed-dir busy marker's detail: when the workspace's
-          sessions are working (the row's loading dot), the card spells the
-          live count in the session card's own status-line language. */}
-      {workingSessions !== undefined && workingSessions > 0 && (
-        <div className={css.hoverStatus}>
-          <StateDot state="ongoing" />
-          <span>{workspaceWorkingLabel(workingSessions, t)}</span>
-        </div>
-      )}
+      {/* The collapsed-dir marker's detail: each nonzero session-state count
+          renders a live status line in the session card's own status-line
+          language, top-priority first (waiting > working > completed). */}
+      {status !== undefined && (['warning', 'ongoing', 'done'] as const).map(state => {
+        const count = status[state]
+        if (count === undefined || count < 1) return null
+        return (
+          <div className={css.hoverStatus} key={state}>
+            <StateDot state={state} />
+            <span>{workspaceStatusLabel(state, count, t)}</span>
+          </div>
+        )
+      })}
       {remote !== undefined && (
         <div className={css.hoverGit}>
           <div className={css.hoverGitRow}>
@@ -178,14 +184,24 @@ interface HoverStatus {
 }
 
 /**
- * The collapsed-dir busy label: "n 个会话正在工作" — the workspace row's
- * loading-dot title/aria and the workspace hover card's status line share
- * this spelling (plural-picked so the en copy stays grammatical).
+ * The collapsed-dir status label: "n 个会话正在工作 / 等待处理 / 已完成" —
+ * the workspace row's dot title/aria and the workspace hover card's status
+ * lines share this spelling per dot state (plural-picked so the en copy
+ * stays grammatical).
  */
-export function workspaceWorkingLabel(n: number, t: HoverTranslate): string {
-  return n === 1
-    ? t('workspaceSessionsWorkingOne', { n })
-    : t('workspaceSessionsWorkingOther', { n })
+export function workspaceStatusLabel(state: StateDotState, n: number, t: HoverTranslate): string {
+  const one = n === 1
+  switch (state) {
+    case 'warning':
+      return one ? t('workspaceSessionsWaitingOne', { n }) : t('workspaceSessionsWaitingOther', { n })
+    case 'ongoing':
+      return one ? t('workspaceSessionsWorkingOne', { n }) : t('workspaceSessionsWorkingOther', { n })
+    case 'done':
+      return one ? t('workspaceSessionsCompletedOne', { n }) : t('workspaceSessionsCompletedOther', { n })
+    /* v8 ignore next -- closed ui-primitives StateDotState union */
+    default:
+      return one ? t('workspaceSessionsWorkingOne', { n }) : t('workspaceSessionsWorkingOther', { n })
+  }
 }
 
 /**

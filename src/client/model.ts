@@ -881,12 +881,12 @@ export interface WorkspaceLeaf {
   sessionCount: number
   expanded: boolean
   containsCurrent: boolean
-  /** Visible sessions currently working (own or subagent activity — the
-   *  loading-dot criterion). Computed from the member summaries, so a
-   *  COLLAPSED leaf still knows its busy count (its `sessions` list is
-   *  empty while folded): the row renders a loading dot in the actions
-   *  slot and its hover card a live status line. */
-  workingSessions: number
+  /** Aggregated session-status counts of the group's visible sessions (the
+   *  collapsed-dir marker's data). Computed from the member summaries, so a
+   *  COLLAPSED leaf still carries it (its `sessions` list is empty while
+   *  folded): the row renders the top-priority dot in the actions slot and
+   *  the hover card lists every nonzero count. */
+  status: WorkspaceSessionStatus
   sessions: readonly SessionNode[]
 }
 
@@ -1008,26 +1008,44 @@ function sessionNode(
 }
 
 /**
- * Count of a workspace group's sessions currently working. "Working" is the
- * session rows' loading-dot criterion — own or subagent activity (`running`
- * or running descendants) — and pending interaction does NOT count: a
- * session waiting on the user is not working, and blank placeholders are
- * not sessions. Computed from the member summaries (the same visibility
- * filter `buildLeaf` applies), so a collapsed leaf whose `sessions` list is
- * empty still carries its busy count — the collapsed-dir loading dot and
- * the hover card's live status line read it.
- * @param members - the workspace's visible session summaries.
- * @param descendants - subagent descendant index ({@link indexSubagentDescendants}).
+ * Aggregated session-status counts of a workspace group (the collapsed-dir
+ * status marker's data): how many of the group's visible sessions sit in
+ * each row-dot state. Absent keys read 0.
  */
-export function workingSessionCount(
+export type WorkspaceSessionStatus = Partial<Record<SessionStatusDot, number>>
+
+/**
+ * Aggregate a workspace group's visible sessions into the collapsed-dir
+ * status marker's counts. Each session lands in exactly one state, following
+ * `sessionStatusDot`'s per-session outranking — pending interaction
+ * ('warning') > own/subagent activity ('ongoing') > completion ('done');
+ * idle sessions and blank placeholders never count. Computed from the member
+ * summaries so a COLLAPSED leaf whose `sessions` list is empty still carries
+ * the marker: the row renders the top-priority dot in the actions slot, its
+ * hover card lists every nonzero count.
+ * @param members - the workspace's visible session summaries.
+ * @param descendants - subagent descendant index
+ *   ({@link indexSubagentDescendants}); absent keeps own activity only.
+ * @param pending - pending-interaction map (defaults to none).
+ */
+export function workspaceSessionStatus(
   members: readonly SessionSummary[],
-  descendants: ReadonlyMap<SessionId, SubagentDescendantSummary>,
-): number {
-  let count = 0
+  descendants: ReadonlyMap<SessionId, SubagentDescendantSummary> = new Map(),
+  pending: SessionPendingInteractions = EMPTY_PENDING,
+): WorkspaceSessionStatus {
+  const counts: WorkspaceSessionStatus = {}
   for (const member of members) {
-    if (!member.blank && (member.running || (descendants.get(member.id)?.runningCount ?? 0) > 0)) count += 1
+    const dot = sessionStatusDot({
+      pendingInteraction: pendingInteractionOf(pending.get(member.id)?.kind),
+      running: member.running,
+      runningSubagentCount: descendants.get(member.id)?.runningCount ?? 0,
+      completed: member.completed === true,
+      blank: member.blank,
+    })
+    if (dot === undefined) continue
+    counts[dot] = (counts[dot] ?? 0) + 1
   }
-  return count
+  return counts
 }
 
 /**
@@ -1076,7 +1094,7 @@ function buildLeaf(
     sessionCount: members.length,
     expanded,
     containsCurrent: list.current !== undefined && workspace.sessionIds.includes(list.current as SessionId),
-    workingSessions: workingSessionCount(members, descendants),
+    status: workspaceSessionStatus(members, descendants, pending),
     sessions: expanded ? ordered.map(member => sessionNode(member, descendants, list.current, pending)) : [],
   }
 }
@@ -1222,7 +1240,7 @@ export function deriveFolderForest(
       sessionCount: ordered.length,
       expanded: expandedGroups.has(UNGROUPED_KEY),
       containsCurrent: currentGroup === UNGROUPED_KEY,
-      workingSessions: workingSessionCount(ordered, descendants),
+      status: workspaceSessionStatus(ordered, descendants),
       sessions: expandedGroups.has(UNGROUPED_KEY)
         ? ordered.map(session => sessionNode(session, descendants, list.current))
         : [],

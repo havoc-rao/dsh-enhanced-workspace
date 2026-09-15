@@ -53,6 +53,7 @@ import {
   StateDot,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -86,7 +87,7 @@ import {
   type InputDialogState,
   type MoveToDialogState,
 } from './Dialogs.tsx'
-import { SessionHoverContent, WorkspaceHoverContent, workspaceWorkingLabel } from './HoverCards.tsx'
+import { SessionHoverContent, WorkspaceHoverContent, workspaceStatusLabel } from './HoverCards.tsx'
 import {
   deriveFlat,
   deriveFolderForest,
@@ -101,6 +102,7 @@ import {
   RECENT_GROUP_KEY_PREFIX,
   sessionStatusDot,
   treeOrder,
+  workspaceSessionStatus,
   ROOT_FOLDER_ID,
   UNGROUPED_KEY,
   type FolderId,
@@ -1959,15 +1961,22 @@ function LeafRow(props: {
   // hovered ancestor's column stroke paint it highlighted.
   const folderColumns = folderGuideColumns(props.ancestors, callbacks.onToggleFolder)
   const highlightCol = guideHighlightColumn(props.guide.hover, folderColumns)
-  // Collapsed-dir busy marker: a folded workspace whose sessions are still
-  // working (own or subagent activity — the session rows' loading-dot
-  // criterion) carries the same pixel-chase dot here, seated in the
-  // hover-revealed action buttons' slot. The slot is EITHER/OR: at rest the
-  // dot shows in place of the buttons; on row hover the dot gives way
-  // entirely and the actions (menu + new session) take the slot — never
-  // both at once.
-  const busyLabel = hasAccount && !leaf.expanded && leaf.workingSessions > 0 && !rowHovered
-    ? workspaceWorkingLabel(leaf.workingSessions, callbacks.t)
+  // Collapsed-dir status marker: a folded workspace carries the top-priority
+  // session-status dot of its hidden sessions — pending interaction (amber)
+  // > working (the pixel-chase loading dot) > completed (green) — seated in
+  // the hover-revealed action buttons' slot, mirroring the session rows'
+  // own presentation. The slot is EITHER/OR: at rest the dot shows in place
+  // of the buttons; on row hover the dot gives way entirely and the actions
+  // (menu + new session) take the slot — never both at once.
+  const busyState: StateDotState | undefined = (leaf.status.warning ?? 0) > 0
+    ? 'warning'
+    : (leaf.status.ongoing ?? 0) > 0
+      ? 'ongoing'
+      : (leaf.status.done ?? 0) > 0
+        ? 'done'
+        : undefined
+  const busyLabel = hasAccount && !leaf.expanded && busyState !== undefined && !rowHovered
+    ? workspaceStatusLabel(busyState, leaf.status[busyState] ?? 1, callbacks.t)
     : undefined
   // Session rows hang one level deeper: besides the folder columns they
   // draw the workspace's OWN column (the deepest stroke, at this row's icon
@@ -2102,13 +2111,14 @@ function LeafRow(props: {
           </>
         )}
       </span>
-      {/* The collapsed-dir busy marker occupies the actions slot (right
-          edge, where the hover-revealed buttons live): the loading dot the
-          session rows use, shown at rest — on row hover it yields the slot
-          to the action buttons (either/or, never both). */}
-      {busyLabel !== undefined && (
+      {/* The collapsed-dir status marker occupies the actions slot (right
+          edge, where the hover-revealed buttons live): the session rows'
+          own dot — amber waiting / loading working / green completed — at
+          rest; on row hover it yields the slot to the action buttons
+          (either/or, never both). */}
+      {busyLabel !== undefined && busyState !== undefined && (
         <span className={css.rowBusy} title={busyLabel}>
-          <StateDot state="ongoing" />
+          <StateDot state={busyState} />
           <span className={css.visuallyHidden}>{busyLabel}</span>
         </span>
       )}
@@ -2129,7 +2139,7 @@ function LeafRow(props: {
             cwd={leaf.cwd}
             createdAt={leaf.createdAt ?? 0}
             t={callbacks.t}
-            workingSessions={leaf.workingSessions}
+            status={leaf.status}
             {...(hoverGit === undefined ? {} : { git: hoverGit })}
             {...(remoteMarker === undefined ? {} : { remote: remoteMarker })}
           />
@@ -2641,12 +2651,9 @@ function sessionLeafOf(
     sessionCount: workspace.sessionIds.length,
     expanded,
     containsCurrent: sessions.current !== undefined && workspace.sessionIds.includes(sessions.current as SessionId),
-    // Repo-group rows carry no subagent descendant index (their session
+    // Repo-group leaves carry no subagent descendant index (their session
     // rows render runningSubagentCount: 0 too) — own activity only.
-    workingSessions: members.reduce(
-      (count, summary) => (summary.running ? count + 1 : count),
-      0,
-    ),
+    status: workspaceSessionStatus(members, undefined, pending),
     sessions: expanded
       ? members.map((summary): SessionNode => {
         const pendingInteraction = pendingInteractionOf(pending.get(summary.id)?.kind)
