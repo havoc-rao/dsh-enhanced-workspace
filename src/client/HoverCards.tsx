@@ -223,6 +223,9 @@ function hoverStatuses(node: SessionNode, t: HoverTranslate): readonly HoverStat
     case 'approval':
       pending = { state: 'warning', label: t('sessionStatusWaitingApproval') }
       break
+    case 'escalation':
+      pending = { state: 'warning', label: t('sessionStatusEscalation') }
+      break
     case 'plan-review':
       pending = { state: 'warning', label: t('sessionStatusPlanReview') }
       break

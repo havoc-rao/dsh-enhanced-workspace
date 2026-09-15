@@ -11,8 +11,9 @@ import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionPendingInteraction } from '@deepseek-ai/dsh-client-ui-session/client'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
-import { WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
+import { SessionHoverContent, WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
 import {
   DIRECTORY_FLOW_SLOT,
   SEARCH_GLOBAL_KEY,
@@ -27,7 +28,7 @@ import {
   type EnhancedWorkspaceBrowserProps,
   type EnhancedWorkspaceGlobal,
 } from '../src/client/contract.ts'
-import { ROOT_FOLDER_ID, recentGroupKey } from '../src/client/model.ts'
+import { ROOT_FOLDER_ID, recentGroupKey, type SessionNode } from '../src/client/model.ts'
 import { zh } from '../src/client/locales.ts'
 import type { EnhancedWorkspaceState } from '../src/client/store.ts'
 import { createEnhancedWorkspaceStore } from '../src/client/store.ts'
@@ -88,7 +89,6 @@ const WORKSPACES_STATE = {
   state: 'ready',
   phase: 'ready',
   baselinesReady: true,
-  recentWorkspaceId: undefined as WorkspaceId | undefined,
 }
 
 /**
@@ -384,14 +384,15 @@ describe('enhanced workspace browser', () => {
     expect(props.startSession).toHaveBeenCalledWith('w-art')
     expect(rowByText('画布草图'), 'Cmd+N opens the workspace group like the plus button').toBeDefined()
 
-    // 没有当前会话时落到「最近工作区」（Ctrl+N 同义）——目标是它的行，
-    // 同样展开其会话组。
+    // 没有当前会话时落到第一个列出的工作区（0.1.5-rc.2 起快照不再暴露
+    // recentWorkspaceId，Host 顺序的第一个工作区即最近语义；Ctrl+N 同义）——
+    // 目标是它的行，同样展开其会话组。
     vi.mocked(props.startSession).mockClear()
     act(() => {
       sessionsState = { ...SESSIONS_STATE, current: undefined }
       workspacesState = {
         ...WORKSPACES_STATE,
-        recentWorkspaceId: W('w-docs'),
+        items: [WORKSPACES[1]!, WORKSPACES[0]!], // 文档 排到最前
       } as typeof WORKSPACES_STATE
       root.render(<EnhancedWorkspaceBrowser {...props} />)
     })
@@ -402,15 +403,11 @@ describe('enhanced workspace browser', () => {
     expect(props.startSession).toHaveBeenCalledWith('w-docs')
     expect(rowByText('README 整理'), 'the recent workspace group opens too').toBeDefined()
 
-    // 既无当前会话也无最近工作区：无参 startSession（内置 New Session 视图）。
+    // 既无当前会话也无工作区：无参 startSession（内置 New Session 视图）。
     vi.mocked(props.startSession).mockClear()
     act(() => {
       sessionsState = { ...SESSIONS_STATE, current: undefined }
-      workspacesState = {
-        ...WORKSPACES_STATE,
-        recentWorkspaceId: undefined,
-        items: [],
-      } as typeof WORKSPACES_STATE
+      workspacesState = { ...WORKSPACES_STATE, items: [] } as typeof WORKSPACES_STATE
       root.render(<EnhancedWorkspaceBrowser {...props} />)
     })
     act(() => {
@@ -744,6 +741,68 @@ describe('enhanced workspace browser', () => {
     expect(sessionRowOf('配色研究').querySelector('[data-state="done"]'), 'completed session shows the done dot').not.toBeNull()
     expect(sessionRowOf('配色研究').className, 'other session rows keep their plain surface').not.toContain('sessionRowCurrent')
     expect(sessionRowOf('空闲会话').querySelector('[data-state]'), 'idle sessions show no dot').toBeNull()
+  })
+
+  it('annotates a sandbox-escalation approval on the session row: amber dot + shield mark + its own status text; plain approvals keep the unadorned row', async () => {
+    // s1 的待批审批是提权审批（approveEscalation 的 reason 前缀），s2 是普通
+    // 审批 —— DSH 行模型对两者只给同一个 amber 等待点，提权标注是本浏览器的
+    // 增强：盾牌 + 专属状态文案，落在行与 hover 卡上。
+    await renderBrowser()
+    const pending = new Map<SessionId, SessionPendingInteraction>([
+      ['s1' as SessionId, { key: 'approval:1', kind: 'approval', sessionId: 's1' as SessionId, reason: 'escalate sandbox to workspace-write: 测试' }],
+      ['s2' as SessionId, { key: 'approval:2', kind: 'approval', sessionId: 's2' as SessionId }],
+    ])
+    act(() => {
+      root.render(
+        <EnhancedWorkspaceBrowser {...latestProps} useSessionPendingInteraction={selector => selector(pending)} />,
+      )
+    })
+    // 无当前会话时工作区行默认收起：先展开「绘画收集」，会话行才进 DOM。
+    const artRow = treeRowByText('绘画收集')
+    expect(artRow).toBeDefined()
+    click(artRow!)
+
+    const escalated = sessionRowByText('画布草图')! // s1
+    expect(escalated.querySelector('[data-state="warning"]'), 'the elevation waits on the same amber dot as any approval').not.toBeNull()
+    const mark = escalated.querySelector('[class*="escalationMark"]')
+    expect(mark, 'the row carries the dedicated shield mark').not.toBeNull()
+    expect(mark!.getAttribute('title'), 'the mark tooltip names the elevation').toBe(zh.sessionStatusEscalation)
+    expect(escalated.textContent, 'the row status text names the elevation, not the generic wait').toContain(zh.sessionStatusEscalation)
+
+    const plain = sessionRowByText('配色研究')! // s2
+    expect(plain.querySelector('[data-state="warning"]'), 'a plain approval keeps the built-in amber dot').not.toBeNull()
+    expect(plain.querySelector('[class*="escalationMark"]'), 'plain approvals carry no shield').toBeNull()
+    expect(plain.textContent, 'the plain approval keeps the generic waiting-status text').toContain('等待处理')
+
+    // hover 卡：提权审批列出专属状态行（同款 amber 点）。
+    const holder = document.createElement('div')
+    document.body.appendChild(holder)
+    const hoverRoot = createRoot(holder)
+    await act(async () => {
+      hoverRoot.render(
+        <SessionHoverContent
+          node={{
+            id: 's1' as SessionId,
+            current: false,
+            title: '画布草图',
+            blank: false,
+            pendingInteraction: 'escalation',
+            running: false,
+            runningSubagentCount: 0,
+            completed: false,
+            updatedAt: NOW,
+            recentInputs: [],
+            recentOutputs: [],
+          }}
+          now={NOW}
+          t={t}
+        />,
+      )
+    })
+    expect(holder.textContent).toContain(zh.sessionStatusEscalation)
+    expect(holder.querySelector('[data-state="warning"]'), 'the card status line carries the amber dot').not.toBeNull()
+    await act(async () => { hoverRoot.unmount() })
+    holder.remove()
   })
 
   it('marks a collapsed workspace with its hidden sessions\' top status dot: working loading / completed green; the hover card spells every count', async () => {
@@ -1548,7 +1607,9 @@ describe('durable envelope persistence', () => {
   })
 
   it.each(['load-first', 'baseline-first'])('preserves folder membership across refresh when %s', async arrival => {
-    workspacesState = { ...WORKSPACES_STATE, baselinesReady: false, items: [] }
+    // 基线未到达：0.1.5-rc.2 起快照以 phase 表达到达节拍（baselinesReady 已
+    // 从契约移除）——pending 期间恢复、收养、同步、保存全部禁止。
+    workspacesState = { ...WORKSPACES_STATE, phase: 'pending', items: [] }
     let resolveLoad!: (value: EnhancedWorkspaceState | null) => void
     const persistence = {
       load: vi.fn(() => new Promise<EnhancedWorkspaceState | null>(resolve => { resolveLoad = resolve })),

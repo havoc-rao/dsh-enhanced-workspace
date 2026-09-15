@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionId, SessionListState, SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
+import type {
+  SessionPendingInteraction,
+  SessionPendingInteractionBase,
+  SessionPendingInteractionSnapshot,
+} from '@deepseek-ai/dsh-client-ui-session/client'
 import {
   FolderCycleError,
   FolderDepthExceededError,
@@ -27,6 +32,7 @@ import {
   moveWorkspaceIn,
   observeSessionActivity,
   orderDeltas,
+  pendingInteractionOf,
   recentFileList,
   recentFileTree,
   recentGroupKey,
@@ -34,6 +40,7 @@ import {
   renameFolderIn,
   restoredState,
   retainLiveKeys,
+  sessionPendingInteractionsOf,
   sessionStatusDot,
   treeOrder,
   UNGROUPED_KEY,
@@ -426,6 +433,7 @@ describe('sessionStatusDot / dirActive', () => {
     expect(sessionStatusDot(node())).toBeUndefined() // idle: no dot
     expect(sessionStatusDot(node({ blank: true, completed: true }))).toBeUndefined()
     expect(sessionStatusDot(node({ pendingInteraction: 'approval' }))).toBe('warning')
+    expect(sessionStatusDot(node({ pendingInteraction: 'escalation' }))).toBe('warning')
     // Pending interaction outranks running.
     expect(sessionStatusDot(node({ pendingInteraction: 'question', running: true }))).toBe('warning')
     expect(sessionStatusDot(node({ running: true }))).toBe('ongoing')
@@ -471,6 +479,40 @@ describe('sessionStatusDot / dirActive', () => {
       summary('s5'), // pending interaction → waiting (outranks idle)
       summary('s6', { blank: true, running: true }), // not a visible session
     ], descendants, pending)).toEqual({ warning: 1, ongoing: 3, done: 1 })
+  })
+})
+
+describe('pendingInteractionOf / sessionPendingInteractionsOf', () => {
+  it('maps the three framework kinds onto the row presentation union', () => {
+    expect(pendingInteractionOf({ kind: 'approval' })).toBe('approval')
+    expect(pendingInteractionOf({ kind: 'plan-review' })).toBe('plan-review')
+    expect(pendingInteractionOf({ kind: 'question' })).toBe('question')
+    expect(pendingInteractionOf(undefined)).toBeUndefined()
+    expect(pendingInteractionOf({ kind: 'unknown-kind' })).toBeUndefined()
+  })
+
+  it('refines the sandbox-escalation approval into the dedicated annotation, keyed off the stable reason prefix', () => {
+    // approveEscalation composes `escalate sandbox to <mode>: <justification>`.
+    expect(pendingInteractionOf({ kind: 'approval', reason: 'escalate sandbox to workspace-write: fixture' })).toBe('escalation')
+    expect(pendingInteractionOf({ kind: 'approval', reason: 'escalate sandbox to danger-full-access: fixture' })).toBe('escalation')
+    // Any other reason — or none at all — stays a plain approval.
+    expect(pendingInteractionOf({ kind: 'approval', reason: 'allow read of ~/.ssh/config' })).toBe('approval')
+    expect(pendingInteractionOf({ kind: 'approval' })).toBe('approval')
+  })
+
+  it('reads the ui-session snapshot as the browser entry view (the roster seam types the escalation reason)', () => {
+    // The plugin's local compile knows the approval roster member; base
+    // entries stand in for the kinds other packages augment (question…).
+    const snapshot = new Map<SessionId, SessionPendingInteractionBase | SessionPendingInteraction>([
+      [S('s1'), { key: 'approval:1', kind: 'approval', sessionId: S('s1'), reason: 'escalate sandbox to workspace-write: fixture' }],
+      [S('s2'), { key: 'approval:2', kind: 'approval', sessionId: S('s2') }],
+      [S('s3'), { key: 'question:1', kind: 'question', sessionId: S('s3') }],
+    ]) as SessionPendingInteractionSnapshot
+    const viewed = sessionPendingInteractionsOf(snapshot)
+    expect(pendingInteractionOf(viewed.get(S('s1')))).toBe('escalation')
+    expect(pendingInteractionOf(viewed.get(S('s2')))).toBe('approval')
+    expect(pendingInteractionOf(viewed.get(S('s3')))).toBe('question')
+    expect(pendingInteractionOf(viewed.get(S('s4')))).toBeUndefined()
   })
 })
 

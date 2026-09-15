@@ -11,22 +11,100 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 
 /**
  * Pending interaction kinds a session row surfaces. The framework removed its
  * exported union with the client-runtime split; the member values are stable.
+ *
+ * `escalation` is the browser's OWN refinement of the `approval` kind: the
+ * sandbox-elevation flavor `approveEscalation` requests (a user must grant
+ * wider sandbox permissions), told apart from plain approvals by the stable
+ * reason prefix {@link ESCALATION_REASON_PREFIX}. The built-in ui-workspace
+ * tree does not make this distinction — it renders every approval as the
+ * plain amber waiting dot — so the dedicated annotation is an enhancement
+ * this browser adds on top of DSH's presentation, not hidden parity work.
  */
-export type PendingInteractionStatus = 'approval' | 'plan-review' | 'question'
+export type PendingInteractionStatus = 'approval' | 'escalation' | 'plan-review' | 'question'
+
+/**
+ * The reason prefix every sandbox-escalation approval carries: `approveEscalation`
+ * (dsh-sandbox) composes `escalate sandbox to <mode>: <justification>` into the
+ * approval request's `reason`, and ui-approval's `PendingApproval` publishes it
+ * verbatim. Off this prefix the browser tells the elevation flavor of an
+ * `approval` apart from plain approvals. Tolerance: the row annotation degrades
+ * to a plain approval whenever the reason is absent or unexpected.
+ */
+export const ESCALATION_REASON_PREFIX = 'escalate sandbox to '
+
+/** One pending-interaction entry as the browser consumes it. */
+export interface SessionPendingInteractionEntry {
+  readonly kind: string
+  /**
+   * Escalation/approval reason when the assembled runtime publishes one
+   * (ui-approval's `PendingApproval` carries `reason`). Optional on purpose:
+   * the read is best-effort and degrades gracefully when absent.
+   */
+  readonly reason?: string
+}
 
 /** Pending interactions by Session, as published by the ui-session assembly. */
-export type SessionPendingInteractions = ReadonlyMap<SessionId, { readonly kind: string }>
+export type SessionPendingInteractions = ReadonlyMap<SessionId, SessionPendingInteractionEntry>
+
+/**
+ * The assembled client's pending-interaction roster (the declaration-merged
+ * `SessionPendingInteractionMap` other DSH packages augment): this browser
+ * declares the entry member IT consumes — ui-approval's `PendingApproval`,
+ * narrowed to the fields of interest — so the snapshot's `reason` reads as a
+ * typed, public-contract field instead of a blind cast. The runtime guard in
+ * {@link pendingInteractionOf} still tolerates assemblies that publish no
+ * reason (the row then annotates a plain approval).
+ */
+declare module '@deepseek-ai/dsh-client-ui-session/client' {
+  interface SessionPendingInteractionMap {
+    /** Pending approval as this browser consumes it (ui-approval's
+     *  `PendingApproval`, narrowed; the published instances satisfy it). */
+    approval: {
+      readonly key: string
+      readonly kind: 'approval'
+      readonly sessionId: SessionId
+      readonly reason?: string
+    }
+  }
+}
+
+/**
+ * The browser's view of the ui-session pending-interaction snapshot. The
+ * assembly publishes domain instances — ui-approval's `PendingApproval`, the
+ * roster member declared above — so the escalation `reason` is part of the
+ * typed contract and the mapping is purely structural. One boundary keeps
+ * every derivation on the plugin's own entry shape.
+ */
+export function sessionPendingInteractionsOf(
+  snapshot: SessionPendingInteractionSnapshot,
+): SessionPendingInteractions {
+  return snapshot
+}
 
 /** No pending interactions: the default for derivations that render no indicator. */
 const EMPTY_PENDING: SessionPendingInteractions = new Map()
 
-/** Map one domain-owned pending interaction kind onto the row presentation union. */
-export function pendingInteractionOf(kind: string | undefined): PendingInteractionStatus | undefined {
-  return kind === 'approval' || kind === 'plan-review' || kind === 'question' ? kind : undefined
+/**
+ * Map one domain-owned pending-interaction entry onto the row presentation
+ * union. An `approval` whose `reason` carries the escalation prefix
+ * ({@link ESCALATION_REASON_PREFIX}) becomes the dedicated `escalation`
+ * annotation; everything else maps exactly like the built-in tree.
+ */
+export function pendingInteractionOf(
+  entry: SessionPendingInteractionEntry | undefined,
+): PendingInteractionStatus | undefined {
+  const kind = entry?.kind
+  if (kind === 'approval' && entry !== undefined) {
+    return typeof entry.reason === 'string' && entry.reason.startsWith(ESCALATION_REASON_PREFIX)
+      ? 'escalation'
+      : 'approval'
+  }
+  return kind === 'plan-review' || kind === 'question' ? kind : undefined
 }
 
 /**
@@ -990,7 +1068,7 @@ function sessionNode(
   pending: SessionPendingInteractions = EMPTY_PENDING,
 ): SessionNode {
   const stats = projectionSessionStats(session.projectionValues)
-  const pendingInteraction = pendingInteractionOf(pending.get(session.id)?.kind)
+  const pendingInteraction = pendingInteractionOf(pending.get(session.id))
   return {
     id: session.id,
     current: session.id === current,
@@ -1036,7 +1114,7 @@ export function workspaceSessionStatus(
   const counts: WorkspaceSessionStatus = {}
   for (const member of members) {
     const dot = sessionStatusDot({
-      pendingInteraction: pendingInteractionOf(pending.get(member.id)?.kind),
+      pendingInteraction: pendingInteractionOf(pending.get(member.id)),
       running: member.running,
       runningSubagentCount: descendants.get(member.id)?.runningCount ?? 0,
       completed: member.completed === true,

@@ -358,6 +358,23 @@
   white-space: nowrap;
 }
 
+/* The escalation annotation: a small amber shield beside the label marks a
+   pending approval whose grant would ELEVATE the sandbox — the flavor
+   (approveEscalation's reason prefix) this browser separates out of DSH's
+   plain waiting-approval dot. Rides the built-in schedule-indicator
+   posture: a fixed-size glyph between the label and the trailing actions,
+   tinted with the same warn color the status dot uses. */
+.escalationMark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  margin: 0 6px 0 2px;
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
+  cursor: help;
+}
+
 .rowTime {
   flex: none;
   font-size: 11px;

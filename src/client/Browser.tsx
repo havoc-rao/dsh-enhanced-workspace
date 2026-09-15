@@ -100,6 +100,7 @@ import {
   orderDeltas,
   pendingInteractionOf,
   RECENT_GROUP_KEY_PREFIX,
+  sessionPendingInteractionsOf,
   sessionStatusDot,
   treeOrder,
   workspaceSessionStatus,
@@ -381,7 +382,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   } = props
   const workspaces = props.useWorkspaces(identity)
   const sessions = props.useSessions(identity)
-  const pendingInteractions = props.useSessionPendingInteraction(identity)
+  const pendingInteractions = sessionPendingInteractionsOf(props.useSessionPendingInteraction(identity))
   const state = useStore(identity)
   const [query, setQuery] = useState('')
 
@@ -2256,6 +2257,31 @@ function LeafRow(props: {
   )
 }
 
+/**
+ * The row's elevation annotation: a small amber shield beside the label
+ * marks one pending approval whose grant would ELEVATE the sandbox (the
+ * flavor `approveEscalation` requests). The built-in tree renders that
+ * flavor as the same plain waiting-approval dot; the plugin's own marker
+ * separates it out (see `pendingInteractionOf` — the annotation rides the
+ * stable `escalate sandbox to` reason prefix and vanishes when the approval
+ * clears). The meaning lives in the row's status text (sr-only) and the
+ * hover card; the glyph itself is decorative.
+ */
+function EscalationMark({ label }: { label: string }): ReactNode {
+  return (
+    <span className={css.escalationMark} title={label} aria-hidden="true">
+      <svg width="12" height="14" viewBox="0 0 14 16" fill="none" aria-hidden="true">
+        <path
+          d="M7 0.8 L13 3.2 V7.4 C13 11 10.4 14 7 15.2 C3.6 14 1 11 1 7.4 V3.2 Z"
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  )
+}
+
 /** One session row (status dot + title + row action menu) with its hover card. */
 function SessionRow(props: {
   session: SessionNode
@@ -2283,7 +2309,11 @@ function SessionRow(props: {
     completed: session.completed,
     blank: session.blank,
   })
-  const dotLabel = dot === 'warning' ? seat.t('sessionStatusWarning')
+  const dotLabel = dot === 'warning'
+    // The escalation flavor gets its own annotation — the reason prefix told
+    // it apart from plain approvals (see pendingInteractionOf) — so the
+    // row's status text names the elevation, not the generic wait.
+    ? session.pendingInteraction === 'escalation' ? seat.t('sessionStatusEscalation') : seat.t('sessionStatusWarning')
     : dot === 'ongoing' ? seat.t('sessionStatusOngoing')
       : dot === 'done' ? seat.t('sessionStatusDone') : undefined
   // See FolderRow: the session rows are the deepest leaf level — they carry
@@ -2319,6 +2349,9 @@ function SessionRow(props: {
         )}
       </span>
       <span className={css.rowLabel}>{session.blank ? seat.t('newSession') : session.title}</span>
+      {session.pendingInteraction === 'escalation' && (
+        <EscalationMark label={seat.t('sessionStatusEscalation')} />
+      )}
       {!session.blank && (
         <span className={css.rowActions}>
           <Menu
@@ -2439,7 +2472,7 @@ function RepoForestView(props: {
   const state = props.props.useStore(identity)
   const workspaces = props.props.useWorkspaces(identity)
   const sessions = props.props.useSessions(identity)
-  const pendingInteractions = props.props.useSessionPendingInteraction(identity)
+  const pendingInteractions = sessionPendingInteractionsOf(props.props.useSessionPendingInteraction(identity))
   const probe = props.git.probe
   const q = props.query.trim().toLowerCase()
   const callbacks = props.callbacks
@@ -2656,7 +2689,7 @@ function sessionLeafOf(
     status: workspaceSessionStatus(members, undefined, pending),
     sessions: expanded
       ? members.map((summary): SessionNode => {
-        const pendingInteraction = pendingInteractionOf(pending.get(summary.id)?.kind)
+        const pendingInteraction = pendingInteractionOf(pending.get(summary.id))
         return {
           id: summary.id,
           current: summary.id === sessions.current,
