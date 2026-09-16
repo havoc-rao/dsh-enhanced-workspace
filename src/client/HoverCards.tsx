@@ -259,7 +259,9 @@ function hoverIndentGuides(depth: number): string | undefined {
   for (let level = 0; level < depth; level += 1) {
     const x = level * 12 + 7
     lines.push(
-      `linear-gradient(to right, transparent ${x}px, rgba(255, 255, 255, 0.1) ${x}px, rgba(255, 255, 255, 0.1) ${x + 1}px, transparent ${x + 1}px)`,
+      // The guide stroke rides the host's border-l2 token (dark: white
+      // alpha, light: black alpha) so the hover tree adapts to the theme.
+      `linear-gradient(to right, transparent ${x}px, var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12)) ${x}px, var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.12)) ${x + 1}px, transparent ${x + 1}px)`,
     )
   }
   return lines.join(', ')

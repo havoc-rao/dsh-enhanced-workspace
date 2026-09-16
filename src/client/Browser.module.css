@@ -666,9 +666,13 @@
 }
 
 /* ---- Hover cards (replicated from the built-in ui-workspace rows) ----
- * The card surface itself comes from the shared HoverCard primitive (dark
- * #2C2C2E in both themes); these classes shape the card body content only.
- * Fixed light-on-dark colors match the built-in cards exactly. */
+ * The card surface itself comes from the shared HoverCard primitive
+ * (theme-adaptive: --dsw-alias-bg-layer-2 — its dark value is the record
+ * #2C2C2E); these classes shape the card body content only. Colors ride
+ * the host's --dsw-alias-* theme tokens like the built-in cards: their
+ * dark values equal the former fixed light-on-dark hexes, so dark mode is
+ * unchanged, light mode gets a proper light card. Falls back to the old
+ * dark-hex values when a host ships no tokens. */
 
 .hoverContent {
   display: flex;
@@ -686,21 +690,21 @@
 .hoverTitle {
   font-size: 14px;
   line-height: 20px;
-  color: #FFFFFF;
+  color: var(--dsw-alias-label-primary, #FFFFFF);
   overflow-wrap: break-word;
 }
 
 .hoverPath {
   font-size: 12px;
   line-height: 16px;
-  color: #CFD3D6;
+  color: var(--dsw-alias-label-secondary, #CFD3D6);
   word-break: break-all;
 }
 
 .hoverTime {
   font-size: 12px;
   line-height: 16px;
-  color: #CFD3D6;
+  color: var(--dsw-alias-label-secondary, #CFD3D6);
 }
 
 .hoverStatus {
@@ -709,7 +713,7 @@
   gap: 8px;
   font-size: 12px;
   line-height: 20px;
-  color: #ADB2B8;
+  color: var(--dsw-alias-label-tertiary, #ADB2B8);
 }
 
 /* The whole file domain scrolls as one box: a bounded, slim-scrollbar panel
@@ -725,7 +729,7 @@
   overflow-y: auto;
   padding-right: 2px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  scrollbar-color: color-mix(in srgb, var(--dsw-alias-label-secondary, #CFD3D6) 22%, transparent) transparent;
 }
 
 /* File-box toolbar: the quiet list/tree mode toggle, right-aligned above the
@@ -744,12 +748,12 @@
   font: inherit;
   font-size: 11px;
   line-height: 16px;
-  color: #8E9399;
+  color: var(--dsw-alias-label-tertiary, #8E9399);
   cursor: pointer;
 }
 
 .hoverModeButton:hover {
-  color: #D6D9DC;
+  color: var(--dsw-alias-label-secondary, #D6D9DC);
 }
 
 .hoverModeButton:focus-visible {
@@ -763,7 +767,7 @@
 
 .hoverFilesScroll::-webkit-scrollbar-thumb {
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.22);
+  background: color-mix(in srgb, var(--dsw-alias-label-secondary, #CFD3D6) 22%, transparent);
 }
 
 .hoverFilesScroll::-webkit-scrollbar-track {
@@ -777,7 +781,9 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  /* Hairline separator (0.5px), matching the harness elevation gate for
+     solid neutral token borders — same token + width as the built-in card. */
+  border-top: 0.5px solid var(--dsw-alias-border-l1, rgba(255, 255, 255, 0.08));
   padding-top: 8px;
 }
 
@@ -792,13 +798,13 @@
   line-height: 16px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: #9BA1A6;
+  color: var(--dsw-alias-label-secondary, #9BA1A6);
 }
 
 .hoverFilesCount {
   font-size: 11px;
   line-height: 16px;
-  color: #6E7378;
+  color: var(--dsw-alias-label-tertiary, #6E7378);
 }
 
 .hoverFilesTree {
@@ -837,13 +843,13 @@
 }
 
 .hoverFileRowSelectable:hover {
-  background-color: rgba(255, 255, 255, 0.06);
+  background-color: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.06));
 }
 
 /* The marked file row: a soft tint so the user can keep an eye on one file. */
 .hoverFileRowSelected,
 .hoverFileRowSelected:hover {
-  background-color: rgba(255, 255, 255, 0.12);
+  background-color: var(--dsw-alias-interactive-bg-active, rgba(255, 255, 255, 0.12));
 }
 
 .hoverFileRowSelectable:focus-visible {
@@ -856,7 +862,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #7C8288;
+  color: var(--dsw-alias-label-tertiary, #7C8288);
 }
 
 .hoverFileDirName,
@@ -865,11 +871,11 @@
 }
 
 .hoverFileDirName {
-  color: #B4B9BE;
+  color: var(--dsw-alias-label-secondary, #B4B9BE);
 }
 
 .hoverFileName {
-  color: #D6D9DC;
+  color: var(--dsw-alias-label-primary, #D6D9DC);
 }
 
 .hoverFilesMore {
@@ -882,12 +888,12 @@
   font-family: inherit;
   font-size: 11px;
   line-height: 16px;
-  color: #8E9399;
+  color: var(--dsw-alias-label-tertiary, #8E9399);
   cursor: pointer;
 }
 
 .hoverFilesMore:hover {
-  color: #D6D9DC;
+  color: var(--dsw-alias-label-secondary, #D6D9DC);
   text-decoration: underline;
 }
 
@@ -901,18 +907,18 @@
 .hoverFileListName {
   flex: none;
   white-space: nowrap;
-  color: #D6D9DC;
+  color: var(--dsw-alias-label-primary, #D6D9DC);
   font-weight: 600;
 }
 
 .hoverFileListDivider {
   flex: none;
-  color: #6E7378;
+  color: var(--dsw-alias-label-tertiary, #6E7378);
 }
 
 .hoverFileListPath {
   white-space: nowrap;
-  color: #8E9399;
+  color: var(--dsw-alias-label-tertiary, #8E9399);
 }
 
 /* ── Git worktree layer (M2) ─────────────────────────────────────────── */
