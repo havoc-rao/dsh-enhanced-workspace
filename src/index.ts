@@ -17,6 +17,23 @@
  */
 
 import { Context } from '@deepseek-ai/cordis'
+
+// The plugin's own view of the core session lifecycle events it consumes.
+// Declared here instead of type-importing @deepseek-ai/dsh-session: the
+// session package's ambient merges (its own `Context.sessions` store) would
+// collide with the api-session-controller's client face elsewhere in the
+// bundle's type graph. The real runtime event is emitted by the core session
+// store into every root context (the api-session-controller's host half
+// consumes the same firehose); this declaration only narrows what the
+// tracker reads — id + the audit event shape — and is erased at build.
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /** Post-commit append feed of one live session. */
+    'session/event'(session: { readonly id: string }, event: { readonly type: string; readonly data: unknown }): void
+    /** A session left the store — its open asks are gone with it. */
+    'session/disposed'(session: { readonly id: string }): void
+  }
+}
 // Type-only: the published package augments `Context` with the host
 // `connection` service (HostConnectionHandle) in rpc-host.d.ts; the import
 // keeps that declaration in the type graph and is erased from the bundle.
@@ -41,6 +58,8 @@ import {
   writeEnvelopeFile,
   type PersistedEnvelope,
 } from './host/storage.ts'
+import { ApprovalStatusSource } from './host/approval-status.ts'
+import { APPROVAL_PENDING_ENDPOINT } from './shared/approval-status.ts'
 
 /** Cordis plugin name (the cordis.patch.yml row references the package name). */
 export const name = 'dsh-enhanced-workspace'
@@ -61,7 +80,10 @@ interface SaveEnvelopePayload {
  *
  * Endpoints:
  * - `load` / `save` — the durable envelope (see src/host/storage.ts);
- * - `git/probe` — the git-repo index over a path list (see src/host/git.ts).
+ * - `git/probe` — the git-repo index over a path list (see src/host/git.ts);
+ * - `approval/pending` — the open-approval snapshot (see
+ *   src/host/approval-status.ts), the loss-free path that keeps the sidebar's
+ *   amber waiting dot stable.
  * @param ctx - cordis context (with the injected `connection` service).
  */
 export function apply(ctx: Context): void {
@@ -70,6 +92,18 @@ export function apply(ctx: Context): void {
     ctx.logger.warn('dsh-enhanced-workspace: no Connection service; durable envelope persistence disabled')
     return
   }
+  // Live open-approval ledger: `approval/asked` → `approval/decided` audit
+  // events off the session/event firehose. Registered before the channel so
+  // the first poll already sees every ask that happened since mount.
+  const approvalStatus = new ApprovalStatusSource()
+  ctx.on('session/event', (session, event) => {
+    if (event.type === 'approval/asked' || event.type === 'approval/decided') {
+      approvalStatus.observe(session.id, event)
+    }
+  })
+  ctx.on('session/disposed', (session) => {
+    approvalStatus.forget(session.id)
+  })
   const remove = connection.rpc.handle(
     PERSISTENCE_CHANNEL,
     async (endpoint, payload) => {
@@ -153,6 +187,12 @@ export function apply(ctx: Context): void {
             },
           } as const
         }
+      }
+      if (endpoint === APPROVAL_PENDING_ENDPOINT) {
+        return {
+          ok: true,
+          value: { asks: approvalStatus.snapshot() },
+        } as const
       }
       return {
         ok: false,

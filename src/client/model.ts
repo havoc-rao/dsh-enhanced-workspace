@@ -63,11 +63,18 @@ export type SessionPendingInteractions = ReadonlyMap<SessionId, SessionPendingIn
 declare module '@deepseek-ai/dsh-client-ui-session/client' {
   interface SessionPendingInteractionMap {
     /** Pending approval as this browser consumes it (ui-approval's
-     *  `PendingApproval`, narrowed; the published instances satisfy it). */
+     *  `PendingApproval` and this plugin's own approval-status fallback entry
+     *  both satisfy it — the shared kind drives the row's amber waiting dot
+     *  whichever seat won; toolName/callId ride along when the publisher
+     *  carried them). */
     approval: {
       readonly key: string
       readonly kind: 'approval'
       readonly sessionId: SessionId
+      /** Tool requesting the decision, when the publisher carried it. */
+      readonly toolName?: string
+      /** Correlated Tool call, when the publisher carried it. */
+      readonly callId?: string
       readonly reason?: string
     }
   }

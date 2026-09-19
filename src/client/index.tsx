@@ -42,6 +42,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { EnhancedWorkspaceBrowser } from './Browser.tsx'
 import {
+  createApprovalSeatPoller,
+  APPROVAL_SEAT_PRECEDENCE,
+  type ApprovalSeatEntry,
+} from './approval-status.ts'
+import {
   createChatDropAffordance,
   installChatDropRouter,
 } from './chat-drop.ts'
@@ -171,6 +176,30 @@ export const inject = ['slots', 'sessions', 'workspaces', 'uiWorkspace', 'locale
  */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-enhanced-workspace: dictionaries')
+
+  // Approval-status fallback seat (see approval-status.ts): publish the
+  // session's open-approval state into the ui-session pending-interaction
+  // map off the HOST's durable `approval/asked` → `approval/decided` audit
+  // trail, so the sidebar's amber waiting dot ("hook 状态 / 黄点事件") is
+  // stable on EVERY approval — the `approval/request` remote-event leg that
+  // drives ui-approval's own entry can hiccup (agent-context resolution
+  // miss, stream gap), and then only this seat keeps the row from staying
+  // blue. Precedence sits BELOW ui-approval's seat, so the interactive
+  // entry (which also powers the composer approval panel) is never
+  // shadowed; without the uiSession service the effect is a no-op.
+  ctx.effect(() => {
+    const uiSession = ctx.get('uiSession')
+    if (uiSession === undefined) return () => undefined
+    const publish = uiSession.registerPendingInteraction<ApprovalSeatEntry>(
+      () => APPROVAL_SEAT_PRECEDENCE,
+    )
+    const poller = createApprovalSeatPoller({
+      getConnection: () => ctx.get('connection') as ConnectionHandle | undefined,
+      publish,
+    })
+    poller.start()
+    return () => { poller.stop() }
+  }, 'dsh-enhanced-workspace: approval status seat')
 
   // Drag → chat-input router (fiber level, NOT the browser tree — the sidebar
   // may be collapsed while the chat column stays live). Plugin workspace and

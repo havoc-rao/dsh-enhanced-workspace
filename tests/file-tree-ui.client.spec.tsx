@@ -32,7 +32,13 @@ import type {
   FileTreeNode,
   FileTreeUiServiceV2,
 } from 'dsh-file-tree-ui/client-contract'
-import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER } from '../src/client/Browser.tsx'
+import { EnhancedWorkspaceBrowser } from '../src/client/Browser.tsx'
+// The provider's CURRENT hover paint: since the guide-hover polish
+// (provider f0b6bee) the highlight lives on the row's `.guideHighlight`
+// overlay span (opacity transition), not the row base layer — assert the
+// overlay's own gradient. The consumer's own GUIDE_STROKE_HOVER constant is
+// the FALLBACK painter's value and no longer appears on service-path rows.
+import { GUIDE_STROKE_HOVER as PROVIDER_GUIDE_STROKE_HOVER } from 'dsh-file-tree-ui/src/client/contract.ts'
 import { DIRECTORY_FLOW_SLOT, SEARCH_SLOT, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { createFileTreeUiResolver } from '../src/client/index.tsx'
 import { zh } from '../src/client/locales.ts'
@@ -273,6 +279,13 @@ function typeText(input: HTMLInputElement, value: string): void {
 /** React's onMouseEnter derives from a bubbling mouseover. */
 function mouseEnter(target: Element): void {
   act(() => { target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+}
+
+/** The provider's guide-hover overlay span of one row (f0b6bee: the hover
+ *  gradient moved off the row base layer into this dedicated overlay, faded
+ *  via CSS opacity), or null when the row currently renders none. */
+function guideHighlightOf(row: HTMLElement): HTMLElement | null {
+  return row.querySelector<HTMLElement>('[class*="guideHighlight"]')
 }
 
 /** React's onPointerEnter derives from a bubbling pointerover. */
@@ -549,9 +562,10 @@ describe('fileTreeUi service path (flat list + container layer)', () => {
     expect(layer!.style.backgroundImage, 'the layer paints the full stroke set').toContain('linear-gradient')
     expect(sessionRow.style.backgroundImage, 'row stays clean until hover').toBe('')
 
-    // Hovering the deepest band lights the whole workspace column on the row.
+    // Hovering the deepest band lights the whole workspace column on the row
+    // (base layer stays clean; the provider's overlay carries the gradient).
     mouseEnter(bands[1]!)
-    expect(sessionRow.style.backgroundImage).toContain(GUIDE_STROKE_HOVER)
+    expect(guideHighlightOf(sessionRow)?.style.backgroundImage, 'the overlay paints the hovered column').toContain(PROVIDER_GUIDE_STROKE_HOVER)
 
     // Clicking the deepest band collapses the session list WITHOUT opening
     // (the framework routes the band click to the column's onToggle).
@@ -795,7 +809,7 @@ describe('fileTreeUi service path (FolderRow)', () => {
     const betaRow = folderRowByText('beta')!
     const band = betaRow.querySelectorAll<HTMLElement>('[class*="guideHit"]')[0]!
     mouseEnter(band)
-    expect(betaRow.style.backgroundImage, 'the ancestor line lights up').toContain(GUIDE_STROKE_HOVER)
+    expect(guideHighlightOf(betaRow)?.style.backgroundImage, 'the ancestor line lights up').toContain(PROVIDER_GUIDE_STROKE_HOVER)
     const betaExpandedBefore = instance.getSnapshot().folderExpansion[beta]
     click(band)
     expect(instance.getSnapshot().folderExpansion[alpha], 'band folds the ancestor').toBe(false)
@@ -935,7 +949,7 @@ describe('fileTreeUi service path (container continuity + subws headers)', () =>
     expect(header!.style.backgroundImage, 'header draws no baseline strokes').toBe('')
     const band = header!.querySelectorAll<HTMLElement>('[class*="guideHit"]')[0]!
     mouseEnter(band)
-    expect(header!.style.backgroundImage, 'hover lights only the hovered column').toContain(GUIDE_STROKE_HOVER)
+    expect(guideHighlightOf(header!)?.style.backgroundImage, 'hover lights only the hovered column').toContain(PROVIDER_GUIDE_STROKE_HOVER)
     const layer = header!.closest('[class*="layer"]') as HTMLElement | null
     expect(layer, 'header sits inside the container layer').not.toBeNull()
     expect(layer!.style.backgroundImage, 'the container keeps the continuous strokes').toContain('linear-gradient')
@@ -1116,7 +1130,7 @@ describe('fileTreeUi v2 model building (renderFileTree props)', () => {
     // rows' own column 0 is the same alpha stroke, so their line lights up.
     const betaRow = folderRowByText('beta')!
     mouseEnter(betaRow.querySelectorAll<HTMLElement>('[class*="guideHit"]')[0]!)
-    expect(sessionRow.style.backgroundImage, 'the framework seat lights the descendant line').toContain(GUIDE_STROKE_HOVER)
+    expect(guideHighlightOf(sessionRow)?.style.backgroundImage, 'the framework seat lights the descendant line').toContain(PROVIDER_GUIDE_STROKE_HOVER)
     // Moving off the band clears the seat — the descendant stroke returns
     // to its resting state (per-row highlight only, nothing stale).
     act(() => {
