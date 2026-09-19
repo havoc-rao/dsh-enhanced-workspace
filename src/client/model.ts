@@ -966,6 +966,11 @@ export interface WorkspaceLeaf {
    *  the hover card lists every nonzero count. */
   status: WorkspaceSessionStatus
   sessions: readonly SessionNode[]
+  /** The session a workspace drag references (current, else most recent
+   *  member) — always derivable statically, so a COLLAPSED leaf's drag still
+   *  carries a working session mention. Absent when the workspace has no
+   *  referenceable (non-blank, non-subagent) session. */
+  primarySession?: { id: SessionId; title?: string }
 }
 
 /** One folder node of the derived forest. */
@@ -1163,6 +1168,7 @@ function buildLeaf(
   // The stored session order belongs to the workspace, not to the row's
   // expansion key: tree rows and recency rows share one account order.
   const ordered = orderedMembers(members, view.sessionOrderBy?.[workspace.workspaceId], view.orderBy ?? 'updated')
+  const primarySession = referenceSessionOf(members, list.current)
   return {
     key,
     workspaceId: workspace.workspaceId,
@@ -1173,6 +1179,7 @@ function buildLeaf(
     expanded,
     containsCurrent: list.current !== undefined && workspace.sessionIds.includes(list.current as SessionId),
     status: workspaceSessionStatus(members, descendants, pending),
+    ...(primarySession === undefined ? {} : { primarySession }),
     sessions: expanded ? ordered.map(member => sessionNode(member, descendants, list.current, pending)) : [],
   }
 }
@@ -1182,6 +1189,35 @@ function expandedGroupKeys(view: ForestView): ReadonlySet<string> {
   return new Set(Object.entries(view.groupExpansion)
     .filter(([, expanded]) => expanded)
     .map(([key]) => key))
+}
+
+/**
+ * The session a workspace drag references: the workspace's current member,
+ * else its most recently updated one — "where the work is", always derivable
+ * from the static summaries (no expansion state involved). Blank sessions
+ * never qualify (a fresh New Session carries no conversation to reference).
+ */
+export function referenceSessionOf(
+  members: readonly SessionSummary[],
+  current: SessionId | undefined,
+): { id: SessionId; title?: string } | undefined {
+  const qualified = members.filter(summary => !summary.blank)
+  if (current !== undefined) {
+    const currentSummary = qualified.find(summary => summary.id === current)
+    if (currentSummary !== undefined) return referenceTarget(currentSummary)
+  }
+  const newest = qualified.reduce<SessionSummary | undefined>(
+    (best, summary) => (best === undefined || summary.updatedAt > best.updatedAt ? summary : best),
+    undefined,
+  )
+  return newest === undefined ? undefined : referenceTarget(newest)
+}
+
+/** Session reference target; `title` omitted when untitled (the host then
+ *  labels mentions by id — omit, never undefined, for exactOptionalPropertyTypes). */
+function referenceTarget(summary: SessionSummary): { id: SessionId } | { id: SessionId; title: string } {
+  const title = summary.displayTitle === '' ? undefined : summary.displayTitle
+  return title === undefined ? { id: summary.id } : { id: summary.id, title }
 }
 
 /**

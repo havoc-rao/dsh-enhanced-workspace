@@ -159,6 +159,45 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
 - **发布准备**：`pnpm pack` + 挂载到现有 profile 手测（遮蔽生效、最近模块
   与目录树交互、拖拽、状态点、Host 顺序 reconcile、搜索/添加流程）。
 
+### 拖到对话区 = 会话引用（2026-09-19）
+
+用户反馈「拖 workspace 进 chatbox 效果很差」——旧行为：行拖拽只写
+`text/plain` = 工作区 uuid，drop 到 composer 走 Lexical 默认文本插入，输入框
+收获一坨 uuid，无任何语义与反馈。
+
+实装（零 DSH 改动，纯插件侧）：
+
+- **协议**（`src/client/reference.ts`，纯函数）：拖拽 payload 升级为
+  `{version:1, kind:'workspace'|'session'|'folder', id, label, mention, sessionId?}`；
+  `mention` = DSH 规范会话引用 `@[label](dsh-session:<b64>)` —— 与宿主
+  `@deepseek-ai/dsh-session-reference` 的 `uri.ts` 逐字节对齐（base64url
+  无 padding，label 转义），提交时由 DSH 预置管线 `parseSessionReferenceText`
+  解析成真实引用会话上下文。工作区行引用其**主会话**（当前会话，否则最近
+  更新成员；blank/subagent 排除——`model.ts` 新增 `referenceSessionOf`，
+  树/最近/repo 组/未分组全部 leaf 都带 `primarySession`，收起也可拖）；
+  无可用会话时回退工作区标题文本（绝不落 uuid）。会话行拖拽同样升级。
+- **路由**（`src/client/chat-drop.ts`）：窗口级 capture 拦截（fiber 级挂载，
+  侧边栏收起仍生效）。区域分类：插件树内 → 不碰；文本可编辑元素 → 不碰
+  （浏览器默认 drop 即插入 mention，drop 点即插入点）；对话列（
+  `[data-composer-seat]` / `[data-conversation-scroll]` 非编辑区）→
+  preventDefault + 聚焦 composer 编辑面 + `execCommand('insertText')`
+  （Lexical 的 beforeinput 管线，与键入同路）插入 mention；其他区域 → 默认
+  文本行为。拖拽 payload 经模块级 stash 传递（dragover 期间
+  `DataTransfer.getData` 不可读）。
+- **反馈**：悬浮 pill「引用到输入框：@label」锚在 composer seat 上方
+  （`createChatDropAffordance`，纯 DOM 元素，无 React 根）。
+- **验证**：`pnpm typecheck` 0 错误；`pnpm test` **286/286**（新增
+  reference 纯函数 12 例 + chat-drop 组件 14 例；旧「typed references」断言
+  升级为 mention 形状）；`pnpm build:dev` 双通道 + 纯度门通过。已知差异：
+  拖入 hero（无会话）惰性 composer 不插入（无编辑面）；官方侧边栏行
+  （text/plain = key 的老行为）不被路由层接管。
+- **外部冲击（验证后发生）**：链接的 dsh-file-tree-ui 仓库（未提交的
+  V1→V2 服务迁移）在 2026-09-19 11:27:51 重建了 `lib/types`——`FileTreeUiServiceV1`
+  从导出中消失，导致本仓库全量 typecheck 出现 10 处存量 V1 引用错误
+  （Browser/contract/index + 3 个 spec 文件，均为迁移前既有代码，零处在本
+  功能新增模块）。功能代码本身验证不受影响；待上游迁移定稿后随 V1→V2
+  升级一并清理。
+
 ## 关键约束备忘
 
 - 不修改 DSH 本体（fork 零写入）；client bundle 不 value-import
