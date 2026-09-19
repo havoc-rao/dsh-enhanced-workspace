@@ -1561,6 +1561,7 @@ export function deriveRecentWorkspaces(
   limit: number,
   view: ForestView,
   archivedSessionIds: readonly SessionId[] = [],
+  pending: SessionPendingInteractions = EMPTY_PENDING,
 ): RecentsNode[] {
   const archived = new Set(archivedSessionIds)
   const expandedGroups = expandedGroupKeys(view)
@@ -1576,7 +1577,7 @@ export function deriveRecentWorkspaces(
       node: {
         // The prefixed row key keeps the recency module's expand/collapse
         // independent from the workspace list's rows (no linkage).
-        ...buildLeaf(workspace, sessions, archived, expandedGroups, view, descendants, EMPTY_PENDING, recentGroupKey(workspace.workspaceId)),
+        ...buildLeaf(workspace, sessions, archived, expandedGroups, view, descendants, pending, recentGroupKey(workspace.workspaceId)),
         updatedAt: score,
       },
       score,

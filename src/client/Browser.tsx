@@ -777,8 +777,8 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     [sessions, workspaces.items, state.folders, workspaces.archivedSessionIds, view, pendingInteractions],
   )
   const recents = useMemo(
-    () => deriveRecentWorkspaces(workspaces.items, sessions, state.recentTouchById, RECENTS_LIMIT, view, workspaces.archivedSessionIds),
-    [workspaces.items, sessions, state.recentTouchById, view, workspaces.archivedSessionIds],
+    () => deriveRecentWorkspaces(workspaces.items, sessions, state.recentTouchById, RECENTS_LIMIT, view, workspaces.archivedSessionIds, pendingInteractions),
+    [workspaces.items, sessions, state.recentTouchById, view, workspaces.archivedSessionIds, pendingInteractions],
   )
   const flat = useMemo(
     () => deriveFlat(sessions, workspaces.archivedSessionIds, pendingInteractions),

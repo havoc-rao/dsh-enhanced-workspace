@@ -52,6 +52,7 @@ import {
   type ForestResult,
   type ForestView,
   type LiveKeysSlice,
+  type SessionPendingInteractions,
   type SubagentDescendantSummary,
 } from '../src/client/model.ts'
 
@@ -575,6 +576,31 @@ describe('deriveRecentWorkspaces', () => {
     const view: ForestView = { folderExpansion: {}, groupExpansion: {} }
     const rows = deriveRecentWorkspaces(workspaces, sessionState([]), {}, 1, view)
     expect(rows.map(row => row.workspaceId)).toEqual([W('a')])
+  })
+
+  it('threads the pending-interaction map into the recency rows (amber waiting state ON the recents section)', () => {
+    const workspaces = [workspace('w', ['s1'], '2026-01-01T00:00:00.000Z')]
+    const sessions = sessionState([{
+      ...summary('s1', Date.parse('2026-09-01T00:00:00.000Z')),
+      running: true,
+      completed: false,
+    }])
+    const view: ForestView = { folderExpansion: {}, groupExpansion: { [recentGroupKey(W('w'))]: true } }
+    const pending: SessionPendingInteractions = new Map([
+      [S('s1'), { key: 'approval:1', kind: 'approval', sessionId: S('s1'), reason: 'escalate sandbox to workspace-write: x' }],
+    ])
+    const [row] = deriveRecentWorkspaces(workspaces, sessions, {}, 5, view, [], pending)
+    // Running + pending → the leaf's status reports the waiting state, and
+    // the expanded session row carries the escalation annotation — the
+    // recents section must NOT hard-code an empty pending map.
+    expect(row?.status.warning).toBe(1)
+    expect(row?.status.ongoing).toBeUndefined()
+    expect(row?.sessions[0]?.pendingInteraction).toBe('escalation')
+    // Default remains pending-free for existing callers.
+    const [withoutPending] = deriveRecentWorkspaces(workspaces, sessions, {}, 5, view)
+    expect(withoutPending?.status.warning).toBeUndefined()
+    expect(withoutPending?.status.ongoing).toBe(1)
+    expect(withoutPending?.sessions[0]?.pendingInteraction).toBeUndefined()
   })
 
   it('carries an expandable workspace leaf: sessions, expansion, containsCurrent, and archived filtering', () => {
