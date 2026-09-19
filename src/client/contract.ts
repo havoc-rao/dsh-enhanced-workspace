@@ -9,14 +9,16 @@
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
-// Type-only (erased — never reaches the purity gate): the fileTreeUi v1
-// client-service contract provided by the dsh-file-tree-ui plugin. The
-// service is OPTIONAL at runtime: this plugin never declares it in its
+// Type-only (erased — never reaches the purity gate): the fileTreeUi v2
+// client-service contract provided by the dsh-file-tree-ui plugin (v2 = tree
+// FRAMEWORK ownership — the provider renders the whole tree from injected
+// row models; see the provider's contract.ts / plan-v2-tree-framework.md).
+// The service is OPTIONAL at runtime: this plugin never declares it in its
 // cordis `inject` array (cordis has no optional inject — a hard injection
 // would fail the whole page for users who upgrade the consumer without the
 // provider), and only collaborates through `ctx.get('fileTreeUi')` +
 // `ctx.on('internal/service', …)` subscriptions with a local fallback.
-import type { FileTreeUiServiceV1 } from 'dsh-file-tree-ui/client-contract'
+import type { FileTreeUiServiceV2 } from 'dsh-file-tree-ui/client-contract'
 import type { GitProbeResultJSON } from '../shared/git.ts'
 import type { RemoteGitSource } from './remote-git.ts'
 import type {
@@ -51,18 +53,21 @@ import type { NS } from './locales.ts'
 export const DIRECTORY_FLOW_SLOT = 'enhanced-workspace.workspace.directoryFlow' as const
 
 /**
- * The fileTreeUi v1 SERVICE NAME — a documented string protocol shared with
+ * The fileTreeUi v2 SERVICE NAME — a documented string protocol shared with
  * the dsh-file-tree-ui provider plugin. Cross-plugin runtime values cannot be
  * value-imported (the client-bundle purity gate forbids value-importing the
  * provider package), so provider and consumer each keep their own literal;
- * only the type crosses the boundary (`import type … from
+ * only the types cross the boundary (`import type … from
  * 'dsh-file-tree-ui/client-contract'`, erased at build).
  */
 export const FILE_TREE_UI_SERVICE = 'fileTreeUi' as const
 
-/** The v1 protocol version of the fileTreeUi service (documented literal,
- *  held by both sides). */
-export const FILE_TREE_UI_PROTOCOL_VERSION = 1 as const
+/** The v2 protocol version of the fileTreeUi service (documented literal,
+ *  held by both sides). v2 = the provider owns the whole tree framework
+ *  (container/subtrees/guides/chevron interaction/fold animations/row chrome)
+ *  and the consumer injects per-row content + expansion state data via
+ *  {@link FileTreeRowModel}; see the provider's plan-v2-tree-framework.md. */
+export const FILE_TREE_UI_PROTOCOL_VERSION = 2 as const
 
 /**
  * Hand-written shape check of the optional fileTreeUi service (the
@@ -71,19 +76,18 @@ export const FILE_TREE_UI_PROTOCOL_VERSION = 1 as const
  * the caller then falls back to its local rendering and must not white
  * screen. No runtime import of the provider package happens here.
  * @param value - the raw `ctx.get('fileTreeUi')` value.
- * @returns the v1 service, or undefined when absent/incompatible.
+ * @returns the v2 service, or undefined when absent/incompatible.
  * @see {@link FILE_TREE_UI_SERVICE} {@link FILE_TREE_UI_PROTOCOL_VERSION}
  */
-export function resolveFileTreeUiServiceV1(value: unknown): FileTreeUiServiceV1 | undefined {
+export function resolveFileTreeUiServiceV2(value: unknown): FileTreeUiServiceV2 | undefined {
   if (value === null || typeof value !== 'object') return undefined
-  const candidate = value as Partial<FileTreeUiServiceV1>
+  const candidate = value as Partial<FileTreeUiServiceV2>
   if (candidate.protocolVersion !== FILE_TREE_UI_PROTOCOL_VERSION
-    || typeof candidate.renderRow !== 'function'
-    || typeof candidate.renderGuideLayer !== 'function'
+    || typeof candidate.renderFileTree !== 'function'
     || typeof candidate.renderRowMenu !== 'function') {
     return undefined
   }
-  return candidate as FileTreeUiServiceV1
+  return candidate as FileTreeUiServiceV2
 }
 
 /**
@@ -342,15 +346,16 @@ export interface EnhancedWorkspaceInjected {
     /** True while the enhanced directory-flow hole is occupied by a picker package. */
     directoryFlow: HostObservable<boolean>
     /**
-     * The optional fileTreeUi v1 client service (dsh-file-tree-ui provider).
+     * The optional fileTreeUi v2 client service (dsh-file-tree-ui provider).
      * Snapshot/subscribe pair: each fiber activation re-reads
      * `ctx.get('fileTreeUi')` (no handle is cached across lifecycles), and
-     * provider unload flips the snapshot back to undefined. The browser
-     * renders SessionRow through the service when present and falls back to
-     * its built-in row rendering otherwise (missing / protocol-mismatched /
-     * unloaded — see `resolveFileTreeUiServiceV1`).
+     * provider unload flips the snapshot back to undefined. When present the
+     * browser renders its whole tree through the service's `renderFileTree`
+     * (row models injected per section); when missing / protocol-mismatched /
+     * unloaded it falls back to its built-in row rendering — see
+     * `resolveFileTreeUiServiceV2`.
      */
-    fileTreeUi: HostObservable<FileTreeUiServiceV1 | undefined>
+    fileTreeUi: HostObservable<FileTreeUiServiceV2 | undefined>
   }
   /** Start a New Session in a Workspace (reuse-or-create its blank session and open it). */
   startSession: (workspaceId?: WorkspaceId) => void

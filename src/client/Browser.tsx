@@ -70,11 +70,14 @@ import {
   type EnhancedWorkspaceGlobal,
 } from './contract.ts'
 // Type-only (erased — never reaches the purity gate): the optional
-// fileTreeUi v1 client service provided by dsh-file-tree-ui. The value
-// arrives through the `useFileTreeUi` selector hook (snapshot of the
-// `ctx.get('fileTreeUi')` service); when undefined every session row falls
-// back to this module's built-in rendering.
-import type { FileTreeUiServiceV1 } from 'dsh-file-tree-ui/client-contract'
+// fileTreeUi v2 client service provided by dsh-file-tree-ui (v2 = the
+// provider owns the tree FRAMEWORK — container/subtrees/guides/chevron
+// interaction/fold animations/row chrome; the consumer injects per-row
+// content + expansion state data via FileTreeRowModel). The value arrives
+// through the `useFileTreeUi` selector hook (snapshot of the
+// `ctx.get('fileTreeUi')` service); when undefined every row falls back to
+// this module's built-in rendering.
+import type { FileTreeRowModel, FileTreeNode, FileTreeUiServiceV2 } from 'dsh-file-tree-ui/client-contract'
 import {
   folderDropZone,
   resolveFolderDrop,
@@ -106,6 +109,7 @@ import {
   orderDeltas,
   pendingInteractionOf,
   RECENT_GROUP_KEY_PREFIX,
+  referenceSessionOf,
   sessionPendingInteractionsOf,
   sessionStatusDot,
   treeOrder,
@@ -130,8 +134,16 @@ import {
   type GitRepoGroupDerived,
 } from './git-model.ts'
 import { overlayRemoteMarkers } from './remote-git.ts'
+import {
+  WORKSPACE_REFERENCE_MIME,
+  encodeDragReference,
+  sessionReferencePayload,
+  stashActiveReference,
+  workspaceReferencePayload,
+} from './reference.ts'
 import type { GitProbeResultJSON, GitTreeInfoJSON, RemoteGitMarker } from '../shared/git.ts'
 import { FLAT_SESSION_ORDER_KEY } from './store.ts'
+import type { EnhancedWorkspaceState } from './store.ts'
 import css from './Browser.module.css'
 
 /** Recency-module row budget: only the five most recently queried dirs. */
@@ -391,10 +403,10 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   const pendingInteractions = sessionPendingInteractionsOf(props.useSessionPendingInteraction(identity))
   const state = useStore(identity)
   const [query, setQuery] = useState('')
-  // The optional fileTreeUi v1 service snapshot (undefined = missing /
-  // incompatible / unloaded → every session row renders the built-in
-  // fallback). Subscribed at this top level so provide/unload flips the
-  // whole tree between the two renderings without a remount.
+  // The optional fileTreeUi v2 service snapshot (undefined = missing /
+  // incompatible / unloaded → every row renders the built-in fallback).
+  // Subscribed at this top level so provide/unload flips the whole tree
+  // between the two renderings without a remount.
   const fileTreeUi = useFileTreeUi(identity)
 
   // ── Git probe (derived cache, never persisted) ──────────────────────────
@@ -1332,8 +1344,10 @@ function GroupedView(props: {
    *  markers (mirror rows show their branch in the hover card only — no
    *  row pill). */
   git: { probe: GitProbeResultJSON | null; markers: ReadonlyMap<string, RemoteGitMarker>; onRefresh: () => void }
-  /** The optional fileTreeUi v1 service (undefined → built-in session rows). */
-  fileTreeUi: FileTreeUiServiceV1 | undefined
+  /** The optional fileTreeUi v2 service (undefined → built-in rows). When
+   *  present the WHOLE tree renders through the provider's FileTree
+   *  framework (this module builds the row models per section). */
+  fileTreeUi: FileTreeUiServiceV2 | undefined
 }): ReactNode {
   const { t, actions, startSession } = props.props
   const state = props.props.useStore(identity)
@@ -1516,16 +1530,23 @@ function GroupedView(props: {
   return (
     // The container swallows dragover/drop so a drag released on empty space
     // cancels instead of navigating (dropped text must never leave the region).
+    // `data-dsh-ew-browser` marks the whole tree as plugin-owned for the
+    // window-level chat-drop router (zones inside it are never intercepted).
     <div
       className={css.grouped}
+      data-dsh-ew-browser=""
       onDragOver={event => { if (dragSource !== null) event.preventDefault() }}
       onDrop={event => {
         if (dragSource === null) return
         event.preventDefault()
         setDragSource(null)
         setDropTarget(null)
+        stashActiveReference(null)
       }}
     >
+      {props.fileTreeUi === undefined
+        ? (
+      <>
       {props.recents.length > 0
         ? (
           // Top five most-recently-queried dirs as ordinary workspace rows —
@@ -1565,7 +1586,6 @@ function GroupedView(props: {
                 gitMarkers={props.git.markers}
                 sessionsForGit={sessionCwdsByWorkspace(recent.workspaceId)}
                 expandedKeys={expandedKeys}
-                fileTreeUi={props.fileTreeUi}
               />
             ))}
           </section>
@@ -1618,9 +1638,8 @@ function GroupedView(props: {
                     now={now}
                     sessionsForGit={sessionCwdsByWorkspace}
                     query={props.query}
-                    fileTreeUi={props.fileTreeUi}
                   />
-                  <UnregGroup git={props.git.probe} props={props.props} fileTreeUi={props.fileTreeUi} />
+                  <UnregGroup git={props.git.probe} props={props.props} />
                 </>
               )
               : (
@@ -1642,7 +1661,6 @@ function GroupedView(props: {
                       gitMarkers={props.git.markers}
                       sessionsForGit={sessionCwdsByWorkspace}
                       expandedKeys={expandedKeys}
-                      fileTreeUi={props.fileTreeUi}
                     />
                   ))}
                   <WorkspaceDropRegion
@@ -1666,7 +1684,6 @@ function GroupedView(props: {
                         gitMarkers={props.git.markers}
                         sessionsForGit={sessionCwdsByWorkspace(leaf.workspaceId as WorkspaceId)}
                         expandedKeys={expandedKeys}
-                        fileTreeUi={props.fileTreeUi}
                       />
                     ))}
                   </WorkspaceDropRegion>
@@ -1684,15 +1701,44 @@ function GroupedView(props: {
                       git={null}
                       gitMarkers={props.git.markers}
                       sessionsForGit={[]}
-                      fileTreeUi={props.fileTreeUi}
                     />
                   )}
-                  <UnregGroup git={props.git.probe} props={props.props} fileTreeUi={props.fileTreeUi} />
+                  <UnregGroup git={props.git.probe} props={props.props} />
                 </>
               )}
           </section>
         )
         : null}
+      </>
+        )
+        : (
+          // v2 service path: the provider owns the tree framework — the
+          // guide seat, chevron/fold interactions and the row chrome all live
+          // inside its FileTree; this module only injects the row models
+          // (ServiceGroupedView builds the recents + "all" section forests).
+          <ServiceGroupedView
+            props={props.props}
+            fileTreeUi={props.fileTreeUi}
+            forest={props.forest}
+            topLevel={props.topLevel}
+            recents={props.recents}
+            ungrouped={props.ungrouped}
+            openers={props.openers}
+            sessionsOverflow={props.sessionsOverflow}
+            onToggleOverflow={props.onToggleOverflow}
+            onCollapseRecents={props.onCollapseRecents}
+            onCollapseAll={props.onCollapseAll}
+            state={state}
+            query={props.query}
+            git={props.git}
+            callbacks={callbacks}
+            sessionSeat={sessionSeat}
+            drag={drag}
+            sessionsForGit={sessionCwdsByWorkspace}
+            expandedKeys={expandedKeys}
+            now={now}
+          />
+        )}
     </div>
   )
 }
@@ -1742,8 +1788,6 @@ function FolderRow(props: {
   sessionsForGit?: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
   /** Expanded group keys forwarded to the subtree's workspace rows. */
   expandedKeys?: ReadonlySet<string>
-  /** The optional fileTreeUi v1 service (undefined → built-in session rows). */
-  fileTreeUi: FileTreeUiServiceV1 | undefined
 }): ReactNode {
   const { node, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1810,8 +1854,7 @@ function FolderRow(props: {
       zone: folderDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
     })
   }
-  const folderRow = props.fileTreeUi === undefined
-    ? (
+  const folderRow = (
       <div
         className={`${css.folderRow}${active ? ` ${css.folderRowCurrent}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
         role="treeitem"
@@ -1859,42 +1902,6 @@ function FolderRow(props: {
         </span>
       </div>
     )
-    // P3: the fileTreeUi service path — the folder row skeleton, chevron,
-    // guide bands, drag/drop visuals (dropState) and row menu come from the
-    // provider; the drag/drop BUSINESS stays here.
-    : props.fileTreeUi.renderRow({
-      rowId: node.folderId,
-      label: node.name,
-      leading: node.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />,
-      expanded: node.expanded,
-      active,
-      indentPx: rowIndent(props.ancestors.length),
-      guides: {
-        columns: guideColumns,
-        seat: props.guide,
-        // Junction follows the expand state exactly like the built-in row
-        // (corner + trunk only while the folder is open). 'own' paint: this
-        // row draws its full ancestor stroke set (there is no layer above).
-        junction: node.expanded,
-        paintMode: 'own',
-      },
-      ...(dropZone === undefined ? {} : { dropState: dropZone }),
-      actions: props.fileTreeUi.renderRowMenu({
-        open: menuOpen,
-        onOpenChange: setMenuOpen,
-        items: folderMenuEntries,
-        onSelect: onFolderMenuSelect,
-        label: callbacks.t('rowMenuAria', { name: node.name }),
-      }),
-      role: 'treeitem',
-      draggable: true,
-      onDragStart: folderDragStart,
-      onDragOver: folderDragOver,
-      onDragLeave: folderDragLeave,
-      onDrop: folderDrop,
-      onDragEnd: () => props.drag.onDragEnd(),
-      onClick: () => callbacks.onToggleFolder(node.folderId),
-    })
   return (
     <div className={css.folderBranch}>
       {folderRow}
@@ -1914,7 +1921,6 @@ function FolderRow(props: {
                 ancestors={[...props.ancestors, node.folderId]}
                 guide={props.guide}
                 now={props.now}
-                fileTreeUi={props.fileTreeUi}
               />
             ))}
             <WorkspaceDropRegion
@@ -1938,7 +1944,6 @@ function FolderRow(props: {
                   {...(props.gitMarkers === undefined ? {} : { gitMarkers: props.gitMarkers })}
                   sessionsForGit={props.sessionsForGit?.(leaf.workspaceId as WorkspaceId) ?? []}
                   {...(props.expandedKeys === undefined ? {} : { expandedKeys: props.expandedKeys })}
-                  fileTreeUi={props.fileTreeUi}
                 />
               ))}
             </WorkspaceDropRegion>
@@ -1975,10 +1980,6 @@ function LeafRow(props: {
   sessionsForGit?: readonly { id: SessionId; cwd?: string }[]
   /** Expanded group keys (subworkspace headers toggle through these). */
   expandedKeys?: ReadonlySet<string>
-  /** The optional fileTreeUi v1 service: its TreeGuideLayer replaces this
-   *  leaf's sessionList container and its TreeRow renders the session rows
-   *  (undefined → built-in rendering). */
-  fileTreeUi: FileTreeUiServiceV1 | undefined
 }): ReactNode {
   const { leaf, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
@@ -2057,14 +2058,8 @@ function LeafRow(props: {
         : undefined
   // The built-in path keeps the JS hover mutual exclusion (its stylesheet has
   // no resting-indicator rule — the existing rowBusy spec asserts the element
-  // unmounts on hover); the service path hands the marker to the provider's
-  // restingIndicator slot, whose `.row:hover > .restingIndicator` rule hides
-  // it while the actions reveal — same either/or, CSS-owned. rowHovered
-  // therefore stays, serving the built-in path only.
+  // unmounts on hover).
   const busyLabelBuiltin = hasAccount && !leaf.expanded && busyState !== undefined && !rowHovered
-    ? workspaceStatusLabel(busyState, leaf.status[busyState] ?? 1, callbacks.t)
-    : undefined
-  const busyLabel = hasAccount && !leaf.expanded && busyState !== undefined
     ? workspaceStatusLabel(busyState, leaf.status[busyState] ?? 1, callbacks.t)
     : undefined
   // Session rows hang one level deeper: besides the folder columns they
@@ -2076,61 +2071,31 @@ function LeafRow(props: {
     ...folderColumns,
     { id: leaf.key, onToggle: () => callbacks.onWorkspaceClick(leaf.key) },
   ]
-  /** The session list container: with the fileTreeUi service its continuous
-   *  guide layer (TreeGuideLayer) paints the full stroke set and the rows
-   *  inside render `paintMode: 'layer'` (hover highlight only — no double
-   *  strokes); without it the built-in sessionList div carries the same
-   *  background layer inline. */
-  const sessionListLayer = (children: ReactNode): ReactNode =>
-    props.fileTreeUi === undefined
-      ? (
-        <div className={css.sessionList} style={{ ...guideBackground(sessionColumns.length, false) }}>
-          {children}
-        </div>
-      )
-      : props.fileTreeUi.renderGuideLayer({
-        columnCount: sessionColumns.length,
-        className: css.sessionList,
-        children,
-      })
-  // The workspace row menu (rename / move / continue-in-tree(s) / delete) —
-  // one shared business list + dispatch for both rendering paths.
-  const workspaceMenuEntries: readonly MenuEntry[] = [
-    { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
-    { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
-    ...(continueTrees.length > 0
-      ? [
-        { type: 'label' as const, id: 'continue-label', text: callbacks.t('continueInTree') },
-        ...continueTrees.map(tree => ({
-          id: `tree:${tree.root}`,
-          label: tree.branch ?? tree.detached ?? basename(tree.root),
-          icon: <IconBranchOutline16 />,
-        })),
-      ]
-      : []),
-    { type: 'separator' as const, id: 'workspace-actions-separator' },
-    { id: 'delete', label: callbacks.t('deleteWorkspaceTitle'), icon: <IconTrashOutline16 />, danger: true },
-  ]
-  const onWorkspaceMenuSelect = (id: string): void => {
-    setMenuOpen(false)
-    if (id === 'rename') callbacks.openers.onRenameWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
-    else if (id === 'move') callbacks.openers.onMoveWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
-    else if (id === 'delete') callbacks.openers.onDeleteWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
-    else if (id.startsWith('tree:')) {
-      const root = id.slice('tree:'.length)
-      const tree = continueTrees.find(candidate => candidate.root === root)
-      if (tree !== undefined) callbacks.onContinueInTree?.(tree, leaf.workspaceId)
-    }
-  }
-  // Workspace drags copyMove an `application/x-dsh-reference+json` reference;
-  // the drop-zone judgement (rowDropZone) stays in the consumer — only the
+  /** The session list container: the built-in path's continuous guide layer
+   *  (paints the full stroke set inline; the service path hands the same
+   *  role to the framework's `childrenList: 'layer'`). */
+  const sessionListLayer = (children: ReactNode): ReactNode => (
+    <div className={css.sessionList} style={{ ...guideBackground(sessionColumns.length, false) }}>
+      {children}
+    </div>
+  )
+  // Workspace drags copyMove an `application/x-dsh-reference+json` reference
+  // plus the canonical session-reference mention as `text/plain` (what any
+  // text surface — the conversation composer first of all — inserts; the
+  // drop-zone judgement (rowDropZone) stays in the consumer — only the
   // visual three-state goes to the service row.
   const workspaceDragStart = (event: DragEvent<HTMLDivElement>): void => {
     const transfer = event.dataTransfer
-    if (transfer !== null) {
+    if (transfer !== null && leaf.workspaceId !== undefined) {
       transfer.effectAllowed = 'copyMove'
-      transfer.setData('application/x-dsh-reference+json', JSON.stringify({ version: 1, kind: 'workspace', id: leaf.workspaceId }))
-      transfer.setData('text/plain', leaf.workspaceId as string)
+      const payload = workspaceReferencePayload({
+        id: leaf.workspaceId as string,
+        label: leaf.label,
+        primarySession: leaf.primarySession,
+      })
+      transfer.setData(WORKSPACE_REFERENCE_MIME, encodeDragReference(payload))
+      transfer.setData('text/plain', payload.mention)
+      stashActiveReference(payload)
     }
     props.drag.onDragStart({ kind: 'workspace', id: leaf.workspaceId as string })
   }
@@ -2161,15 +2126,7 @@ function LeafRow(props: {
     if (hasAccount) callbacks.onWorkspaceClick(leaf.key)
     else callbacks.onToggleGroup(leaf.key)
   }
-  const gitPillMulti = gitAggregate.kind === 'multi'
-    ? (
-      <span className={css.gitPillMulti} title={`${gitAggregate.trees.length} 棵树的会话`}>
-        {gitAggregate.trees.length} 棵
-      </span>
-    )
-    : undefined
-  const ownRow = props.fileTreeUi === undefined
-    ? (
+  const ownRow = (
     <div
       className={`${css.workspaceRow}${active ? ` ${css.workspaceRowCurrent}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
       role="treeitem"
@@ -2274,80 +2231,7 @@ function LeafRow(props: {
         </span>
       )}
     </div>
-    )
-    // P3: the fileTreeUi service path — the workspace row skeleton, chevron,
-    // guide bands, drag/drop visuals (dropState), the row menu + the plus
-    // button (consumer-owned action) and the collapsed busy marker
-    // (restingIndicator slot, CSS mutual-excluded with the actions on hover)
-    // come from the provider; drag/drop BUSINESS stays here and the whole
-    // element still rides under the HoverCard anchor below.
-    : props.fileTreeUi.renderRow({
-      rowId: leaf.key,
-      label: leaf.label,
-      leading: leaf.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />,
-      expanded: leaf.expanded,
-      active,
-      indentPx,
-      guides: {
-        columns: folderColumns,
-        seat: props.guide,
-        // Junction follows the expand state exactly like the built-in row.
-        // 'own' paint: this row draws its full ancestor stroke set (there is
-        // no layer above it).
-        junction: leaf.expanded,
-        paintMode: 'own',
-      },
-      ...(gitPillMulti === undefined ? {} : { trailing: gitPillMulti }),
-      ...(dropZone === undefined ? {} : { dropState: dropZone }),
-      ...(!hasAccount
-        ? {}
-        : {
-          actions: (
-            <>
-              {props.fileTreeUi.renderRowMenu({
-                open: menuOpen,
-                onOpenChange: setMenuOpen,
-                items: workspaceMenuEntries,
-                onSelect: onWorkspaceMenuSelect,
-                label: callbacks.t('rowMenuAria', { name: leaf.label }),
-              })}
-              <button
-                type="button"
-                className={css.iconButton}
-                aria-label={callbacks.t('newSessionAria', { name: leaf.label })}
-                onClick={event => {
-                  event.stopPropagation()
-                  callbacks.onStartSession(leaf.workspaceId as WorkspaceId, leaf.key)
-                }}
-              >
-                <IconPlusOutline16 />
-              </button>
-            </>
-          ),
-        }),
-      ...(busyLabel === undefined || busyState === undefined
-        ? {}
-        : {
-          restingIndicator: (
-            <span className={css.rowBusy} title={busyLabel}>
-              <StateDot state={busyState} />
-              <span className={css.visuallyHidden}>{busyLabel}</span>
-            </span>
-          ),
-        }),
-      role: 'treeitem',
-      draggable: hasAccount,
-      ...(hasAccount
-        ? {
-          onDragStart: workspaceDragStart,
-          onDragOver: workspaceDragOver,
-          onDragLeave: workspaceDragLeave,
-          onDrop: workspaceDrop,
-          onDragEnd: () => props.drag.onDragEnd(),
-        }
-        : {}),
-      onClick: workspaceRowClick,
-    })
+  )
   // The workspace hover card (built-in parity): real Workspace rows show
   // their directory and creation time on dwelling, and the whole card is a
   // copy target for the full path. The ungrouped bucket has no backing
@@ -2403,85 +2287,38 @@ function LeafRow(props: {
                   : (group.tree?.branch ?? group.tree?.detached ?? callbacks.t('subwsNogit'))
                 return (
                   <div key={subKey}>
-                    {props.fileTreeUi === undefined
-                      ? (
-                        <div
-                          className={css.subwsRow}
-                          role="treeitem"
-                          aria-expanded={groupOpen}
-                          style={{
-                            paddingLeft: `${indentPx + SESSION_INDENT_OFFSET_PX}px`,
-                            // The header hangs off the workspace like a folder of
-                            // its group's sessions: same ancestor strokes (the
-                            // container's layer carries them through the row —
-                            // this row's layer only lights the hovered one).
-                            ...guideBackground(sessionColumns.length, false, guideHighlightColumn(props.guide.hover, sessionColumns)),
-                          }}
-                          onClick={() => { callbacks.onToggleGroup(subKey) }}
+                    <div
+                      className={css.subwsRow}
+                      role="treeitem"
+                      aria-expanded={groupOpen}
+                      style={{
+                        paddingLeft: `${indentPx + SESSION_INDENT_OFFSET_PX}px`,
+                        // The header hangs off the workspace like a folder of
+                        // its group's sessions: same ancestor strokes (the
+                        // container's layer carries them through the row —
+                        // this row's layer only lights the hovered one).
+                        ...guideBackground(sessionColumns.length, false, guideHighlightColumn(props.guide.hover, sessionColumns)),
+                      }}
+                      onClick={() => { callbacks.onToggleGroup(subKey) }}
+                    >
+                      {guideHitBands(subKey, sessionColumns, props.guide.onHover)}
+                      <span className={css.chevron}>
+                        <IconTriangleRightFill14 className={groupOpen ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+                      </span>
+                      <span className={css.rowLabel}>{label}</span>
+                      {group.tree !== undefined && (
+                        <span
+                          className={`${css.gitPill}${group.tree.role === 'main' ? ` ${css.gitPillMain}` : ''}`}
                         >
-                          {guideHitBands(subKey, sessionColumns, props.guide.onHover)}
-                          <span className={css.chevron}>
-                            <IconTriangleRightFill14 className={groupOpen ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
-                          </span>
-                          <span className={css.rowLabel}>{label}</span>
-                          {group.tree !== undefined && (
-                            <span
-                              className={`${css.gitPill}${group.tree.role === 'main' ? ` ${css.gitPillMain}` : ''}`}
-                            >
-                              {group.tree.branch ?? group.tree.detached}
-                            </span>
-                          )}
-                          <span className={css.sessionCount}>{group.sessionIds.length}</span>
-                        </div>
-                      )
-                      // P3: service path — the group header rides TreeRow's
-                      // compact variant with the subwsRow class overriding the
-                      // 26px / 6px radius / typography, and `paintMode:
-                      // 'layer'`: the TreeGuideLayer container already paints
-                      // the full stroke set, so this header draws ONLY the
-                      // hovered column's highlight — the pre-P3 double-draw
-                      // (row painting the whole set over the container's
-                      // strokes) is gone.
-                      : props.fileTreeUi.renderRow({
-                        rowId: subKey,
-                        label,
-                        expanded: groupOpen,
-                        compact: true,
-                        className: css.subwsRow,
-                        indentPx: indentPx + SESSION_INDENT_OFFSET_PX,
-                        // Deterministic geometry override (inline, beats both
-                        // stylesheets regardless of load order): the row's
-                        // 26px min-height and 6px radius ride the provider's
-                        // own metric variables.
-                        style: {
-                          '--dsh-ftr-row-min-height': '26px',
-                          '--dsh-ftr-row-radius': '6px',
-                        } as CSSProperties,
-                        guides: {
-                          columns: sessionColumns,
-                          seat: props.guide,
-                          junction: false,
-                          paintMode: 'layer',
-                        },
-                        trailing: (
-                          <>
-                            {group.tree !== undefined && (
-                              <span
-                                className={`${css.gitPill}${group.tree.role === 'main' ? ` ${css.gitPillMain}` : ''}`}
-                              >
-                                {group.tree.branch ?? group.tree.detached}
-                              </span>
-                            )}
-                            <span className={css.sessionCount}>{group.sessionIds.length}</span>
-                          </>
-                        ),
-                        role: 'treeitem',
-                        onClick: () => { callbacks.onToggleGroup(subKey) },
-                      })}
+                          {group.tree.branch ?? group.tree.detached}
+                        </span>
+                      )}
+                      <span className={css.sessionCount}>{group.sessionIds.length}</span>
+                    </div>
                     {groupOpen && (
                       <>
                         {shown.map(session => (
-                          <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx + 16} columns={sessionColumns} guide={props.guide} now={props.now} fileTreeUi={props.fileTreeUi} />
+                          <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx + 16} columns={sessionColumns} guide={props.guide} now={props.now} />
                         ))}
                         {groupSessions.length > COLLAPSED_SESSION_LIMIT && (
                           <button
@@ -2508,7 +2345,7 @@ function LeafRow(props: {
           : sessionListLayer(
             <>
               {shownSessions.map(session => (
-                <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx} columns={sessionColumns} guide={props.guide} now={props.now} fileTreeUi={props.fileTreeUi} />
+                <SessionRow key={session.id} session={session} seat={props.sessionSeat} onOpen={props.sessionSeat.onOpen} indent={indentPx} columns={sessionColumns} guide={props.guide} now={props.now} />
               ))}
               {leaf.sessions.length > COLLAPSED_SESSION_LIMIT && (
                 <button
@@ -2570,15 +2407,8 @@ function SessionRow(props: {
   guide?: GuideSeat
   /** Current epoch ms for the hover card's relative-time stamp. */
   now: number
-  /** The optional fileTreeUi v1 service: when present the row skeleton
-   *  (TreeRow), the guide bands and the row menu (RowMenu) come from the
-   *  service — `paintMode: 'layer'` so the container's TreeGuideLayer owns
-   *  the continuous strokes and the row only lights the hovered column.
-   *  Undefined (missing / protocol-mismatched / unloaded) → the built-in
-   *  row rendering below, byte-for-byte the pre-P2 shape. */
-  fileTreeUi: FileTreeUiServiceV1 | undefined
 }): ReactNode {
-  const { session, seat, fileTreeUi } = props
+  const { session, seat } = props
   const [menuOpen, setMenuOpen] = useState(false)
   // Explicit field spread: exactOptionalPropertyTypes forbids passing the
   // optional-typed SessionNode straight into the required `| undefined` seats.
@@ -2617,12 +2447,19 @@ function SessionRow(props: {
     else if (id === 'archive') seat.onArchive(session.id)
   }
   // Session drags copy a reference (`application/x-dsh-reference+json`)
-  // and do not enter the tree's move state — identical for both paths.
+  // plus the canonical session-reference mention as `text/plain` and do not
+  // enter the tree's move state — identical for both paths.
   const sessionDragStart = (event: DragEvent<HTMLDivElement>): void => {
     event.stopPropagation()
     if (event.dataTransfer === null) return
     event.dataTransfer.effectAllowed = 'copy'
-    event.dataTransfer.setData('application/x-dsh-reference+json', JSON.stringify({ version: 1, kind: 'session', id: session.id }))
+    const payload = sessionReferencePayload({
+      id: session.id as string,
+      label: session.title === '' ? undefined : session.title,
+    })
+    event.dataTransfer.setData(WORKSPACE_REFERENCE_MIME, encodeDragReference(payload))
+    event.dataTransfer.setData('text/plain', payload.mention)
+    stashActiveReference(payload)
   }
   // The status-dot leading slot (16px fixed, with a visually hidden label).
   const statusSlot = (
@@ -2635,8 +2472,7 @@ function SessionRow(props: {
       )}
     </span>
   )
-  const ownRow = fileTreeUi === undefined
-    ? (
+  const ownRow = (
       <div
         className={`${css.sessionRow}${session.current ? ` ${css.sessionRowCurrent}` : ''}`}
         role="treeitem"
@@ -2681,52 +2517,6 @@ function SessionRow(props: {
         )}
       </div>
     )
-    // P2: the fileTreeUi v1 service path — the row skeleton, guide bands,
-    // and row menu come from the provider (child order: guide bands →
-    // leading status slot → label → actions, with the hover elevation mark
-    // in the trailing seat).
-    : fileTreeUi.renderRow({
-      rowId: session.id,
-      label: session.blank ? seat.t('newSession') : session.title,
-      leading: statusSlot,
-      leadingSlotWidth: 16,
-      ...(session.pendingInteraction === 'escalation'
-        ? { trailing: <EscalationMark label={seat.t('sessionStatusEscalation')} /> }
-        : {}),
-      compact: true,
-      active: session.current,
-      // Flat-list rows (no indent) omit the indent and guides → the compact
-      // CSS fallback padding (32px) seats the row under the guide columns.
-      ...(props.indent === undefined ? {} : { indentPx: props.indent + SESSION_INDENT_OFFSET_PX }),
-      ...(props.columns !== undefined && props.guide !== undefined && props.columns.length > 0
-        ? {
-          guides: {
-            columns: props.columns,
-            seat: props.guide,
-            junction: false,
-            // 'layer': the TreeGuideLayer container paints the continuous
-            // strokes; this row only lights the hovered column (no double
-            // strokes).
-            paintMode: 'layer' as const,
-          },
-        }
-        : {}),
-      ...(!session.blank
-        ? {
-          actions: fileTreeUi.renderRowMenu({
-            open: menuOpen,
-            onOpenChange: setMenuOpen,
-            items: menuEntries,
-            onSelect: onMenuSelect,
-            label: seat.t('rowMenuAria', { name: session.title }),
-          }),
-        }
-        : {}),
-      role: 'treeitem',
-      draggable: !session.blank,
-      onClick: () => props.onOpen(session.id),
-      onDragStart: sessionDragStart,
-    })
   // The session hover card (built-in parity): title, relative time, every
   // live status, and the file domain. An open row menu suppresses it for
   // the same hover.
@@ -2746,8 +2536,10 @@ function FlatList(props: {
   props: EnhancedWorkspaceBrowserProps
   rows: readonly SessionNode[]
   onRename: (sessionId: SessionId, title: string) => void
-  /** The optional fileTreeUi v1 service (undefined → built-in session rows). */
-  fileTreeUi: FileTreeUiServiceV1 | undefined
+  /** The optional fileTreeUi v2 service: when present the whole flat list
+   *  renders through one `renderFileTree` (row models; undefined → the
+   *  built-in list below). */
+  fileTreeUi: FileTreeUiServiceV2 | undefined
 }): ReactNode {
   const seat: SessionRowSeat = {
     onOpen: sessionId => props.props.open(sessionId),
@@ -2763,10 +2555,32 @@ function FlatList(props: {
   // One relative-time stamp per render pass, shared by every session row's
   // hover card (the same posture as the built-in tree).
   const now = Date.now()
+  // The v2 service path owns the per-row menu state (the row components are
+  // not mounted — the models' actions read/write this seat).
+  const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({})
+  const menu: MenuSeat = {
+    open: key => openMenus[key] === true,
+    onOpenChange: (key, open) => setOpenMenus(prev => prev[key] === open ? prev : { ...prev, [key]: open }),
+  }
+  const fileTreeUi = props.fileTreeUi
+  if (fileTreeUi !== undefined) {
+    return fileTreeUi.renderFileTree({
+      treeKey: 'flat',
+      rows: props.rows.map(session => sessionRowModel({
+        session,
+        seat,
+        onOpen: seat.onOpen,
+        now,
+        menu,
+        fileTreeUi,
+      })),
+      className: css.flatList,
+    })
+  }
   return (
     <div className={css.flatList}>
       {props.rows.map(session => (
-        <SessionRow key={session.id} session={session} seat={seat} onOpen={seat.onOpen} now={now} fileTreeUi={props.fileTreeUi} />
+        <SessionRow key={session.id} session={session} seat={seat} onOpen={seat.onOpen} now={now} />
       ))}
     </div>
   )
@@ -2810,8 +2624,6 @@ function RepoForestView(props: {
   now: number
   query: string
   sessionsForGit: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
-  /** The optional fileTreeUi v1 service (undefined → built-in session rows). */
-  fileTreeUi: FileTreeUiServiceV1 | undefined
 }): ReactNode {
   const { t, actions } = props.props
   const state = props.props.useStore(identity)
@@ -2872,7 +2684,6 @@ function RepoForestView(props: {
           actions={actions}
           onRefresh={props.git.onRefresh}
           t={t}
-          fileTreeUi={props.fileTreeUi}
         />
       ))}
       {nogit.length > 0 && (
@@ -2897,7 +2708,6 @@ function RepoForestView(props: {
                 gitMarkers={props.git.markers}
                 sessionsForGit={[]}
                 expandedKeys={expandedKeys}
-                fileTreeUi={props.fileTreeUi}
               />
             )
           })}
@@ -2928,23 +2738,11 @@ function RepoGroupRow(props: {
   actions: EnhancedWorkspaceBrowserProps['actions']
   onRefresh: () => void
   t: EnhancedWorkspaceBrowserProps['t']
-  /** The optional fileTreeUi v1 service (undefined → built-in session rows). */
-  fileTreeUi: FileTreeUiServiceV1 | undefined
 }): ReactNode {
   const [menuOpen, setMenuOpen] = useState(false)
   const repoKey = `${REPO_GROUP_KEY_PREFIX}${props.repo.repoKey}`
   const open = props.state.groupExpansion[repoKey] === true
-  // The repo group header has NO current wash in the built-in shape — only
-  // its glyph lights up while open — so the service path colors the leading
-  // icon itself instead of using TreeRow's `active` (which would add the
-  // rowCurrent wash).
-  const repoGlyph = (
-    <span className={open ? css.folderActive : undefined}>
-      {open ? <IconFolderOpen16 /> : <IconFolderClose16 />}
-    </span>
-  )
-  const repoGroupRow = props.fileTreeUi === undefined
-    ? (
+  const repoGroupRow = (
       <div
         className={css.repoRow}
         role="treeitem"
@@ -2989,43 +2787,6 @@ function RepoGroupRow(props: {
         </span>
       </div>
     )
-    // P3: service path — the repo group header rides TreeRow (30px default
-    // row, no guides/indent: top-level rows own no ancestor strokes; the
-    // 7px radius and `padding: 0 6px` are overridden inline so the
-    // geometry is deterministic regardless of stylesheet order).
-    : props.fileTreeUi.renderRow({
-      rowId: repoKey,
-      label: props.repo.name,
-      leading: repoGlyph,
-      expanded: open,
-      trailing: (
-        <>
-          <span className={css.gitPillMain}>{props.t('groupByRepo')}</span>
-          <span className={css.sessionCount}>{props.repo.workspaceIds.length}</span>
-        </>
-      ),
-      actions: props.fileTreeUi.renderRowMenu({
-        open: menuOpen,
-        onOpenChange: setMenuOpen,
-        items: [
-          { id: 'refresh', label: props.t('refreshGitProbe'), icon: <IconBranchOutline16 /> },
-          { id: 'organize', label: props.t('organizeIntoFolder'), icon: <IconFolderOpenOutline16 /> },
-        ],
-        onSelect: (id) => {
-          // RowMenu closes before the callback; 'organize' is declared but
-          // has no action in the built-in shape either — preserved as-is.
-          if (id === 'refresh') props.onRefresh()
-        },
-        label: props.t('refreshGitProbe'),
-      }),
-      className: css.repoRow,
-      style: {
-        padding: '0 6px',
-        '--dsh-ftr-row-radius': '7px',
-      } as CSSProperties,
-      role: 'treeitem',
-      onClick: () => { props.actions.setGroupExpanded(repoKey, !open) },
-    })
   return (
     <div>
       {repoGroupRow}
@@ -3050,7 +2811,6 @@ function RepoGroupRow(props: {
                 gitMarkers={props.gitMarkers}
                 sessionsForGit={props.sessionsForGit(workspaceId)}
                 expandedKeys={props.expandedKeys}
-                fileTreeUi={props.fileTreeUi}
               />
             )
           })}
@@ -3075,6 +2835,7 @@ function sessionLeafOf(
     .map(id => sessions.byId[id as SessionId])
     .filter((summary): summary is SessionSummary => summary !== undefined)
     .filter(summary => !summary.blank && summary.origin !== 'subagent')
+  const primarySession = referenceSessionOf(members, sessions.current)
   return {
     key: workspace.workspaceId,
     workspaceId: workspace.workspaceId,
@@ -3084,6 +2845,7 @@ function sessionLeafOf(
     sessionCount: workspace.sessionIds.length,
     expanded,
     containsCurrent: sessions.current !== undefined && workspace.sessionIds.includes(sessions.current as SessionId),
+    ...(primarySession === undefined ? {} : { primarySession }),
     // Repo-group leaves carry no subagent descendant index (their session
     // rows render runningSubagentCount: 0 too) — own activity only.
     status: workspaceSessionStatus(members, undefined, pending),
@@ -3114,8 +2876,6 @@ function sessionLeafOf(
 function UnregGroup(props: {
   git: GitProbeResultJSON | null
   props: EnhancedWorkspaceBrowserProps
-  /** The optional fileTreeUi v1 service (undefined → built-in rows). */
-  fileTreeUi: FileTreeUiServiceV1 | undefined
 }): ReactNode {
   const { t, actions } = props.props
   // EVERY hook runs before the probe-availability early return: a hook after
@@ -3143,12 +2903,7 @@ function UnregGroup(props: {
   // The unregistered-tree group header shares the repo-row look (30px /
   // 7px / `padding: 0 6px` — overridden inline so the geometry is
   // deterministic regardless of stylesheet order).
-  const repoRowStyle = {
-    padding: '0 6px',
-    '--dsh-ftr-row-radius': '7px',
-  } as CSSProperties
-  const unregHeader = props.fileTreeUi === undefined
-    ? (
+  const unregHeader = (
       <div
         className={css.repoRow}
         role="treeitem"
@@ -3165,19 +2920,6 @@ function UnregGroup(props: {
         <span className={css.sessionCount}>{unreg.length}</span>
       </div>
     )
-    // P3: service path — the group header rides TreeRow (top-level row: no
-    // guides, no indent; chevron + glyph + trailing count).
-    : props.fileTreeUi.renderRow({
-      rowId: key,
-      label: t('unregTreeGroup'),
-      leading: <IconFolderClose16 />,
-      expanded: open,
-      trailing: <span className={css.sessionCount}>{unreg.length}</span>,
-      className: css.repoRow,
-      style: repoRowStyle,
-      role: 'treeitem',
-      onClick: () => { actions.setGroupExpanded(key, !open) },
-    })
   return (
     <div>
       {unregHeader}
@@ -3185,43 +2927,1147 @@ function UnregGroup(props: {
         <div className={css.repoChildren}>
           {unreg.map(tree => (
             <div key={tree.root}>
-              {props.fileTreeUi === undefined
-                ? (
-                  <div className={css.unregRow} onClick={() => { register(tree.root) }}>
-                    <span className={css.rowGlyph}>
-                      <IconFolderClose16 />
-                    </span>
-                    <span className={css.rowLabel}>{basename(tree.root)}</span>
-                    <span className={css.gitPill}>{tree.detached ?? tree.branch}</span>
-                    <span className={css.registerButton}>{t('registerTree')}</span>
-                  </div>
-                )
-                // P3: service path — the register row rides TreeRow's compact
-                // variant with the unregRow look (dashed border, 26px / 6px
-                // radius) overridden inline, and the always-visible register
-                // pill in the actions slot (actionsVisible — this is not a
-                // hover-revealed action).
-                : props.fileTreeUi.renderRow({
-                  rowId: tree.root,
-                  label: basename(tree.root),
-                  leading: <IconFolderClose16 />,
-                  trailing: <span className={css.gitPill}>{tree.detached ?? tree.branch}</span>,
-                  actions: <span className={css.registerButton}>{t('registerTree')}</span>,
-                  actionsVisible: true,
-                  compact: true,
-                  className: css.unregRow,
-                  style: {
-                    padding: '0 6px',
-                    border: '1px dashed var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.35))',
-                    '--dsh-ftr-row-min-height': '26px',
-                    '--dsh-ftr-row-radius': '6px',
-                  } as CSSProperties,
-                  onClick: () => { register(tree.root) },
-                })}
+              <div className={css.unregRow} onClick={() => { register(tree.root) }}>
+                <span className={css.rowGlyph}>
+                  <IconFolderClose16 />
+                </span>
+                <span className={css.rowLabel}>{basename(tree.root)}</span>
+                <span className={css.gitPill}>{tree.detached ?? tree.branch}</span>
+                <span className={css.registerButton}>{t('registerTree')}</span>
+              </div>
             </div>
           ))}
         </div>
       )}
     </div>
+  )
+}
+
+/* =====================================================================
+ * fileTreeUi v2 service path: whole-tree MODEL building. When the provider
+ * service is present the tree chrome (container/subtrees, indent guides,
+ * hover seat, chevron + fold interaction, fold animations, row chrome) is
+ * the provider's FileTree framework; this module only builds the
+ * FileTreeRowModel forests per section (the recency module and the "all"
+ * section — one renderFileTree call each) and injects the per-row content,
+ * expansion state data (expanded + onToggle) and DOM semantics. The
+ * built-in fallback path above stays byte-for-byte the pre-v2 shape.
+ * ===================================================================== */
+
+/** v2 service path: per-row menu open state, hoisted to the section level
+ *  (the row components are not mounted when the framework renders the tree)
+ *  and keyed by the row's model key. */
+interface MenuSeat {
+  open: (key: string) => boolean
+  onOpenChange: (key: string, open: boolean) => void
+}
+
+/** The workspace-append drop preview: an injected non-row FileTreeNode that
+ *  appears at the folder's (or the top level's) workspace-group end while an
+ *  append is armed — the built-in WorkspaceDropRegion marker, standalone. */
+function workspaceAppendHintNode(props: {
+  key: string
+  active: boolean
+  label: string
+  depth: number
+}): FileTreeNode {
+  if (!props.active) return null
+  return (
+    <div
+      key={props.key}
+      className={`${css.dropRegion} ${css.workspaceDropRegion}`}
+      style={{ backgroundPositionX: `${rowIndent(props.depth)}px` }}
+    >
+      <div role="status" className={css.workspaceAppendHint} style={{ marginLeft: `${rowIndent(props.depth)}px` }}>
+        <span className={css.workspaceAppendLabel}>{props.label}</span>
+      </div>
+    </div>
+  )
+}
+
+/** The session-list overflow control: an injected non-row FileTreeNode at
+ *  the end of the session list (inside the framework's layer container —
+ *  the container's strokes run through it like the built-in path). */
+function overflowButtonNode(props: {
+  key: string
+  total: number
+  expanded: boolean
+  marginLeft: number
+  t: EnhancedWorkspaceBrowserProps['t']
+  onToggle: () => void
+}): FileTreeNode {
+  if (props.total <= COLLAPSED_SESSION_LIMIT) return null
+  return (
+    <button
+      key={props.key}
+      type="button"
+      className={css.overflowButton}
+      style={{ marginLeft: `${props.marginLeft}px` }}
+      aria-expanded={props.expanded}
+      onClick={props.onToggle}
+    >
+      {props.expanded
+        ? props.t('sessionsCollapse')
+        : props.t('sessionsExpand', { n: props.total - COLLAPSED_SESSION_LIMIT })}
+    </button>
+  )
+}
+
+/** One session row model (status dot + title + row menu + hover card).
+ *  Flat-list rows (no indent/columns) render without guides — the compact
+ *  CSS fallback padding seats them under the guide columns. */
+function sessionRowModel(props: {
+  session: SessionNode
+  seat: SessionRowSeat
+  onOpen: (sessionId: SessionId) => void
+  /** Workspace-row left inset; absent keeps the flat-list CSS inset. */
+  indent?: number
+  /** The row's guide columns (folders + the workspace's own column). */
+  columns?: readonly GuideColumn[]
+  now: number
+  menu: MenuSeat
+  fileTreeUi: FileTreeUiServiceV2
+}): FileTreeRowModel {
+  const { session, seat } = props
+  const menuKey = session.id
+  // Explicit field spread: exactOptionalPropertyTypes forbids passing the
+  // optional-typed SessionNode straight into the required `| undefined` seats.
+  const dot = sessionStatusDot({
+    pendingInteraction: session.pendingInteraction,
+    running: session.running,
+    runningSubagentCount: session.runningSubagentCount,
+    completed: session.completed,
+    blank: session.blank,
+  })
+  const dotLabel = dot === 'warning'
+    ? session.pendingInteraction === 'escalation' ? seat.t('sessionStatusEscalation') : seat.t('sessionStatusWarning')
+    : dot === 'ongoing' ? seat.t('sessionStatusOngoing')
+      : dot === 'done' ? seat.t('sessionStatusDone') : undefined
+  // The row menu entries (rename / fork / archive) — the same business list
+  // the built-in path renders through its own Menu.
+  const menuEntries = [
+    { id: 'rename', label: seat.t('rename'), icon: <IconEditOutline16 /> },
+    { id: 'fork', label: seat.t('sessionFork'), icon: <IconBranchOutline16 /> },
+    { id: 'archive', label: seat.t('sessionArchive'), icon: <IconArchiveOutline20 size={16} /> },
+  ] satisfies readonly MenuEntry[]
+  const onMenuSelect = (id: string): void => {
+    props.menu.onOpenChange(menuKey, false)
+    if (id === 'rename') seat.onRename(session.id, session.title)
+    else if (id === 'fork') seat.onFork(session.id)
+    else if (id === 'archive') seat.onArchive(session.id)
+  }
+  // Session drags copy a reference (`application/x-dsh-reference+json`)
+  // plus the canonical session-reference mention as `text/plain` and do not
+  // enter the tree's move state.
+  const sessionDragStart = (event: DragEvent<HTMLDivElement>): void => {
+    event.stopPropagation()
+    if (event.dataTransfer === null) return
+    event.dataTransfer.effectAllowed = 'copy'
+    const payload = sessionReferencePayload({
+      id: session.id as string,
+      label: session.title === '' ? undefined : session.title,
+    })
+    event.dataTransfer.setData(WORKSPACE_REFERENCE_MIME, encodeDragReference(payload))
+    event.dataTransfer.setData('text/plain', payload.mention)
+    stashActiveReference(payload)
+  }
+  // The status-dot leading slot (16px fixed, with a visually hidden label).
+  const statusSlot = (
+    <span className={css.sessionStatusSlot}>
+      {dot !== undefined && (
+        <>
+          <StateDot state={dot} />
+          <span className={css.visuallyHidden}>{dotLabel}</span>
+        </>
+      )}
+    </span>
+  )
+  const menuOpen = props.menu.open(menuKey)
+  return {
+    key: session.id,
+    // The hover card rides the label slot (the framework owns the row
+    // chrome; the label is the row's only consumer-rendered surface).
+    label: (
+      <HoverCard
+        anchor={session.blank ? seat.t('newSession') : session.title}
+        content={<SessionHoverContent node={session} now={props.now} t={seat.t} />}
+        disabled={menuOpen}
+        copyLabel={seat.t('copy')}
+        copiedLabel={seat.t('copied')}
+      />
+    ),
+    leading: statusSlot,
+    leadingSlotWidth: 16,
+    ...(session.pendingInteraction === 'escalation'
+      ? { trailing: <EscalationMark label={seat.t('sessionStatusEscalation')} /> }
+      : {}),
+    compact: true,
+    active: session.current,
+    ...(props.indent === undefined ? {} : { indentPx: props.indent + SESSION_INDENT_OFFSET_PX }),
+    ...(props.columns !== undefined && props.columns.length > 0
+      ? { guideColumns: props.columns, junction: false }
+      : {}),
+    ...(!session.blank
+      ? {
+        actions: props.fileTreeUi.renderRowMenu({
+          open: menuOpen,
+          onOpenChange: open => props.menu.onOpenChange(menuKey, open),
+          items: menuEntries,
+          onSelect: onMenuSelect,
+          label: seat.t('rowMenuAria', { name: session.title }),
+        }),
+      }
+      : {}),
+    role: 'treeitem',
+    draggable: !session.blank,
+    onClick: () => props.onOpen(session.id),
+    onDragStart: sessionDragStart,
+  }
+}
+
+/** One workspace leaf row model (or the ungrouped bucket) with its session
+ *  list. The session list rides the framework's 'layer' children variant
+ *  (the continuous guide strokes the built-in sessionListLayer painted);
+ *  subworkspace groups nest under their own header models. */
+function leafRowModel(props: {
+  leaf: WorkspaceLeaf
+  /** Root-side-first folder chain above this row. */
+  ancestors: readonly FolderId[]
+  callbacks: RowCallbacks
+  sessionSeat: SessionRowSeat
+  sessionsOverflow: readonly string[]
+  onToggleOverflow: (key: string) => void
+  drag: DragSeat
+  now: number
+  /** Git probe seat: subworkspace grouping + the cross-tree count row pill. */
+  git?: GitProbeResultJSON | null
+  /** Remote-mirror marker map (hover card only). */
+  gitMarkers?: ReadonlyMap<string, RemoteGitMarker>
+  /** The workspace's sessions with cwd, for the git aggregation. */
+  sessionsForGit?: readonly { id: SessionId; cwd?: string }[]
+  /** Expanded group keys (subworkspace headers toggle through these). */
+  expandedKeys?: ReadonlySet<string>
+  menu: MenuSeat
+  fileTreeUi: FileTreeUiServiceV2
+}): FileTreeRowModel {
+  const { leaf, callbacks } = props
+  const hasAccount = leaf.workspaceId !== undefined
+  const overflowExpanded = props.sessionsOverflow.includes(leaf.key)
+  const shownSessions = overflowExpanded
+    ? leaf.sessions
+    : leaf.sessions.slice(0, COLLAPSED_SESSION_LIMIT)
+  const remoteMarker = hasAccount && leaf.cwd !== undefined && props.gitMarkers !== undefined
+    ? props.gitMarkers.get(normalizeProbePath(leaf.cwd))
+    : undefined
+  const gitAggregate = props.git !== null && props.git !== undefined && hasAccount
+    ? aggregateWorkspaceTrees(props.sessionsForGit ?? [], props.git)
+    : { kind: 'none' } as const
+  const gitGroups = props.git !== null && props.git !== undefined && hasAccount && leaf.cwd !== undefined
+    ? deriveSubworkspaceGroups(leaf.cwd, props.sessionsForGit ?? [], props.git)
+    : []
+  const splitGroups = gitGroups.length > 1
+  const ownTree = props.git !== null && props.git !== undefined && leaf.cwd !== undefined
+    ? treeOfCwd(props.git, leaf.cwd)
+    : undefined
+  const hoverGit = props.git === undefined
+    ? undefined
+    : props.git === null || ownTree === undefined
+      ? null
+      : {
+        tree: ownTree,
+        peers: Object.values(props.git.trees).filter(tree => tree.repoKey === ownTree.repoKey && tree.root !== ownTree.root),
+      }
+  const continueTrees = ownTree === undefined || props.git === null || props.git === undefined
+    ? []
+    : Object.values(props.git.trees)
+      .filter(tree => tree.repoKey === ownTree.repoKey && tree.root !== ownTree.root)
+      .sort((a, b) => (a.branch ?? a.detached ?? '').localeCompare(b.branch ?? b.detached ?? ''))
+  const depth = props.ancestors.length
+  const indentPx = rowIndent(depth)
+  const dropZone = hasAccount ? props.drag.dropZoneOf('workspace', leaf.workspaceId as string) : undefined
+  const active = dirActive(leaf.containsCurrent)
+  const folderColumns = folderGuideColumns(props.ancestors, callbacks.onToggleFolder)
+  // The collapsed-dir status marker: the top-priority status dot of the
+  // hidden sessions — the actions slot's resting counterpart (the framework
+  // CSS hides it on hover while the actions reveal — the v1 posture).
+  const busyState: StateDotState | undefined = (leaf.status.warning ?? 0) > 0
+    ? 'warning'
+    : (leaf.status.ongoing ?? 0) > 0
+      ? 'ongoing'
+      : (leaf.status.done ?? 0) > 0
+        ? 'done'
+        : undefined
+  const busyLabel = hasAccount && !leaf.expanded && busyState !== undefined
+    ? workspaceStatusLabel(busyState, leaf.status[busyState] ?? 1, callbacks.t)
+    : undefined
+  // Session rows hang one level deeper: besides the folder columns they draw
+  // the workspace's OWN column, whose band collapses the session list.
+  const sessionColumns: GuideColumn[] = [
+    ...folderColumns,
+    { id: leaf.key, onToggle: () => callbacks.onWorkspaceClick(leaf.key) },
+  ]
+  const workspaceMenuEntries: readonly MenuEntry[] = [
+    { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
+    { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
+    ...(continueTrees.length > 0
+      ? [
+        { type: 'label' as const, id: 'continue-label', text: callbacks.t('continueInTree') },
+        ...continueTrees.map(tree => ({
+          id: `tree:${tree.root}`,
+          label: tree.branch ?? tree.detached ?? basename(tree.root),
+          icon: <IconBranchOutline16 />,
+        })),
+      ]
+      : []),
+    { type: 'separator' as const, id: 'workspace-actions-separator' },
+    { id: 'delete', label: callbacks.t('deleteWorkspaceTitle'), icon: <IconTrashOutline16 />, danger: true },
+  ]
+  const onWorkspaceMenuSelect = (id: string): void => {
+    props.menu.onOpenChange(leaf.key, false)
+    if (id === 'rename') callbacks.openers.onRenameWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
+    else if (id === 'move') callbacks.openers.onMoveWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
+    else if (id === 'delete') callbacks.openers.onDeleteWorkspace(leaf.workspaceId as WorkspaceId, leaf.label)
+    else if (id.startsWith('tree:')) {
+      const root = id.slice('tree:'.length)
+      const tree = continueTrees.find(candidate => candidate.root === root)
+      if (tree !== undefined) callbacks.onContinueInTree?.(tree, leaf.workspaceId)
+    }
+  }
+  const workspaceDragStart = (event: DragEvent<HTMLDivElement>): void => {
+    const transfer = event.dataTransfer
+    if (transfer !== null && leaf.workspaceId !== undefined) {
+      transfer.effectAllowed = 'copyMove'
+      const payload = workspaceReferencePayload({
+        id: leaf.workspaceId as string,
+        label: leaf.label,
+        primarySession: leaf.primarySession,
+      })
+      transfer.setData(WORKSPACE_REFERENCE_MIME, encodeDragReference(payload))
+      transfer.setData('text/plain', payload.mention)
+      stashActiveReference(payload)
+    }
+    props.drag.onDragStart({ kind: 'workspace', id: leaf.workspaceId as string })
+  }
+  const workspaceDragOver = (event: DragEvent<HTMLDivElement>): void => {
+    if (props.drag.dragSource === null) return
+    event.preventDefault()
+    props.drag.onDragOver({
+      kind: 'workspace',
+      id: leaf.workspaceId as string,
+      zone: rowDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
+    })
+  }
+  const workspaceDragLeave = (event: DragEvent<HTMLDivElement>): void => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      props.drag.onDragLeave('workspace', leaf.workspaceId as string)
+    }
+  }
+  const workspaceDrop = (event: DragEvent<HTMLDivElement>): void => {
+    if (props.drag.dragSource === null) return
+    event.preventDefault()
+    props.drag.onDrop(props.drag.dragSource, {
+      kind: 'workspace',
+      id: leaf.workspaceId as string,
+      zone: rowDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
+    })
+  }
+  const workspaceRowClick = (): void => {
+    if (hasAccount) callbacks.onWorkspaceClick(leaf.key)
+    else callbacks.onToggleGroup(leaf.key)
+  }
+  const gitPillMulti = gitAggregate.kind === 'multi'
+    ? (
+      <span className={css.gitPillMulti} title={`${gitAggregate.trees.length} 棵树的会话`}>
+        {gitAggregate.trees.length} 棵
+      </span>
+    )
+    : undefined
+  const menuKey = leaf.key
+  const menuOpen = props.menu.open(menuKey)
+  // The subtree is ALWAYS built (the framework gates on `expanded` and plays
+  // the fold animation); the session list variant is 'layer' — the container
+  // paints the continuous stroke set, rows paint only the hover highlight.
+  const children: FileTreeNode[] = []
+  if (splitGroups) {
+    for (const group of gitGroups) {
+      const subKey = `${SUBWS_GROUP_KEY_PREFIX}${leaf.key}:${group.key}`
+      const groupOpen = props.expandedKeys?.has(subKey) ?? false
+      children.push(subwsRowModel({
+        subKey,
+        label: group.own
+          ? callbacks.t('subwsOwn', { name: leaf.label })
+          : (group.tree?.branch ?? group.tree?.detached ?? callbacks.t('subwsNogit')),
+        groupOpen,
+        groupSessions: leaf.sessions.filter(session => group.sessionIds.includes(session.id)),
+        overflowExpanded: props.sessionsOverflow.includes(subKey),
+        workspaceIndentPx: indentPx,
+        columns: sessionColumns,
+        seat: props.sessionSeat,
+        now: props.now,
+        onToggleGroup: callbacks.onToggleGroup,
+        onToggleOverflow: props.onToggleOverflow,
+        ...(group.tree === undefined ? {} : { tree: group.tree }),
+        menu: props.menu,
+        fileTreeUi: props.fileTreeUi,
+      }))
+    }
+  } else {
+    for (const session of shownSessions) {
+      children.push(sessionRowModel({
+        session,
+        seat: props.sessionSeat,
+        onOpen: props.sessionSeat.onOpen,
+        indent: indentPx,
+        columns: sessionColumns,
+        now: props.now,
+        menu: props.menu,
+        fileTreeUi: props.fileTreeUi,
+      }))
+    }
+    const overflow = overflowButtonNode({
+      key: `overflow:${leaf.key}`,
+      total: leaf.sessions.length,
+      expanded: overflowExpanded,
+      marginLeft: indentPx + SESSION_INDENT_OFFSET_PX,
+      t: callbacks.t,
+      onToggle: () => props.onToggleOverflow(leaf.key),
+    })
+    if (overflow !== null) children.push(overflow)
+  }
+  return {
+    key: leaf.key,
+    // The workspace hover card rides the label slot (see sessionRowModel).
+    label: hasAccount
+      ? (
+        <HoverCard
+          anchor={leaf.label}
+          content={(
+            <WorkspaceHoverContent
+              label={leaf.label}
+              cwd={leaf.cwd}
+              createdAt={leaf.createdAt ?? 0}
+              t={callbacks.t}
+              status={leaf.status}
+              {...(hoverGit === undefined ? {} : { git: hoverGit })}
+              {...(remoteMarker === undefined ? {} : { remote: remoteMarker })}
+            />
+          )}
+          disabled={menuOpen}
+          copyText={leaf.cwd}
+          copyLabel={callbacks.t('copy')}
+          copiedLabel={callbacks.t('hoverCopied')}
+        />
+      )
+      : leaf.label,
+    leading: leaf.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />,
+    expanded: leaf.expanded,
+    onToggle: workspaceRowClick,
+    guideColumns: folderColumns,
+    junction: leaf.expanded,
+    indentPx,
+    active,
+    ...(gitPillMulti === undefined ? {} : { trailing: gitPillMulti }),
+    ...(dropZone === undefined ? {} : { dropState: dropZone }),
+    ...(!hasAccount
+      ? {}
+      : {
+        actions: (
+          <>
+            {props.fileTreeUi.renderRowMenu({
+              open: menuOpen,
+              onOpenChange: open => props.menu.onOpenChange(menuKey, open),
+              items: workspaceMenuEntries,
+              onSelect: onWorkspaceMenuSelect,
+              label: callbacks.t('rowMenuAria', { name: leaf.label }),
+            })}
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={callbacks.t('newSessionAria', { name: leaf.label })}
+              onClick={event => {
+                event.stopPropagation()
+                callbacks.onStartSession(leaf.workspaceId as WorkspaceId, leaf.key)
+              }}
+            >
+              <IconPlusOutline16 />
+            </button>
+          </>
+        ),
+      }),
+    ...(busyLabel === undefined || busyState === undefined
+      ? {}
+      : {
+        restingIndicator: (
+          <span className={css.rowBusy} title={busyLabel}>
+            <StateDot state={busyState} />
+            <span className={css.visuallyHidden}>{busyLabel}</span>
+          </span>
+        ),
+      }),
+    role: 'treeitem',
+    draggable: hasAccount,
+    ...(hasAccount
+      ? {
+        onDragStart: workspaceDragStart,
+        onDragOver: workspaceDragOver,
+        onDragLeave: workspaceDragLeave,
+        onDrop: workspaceDrop,
+        onDragEnd: () => props.drag.onDragEnd(),
+      }
+      : {}),
+    onClick: workspaceRowClick,
+    children,
+    childrenList: 'layer',
+  }
+}
+
+/** One subworkspace (tree) group header model inside an expanded workspace:
+ *  the group's sessions nest under it ('layer' variant — the header's list
+ *  keeps the continuous strokes, rows paint only the hover highlight). */
+function subwsRowModel(props: {
+  subKey: string
+  label: string
+  groupOpen: boolean
+  groupSessions: readonly SessionNode[]
+  overflowExpanded: boolean
+  workspaceIndentPx: number
+  columns: readonly GuideColumn[]
+  seat: SessionRowSeat
+  now: number
+  onToggleGroup: (key: string) => void
+  onToggleOverflow: (key: string) => void
+  /** The group's tree (git pill in the trailing slot). */
+  tree?: GitTreeInfoJSON
+  menu: MenuSeat
+  fileTreeUi: FileTreeUiServiceV2
+}): FileTreeRowModel {
+  const shown = props.overflowExpanded
+    ? props.groupSessions
+    : props.groupSessions.slice(0, COLLAPSED_SESSION_LIMIT)
+  const children: FileTreeNode[] = []
+  for (const session of shown) {
+    children.push(sessionRowModel({
+      session,
+      seat: props.seat,
+      onOpen: props.seat.onOpen,
+      indent: props.workspaceIndentPx + 16,
+      columns: props.columns,
+      now: props.now,
+      menu: props.menu,
+      fileTreeUi: props.fileTreeUi,
+    }))
+  }
+  const overflow = overflowButtonNode({
+    key: `overflow:${props.subKey}`,
+    total: props.groupSessions.length,
+    expanded: props.overflowExpanded,
+    marginLeft: props.workspaceIndentPx + SESSION_INDENT_OFFSET_PX + 24,
+    t: props.seat.t,
+    onToggle: () => props.onToggleOverflow(props.subKey),
+  })
+  if (overflow !== null) children.push(overflow)
+  return {
+    key: props.subKey,
+    label: props.label,
+    expanded: props.groupOpen,
+    onToggle: () => props.onToggleGroup(props.subKey),
+    compact: true,
+    className: css.subwsRow,
+    indentPx: props.workspaceIndentPx + SESSION_INDENT_OFFSET_PX,
+    // Deterministic geometry override (inline, beats both stylesheets
+    // regardless of load order): the row's 26px min-height and 6px radius
+    // ride the provider's own metric variables.
+    style: {
+      '--dsh-ftr-row-min-height': '26px',
+      '--dsh-ftr-row-radius': '6px',
+    } as CSSProperties,
+    guideColumns: props.columns,
+    junction: false,
+    trailing: (
+      <>
+        {props.tree !== undefined && (
+          <span className={`${css.gitPill}${props.tree.role === 'main' ? ` ${css.gitPillMain}` : ''}`}>
+            {props.tree.branch ?? props.tree.detached}
+          </span>
+        )}
+        <span className={css.sessionCount}>{props.groupSessions.length}</span>
+      </>
+    ),
+    role: 'treeitem',
+    onClick: () => { props.onToggleGroup(props.subKey) },
+    children,
+    childrenList: 'layer',
+  }
+}
+
+/** One folder row model plus its subtree (subfolders first, then the
+ *  workspace group — the built-in order). The subtree is always built; the
+ *  framework gates on `expanded`. The folder's own children list rides the
+ *  'plain' variant (rows paint their own strokes — the pre-P3 shape; the
+ *  workspace leaves inside carry their own 'layer' session lists). */
+function folderRowModel(props: {
+  node: FolderNode
+  parentName: string
+  callbacks: RowCallbacks
+  sessionSeat: SessionRowSeat
+  sessionsOverflow: readonly string[]
+  onToggleOverflow: (key: string) => void
+  drag: DragSeat
+  /** Root-side-first folder chain above this row. */
+  ancestors: readonly FolderId[]
+  now: number
+  /** Git probe seat forwarded to the subtree's workspace rows. */
+  git?: GitProbeResultJSON | null
+  /** Remote-mirror marker map forwarded to the subtree's workspace rows. */
+  gitMarkers?: ReadonlyMap<string, RemoteGitMarker>
+  /** Workspace → session cwd list (git aggregation source). */
+  sessionsForGit?: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
+  /** Expanded group keys forwarded to the subtree's workspace rows. */
+  expandedKeys?: ReadonlySet<string>
+  menu: MenuSeat
+  fileTreeUi: FileTreeUiServiceV2
+}): FileTreeRowModel {
+  const { node, callbacks } = props
+  const menuKey = node.folderId
+  const dropZone = props.drag.dropZoneOf('folder', node.folderId)
+  const active = dirActive(node.containsCurrent)
+  const guideColumns = folderGuideColumns(props.ancestors, callbacks.onToggleFolder)
+  const folderMenuEntries = [
+    { id: 'new-subfolder', label: callbacks.t('newSubfolder'), icon: <IconPlusOutline16 /> },
+    { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
+    { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
+    { type: 'separator' as const, id: 'folder-actions-separator' },
+    { id: 'delete', label: callbacks.t('deleteFolderTitle'), icon: <IconTrashOutline16 />, danger: true },
+  ] satisfies readonly MenuEntry[]
+  const onFolderMenuSelect = (id: string): void => {
+    props.menu.onOpenChange(menuKey, false)
+    if (id === 'new-subfolder') callbacks.openers.onNewSubfolder(node.folderId)
+    else if (id === 'rename') callbacks.openers.onRenameFolder(node.folderId, node.name)
+    else if (id === 'move') callbacks.openers.onMoveFolder(node.folderId, node.name)
+    else if (id === 'delete') callbacks.openers.onDeleteFolder(node.folderId, node.name, props.parentName)
+  }
+  const folderDragStart = (event: DragEvent<HTMLDivElement>): void => {
+    const transfer = event.dataTransfer
+    if (transfer !== null) {
+      transfer.effectAllowed = 'move'
+      transfer.setData('text/plain', node.folderId)
+    }
+    props.drag.onDragStart({ kind: 'folder', id: node.folderId })
+  }
+  const folderDragOver = (event: DragEvent<HTMLDivElement>): void => {
+    if (props.drag.dragSource === null) return
+    event.preventDefault()
+    props.drag.onDragOver({
+      kind: 'folder',
+      id: node.folderId,
+      zone: folderDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
+    })
+  }
+  const folderDragLeave = (event: DragEvent<HTMLDivElement>): void => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      props.drag.onDragLeave('folder', node.folderId)
+    }
+  }
+  const folderDrop = (event: DragEvent<HTMLDivElement>): void => {
+    if (props.drag.dragSource === null) return
+    event.preventDefault()
+    props.drag.onDrop(props.drag.dragSource, {
+      kind: 'folder',
+      id: node.folderId,
+      zone: folderDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
+    })
+  }
+  const children: FileTreeNode[] = []
+  for (const child of node.children) {
+    children.push(folderRowModel({
+      node: child,
+      parentName: node.name,
+      callbacks,
+      sessionSeat: props.sessionSeat,
+      sessionsOverflow: props.sessionsOverflow,
+      onToggleOverflow: props.onToggleOverflow,
+      drag: props.drag,
+      ancestors: [...props.ancestors, node.folderId],
+      now: props.now,
+      menu: props.menu,
+      fileTreeUi: props.fileTreeUi,
+    }))
+  }
+  const hint = workspaceAppendHintNode({
+    key: `drop:${node.folderId}`,
+    active: props.drag.appendWorkspaceFolderId === node.folderId,
+    label: callbacks.t('dropWorkspaceFolderEnd', { name: node.name }),
+    depth: props.ancestors.length + 1,
+  })
+  if (hint !== null) children.push(hint)
+  for (const leaf of node.workspaceGroups) {
+    children.push(leafRowModel({
+      leaf,
+      ancestors: [...props.ancestors, node.folderId],
+      callbacks,
+      sessionSeat: props.sessionSeat,
+      sessionsOverflow: props.sessionsOverflow,
+      onToggleOverflow: props.onToggleOverflow,
+      drag: props.drag,
+      now: props.now,
+      ...(props.git === undefined || props.git === null ? {} : { git: props.git }),
+      ...(props.gitMarkers === undefined ? {} : { gitMarkers: props.gitMarkers }),
+      sessionsForGit: props.sessionsForGit?.(leaf.workspaceId as WorkspaceId) ?? [],
+      ...(props.expandedKeys === undefined ? {} : { expandedKeys: props.expandedKeys }),
+      menu: props.menu,
+      fileTreeUi: props.fileTreeUi,
+    }))
+  }
+  return {
+    key: node.folderId,
+    label: node.name,
+    leading: node.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />,
+    expanded: node.expanded,
+    onToggle: () => callbacks.onToggleFolder(node.folderId),
+    guideColumns,
+    junction: node.expanded,
+    indentPx: rowIndent(props.ancestors.length),
+    active,
+    ...(dropZone === undefined ? {} : { dropState: dropZone }),
+    actions: props.fileTreeUi.renderRowMenu({
+      open: props.menu.open(menuKey),
+      onOpenChange: open => props.menu.onOpenChange(menuKey, open),
+      items: folderMenuEntries,
+      onSelect: onFolderMenuSelect,
+      label: callbacks.t('rowMenuAria', { name: node.name }),
+    }),
+    role: 'treeitem',
+    draggable: true,
+    onDragStart: folderDragStart,
+    onDragOver: folderDragOver,
+    onDragLeave: folderDragLeave,
+    onDrop: folderDrop,
+    onDragEnd: () => props.drag.onDragEnd(),
+    onClick: () => callbacks.onToggleFolder(node.folderId),
+    children,
+    childrenList: 'plain',
+  }
+}
+
+/** One repo group row model plus its workspace members. */
+function repoGroupRowModel(props: {
+  repo: GitRepoGroupDerived
+  probe: GitProbeResultJSON
+  gitMarkers: ReadonlyMap<string, RemoteGitMarker>
+  workspaceById: Map<WorkspaceId, WorkspaceView>
+  sessions: SessionListState
+  state: { groupExpansion: Record<string, boolean>; folderExpansion: Record<string, boolean> }
+  callbacks: RowCallbacks
+  sessionSeat: SessionRowSeat
+  sessionsOverflow: readonly string[]
+  onToggleOverflow: (key: string) => void
+  drag: DragSeat
+  now: number
+  sessionsForGit: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
+  expandedKeys: ReadonlySet<string>
+  onRefresh: () => void
+  onToggle: () => void
+  t: EnhancedWorkspaceBrowserProps['t']
+  menu: MenuSeat
+  fileTreeUi: FileTreeUiServiceV2
+}): FileTreeRowModel {
+  const repoKey = `${REPO_GROUP_KEY_PREFIX}${props.repo.repoKey}`
+  const open = props.state.groupExpansion[repoKey] === true
+  const repoGlyph = (
+    <span className={open ? css.folderActive : undefined}>
+      {open ? <IconFolderOpen16 /> : <IconFolderClose16 />}
+    </span>
+  )
+  const children: FileTreeNode[] = []
+  for (const workspaceId of props.repo.workspaceIds) {
+    const leaf = sessionLeafOf(props.workspaceById.get(workspaceId), props.sessions, props.state)
+    if (leaf === undefined) continue
+    children.push(leafRowModel({
+      leaf,
+      ancestors: [],
+      callbacks: props.callbacks,
+      sessionSeat: props.sessionSeat,
+      sessionsOverflow: props.sessionsOverflow,
+      onToggleOverflow: props.onToggleOverflow,
+      drag: props.drag,
+      now: props.now,
+      git: props.probe,
+      gitMarkers: props.gitMarkers,
+      sessionsForGit: props.sessionsForGit(workspaceId),
+      expandedKeys: props.expandedKeys,
+      menu: props.menu,
+      fileTreeUi: props.fileTreeUi,
+    }))
+  }
+  return {
+    key: repoKey,
+    label: props.repo.name,
+    leading: repoGlyph,
+    expanded: open,
+    onToggle: props.onToggle,
+    trailing: (
+      <>
+        <span className={css.gitPillMain}>{props.t('groupByRepo')}</span>
+        <span className={css.sessionCount}>{props.repo.workspaceIds.length}</span>
+      </>
+    ),
+    actions: props.fileTreeUi.renderRowMenu({
+      open: props.menu.open(repoKey),
+      onOpenChange: open => props.menu.onOpenChange(repoKey, open),
+      items: [
+        { id: 'refresh', label: props.t('refreshGitProbe'), icon: <IconBranchOutline16 /> },
+        { id: 'organize', label: props.t('organizeIntoFolder'), icon: <IconFolderOpenOutline16 /> },
+      ],
+      onSelect: (id) => {
+        // RowMenu closes before the callback; 'organize' is declared but
+        // has no action in the built-in shape either — preserved as-is.
+        if (id === 'refresh') props.onRefresh()
+      },
+      label: props.t('refreshGitProbe'),
+    }),
+    className: css.repoRow,
+    style: {
+      padding: '0 6px',
+      '--dsh-ftr-row-radius': '7px',
+    } as CSSProperties,
+    role: 'treeitem',
+    onClick: props.onToggle,
+    children,
+    childrenList: 'plain',
+  }
+}
+
+/** The "未注册工作树" group models (header + register rows), or [] when the
+ *  probe is unavailable or no unregistered tree exists. */
+function unregGroupNodes(props: {
+  git: GitProbeResultJSON | null
+  workspaces: readonly WorkspaceView[]
+  sessions: SessionListState
+  open: boolean
+  onToggle: () => void
+  register: (root: string) => void
+  t: EnhancedWorkspaceBrowserProps['t']
+  menu: MenuSeat
+  fileTreeUi: FileTreeUiServiceV2
+}): FileTreeNode[] {
+  if (props.git === null) return []
+  const referenced = new Set<string>()
+  for (const workspace of props.workspaces) referenced.add(workspace.path)
+  for (const session of Object.values(props.sessions.byId)) {
+    if (session.cwd !== undefined && session.cwd !== '') referenced.add(session.cwd)
+  }
+  const unreg = unregisteredTrees(props.git, [...referenced])
+  if (unreg.length === 0) return []
+  const key = 'tw:unreg'
+  return [
+    {
+      key,
+      label: props.t('unregTreeGroup'),
+      leading: <IconFolderClose16 />,
+      expanded: props.open,
+      onToggle: props.onToggle,
+      trailing: <span className={css.sessionCount}>{unreg.length}</span>,
+      className: css.repoRow,
+      style: {
+        padding: '0 6px',
+        '--dsh-ftr-row-radius': '7px',
+      } as CSSProperties,
+      role: 'treeitem',
+      onClick: props.onToggle,
+      children: unreg.map(tree => ({
+        key: tree.root,
+        label: basename(tree.root),
+        leading: <IconFolderClose16 />,
+        trailing: <span className={css.gitPill}>{tree.detached ?? tree.branch}</span>,
+        // The always-visible register pill sits in the actions slot
+        // (actionsVisible — this is not a hover-revealed action).
+        actions: <span className={css.registerButton}>{props.t('registerTree')}</span>,
+        actionsVisible: true,
+        compact: true,
+        className: css.unregRow,
+        style: {
+          padding: '0 6px',
+          border: '1px dashed var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.35))',
+          '--dsh-ftr-row-min-height': '26px',
+          '--dsh-ftr-row-radius': '6px',
+        } as CSSProperties,
+        onClick: () => { props.register(tree.root) },
+      })),
+      childrenList: 'plain',
+    },
+  ]
+}
+
+/** The v2 service path's section assembly: builds the recency module's and
+ *  the "all" section's FileTreeRowModel forests and hands each section's
+ *  rows to ONE `renderFileTree` call (the section headers stay outside the
+ *  FileTree containers). The row menu open state is hoisted here. */
+function ServiceGroupedView(props: {
+  props: EnhancedWorkspaceBrowserProps
+  fileTreeUi: FileTreeUiServiceV2
+  forest: readonly FolderNode[]
+  topLevel: readonly WorkspaceLeaf[]
+  recents: ReturnType<typeof deriveRecentWorkspaces>
+  ungrouped: WorkspaceLeaf | undefined
+  openers: RowOpeners
+  sessionsOverflow: readonly string[]
+  onToggleOverflow: (key: string) => void
+  onCollapseRecents: () => void
+  onCollapseAll: () => void
+  state: EnhancedWorkspaceState
+  query: string
+  git: { probe: GitProbeResultJSON | null; markers: ReadonlyMap<string, RemoteGitMarker>; onRefresh: () => void }
+  callbacks: RowCallbacks
+  sessionSeat: SessionRowSeat
+  drag: DragSeat
+  sessionsForGit: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
+  expandedKeys: ReadonlySet<string>
+  now: number
+}): ReactNode {
+  const { t, actions } = props.props
+  // Framework feeds are real hooks: they MUST run at the component top level
+  // (repo mode + the unregistered-tree group read them; the degree of
+  // git-gated rendering varies but the hook order never may).
+  const workspaces = props.props.useWorkspaces(identity)
+  const sessions = props.props.useSessions(identity)
+  const pendingInteractions = sessionPendingInteractionsOf(props.props.useSessionPendingInteraction(identity))
+  const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({})
+  const menu: MenuSeat = {
+    open: key => openMenus[key] === true,
+    onOpenChange: (key, open) => setOpenMenus(prev => prev[key] === open ? prev : { ...prev, [key]: open }),
+  }
+  const register = (root: string): void => {
+    void props.props.createWorkspace({ path: root })
+      .then(created => { actions.adoptWorkspace(created.workspaceId) })
+      .catch(error => { console.warn('dsh-enhanced-workspace: register worktree failed', root, error) })
+  }
+  const unregKey = 'tw:unreg'
+  const unregOpen = props.state.groupExpansion[unregKey] === true
+  const unregNodes = unregGroupNodes({
+    git: props.git.probe,
+    workspaces: workspaces.items,
+    sessions,
+    open: unregOpen,
+    onToggle: () => { actions.setGroupExpanded(unregKey, !unregOpen) },
+    register,
+    t,
+    menu,
+    fileTreeUi: props.fileTreeUi,
+  })
+
+  // The recency module: top-level workspace rows (no ancestor folders, no
+  // indent guides), one per recently queried dir.
+  const recentsRows = props.recents.map(recent => leafRowModel({
+    leaf: recent,
+    ancestors: [],
+    callbacks: props.callbacks,
+    sessionSeat: props.sessionSeat,
+    sessionsOverflow: props.sessionsOverflow,
+    onToggleOverflow: props.onToggleOverflow,
+    drag: props.drag,
+    now: props.now,
+    git: props.git.probe,
+    gitMarkers: props.git.markers,
+    sessionsForGit: props.sessionsForGit(recent.workspaceId as WorkspaceId),
+    expandedKeys: props.expandedKeys,
+    menu,
+    fileTreeUi: props.fileTreeUi,
+  }))
+
+  // The "all" section: repo mode (repo groups + no-git workspaces + the
+  // unregistered-tree group) or the folder forest (folders, root-level
+  // leaves, the ungrouped bucket, the unregistered-tree group).
+  const allRows: FileTreeNode[] = []
+  if (props.state.groupBy === 'repo') {
+    if (props.git.probe === null) {
+      allRows.push(<div key="repo-status" className={css.searchStatus} role="status">{t('searchNoMatches')}</div>)
+    } else {
+      const probe = props.git.probe
+      const q = props.query.trim().toLowerCase()
+      const { repos, nogit } = deriveRepoGroups(probe, workspaces.items)
+      const workspaceById = new Map(workspaces.items.map(workspace => [workspace.workspaceId, workspace]))
+      const sessionTitlesOf = (workspaceId: WorkspaceId): { id: SessionId; title?: string; cwd?: string }[] =>
+        (workspaceById.get(workspaceId)?.sessionIds as SessionId[] | undefined)?.map(id => {
+          const summary = sessions.byId[id]
+          if (summary === undefined) return { id } as { id: SessionId; title?: string; cwd?: string }
+          return summary.cwd === undefined
+            ? { id, title: summary.displayTitle } as { id: SessionId; title?: string; cwd?: string }
+            : { id, title: summary.displayTitle, cwd: summary.cwd } as { id: SessionId; title?: string; cwd?: string }
+        }) ?? []
+      const visibleRepos = repos
+        .map(repo => ({
+          ...repo,
+          members: repo.workspaceIds.filter(id => {
+            const workspace = workspaceById.get(id)
+            return workspace !== undefined && repoMatch(workspace, sessionTitlesOf(id), probe, q)
+          }),
+        }))
+        .filter(repo => repo.members.length > 0 || repo.name.includes(q))
+      for (const repo of visibleRepos) {
+        const repoKey = `${REPO_GROUP_KEY_PREFIX}${repo.repoKey}`
+        const repoOpen = props.state.groupExpansion[repoKey] === true
+        allRows.push(repoGroupRowModel({
+          repo,
+          probe,
+          gitMarkers: props.git.markers,
+          workspaceById,
+          sessions,
+          state: props.state,
+          callbacks: props.callbacks,
+          sessionSeat: props.sessionSeat,
+          sessionsOverflow: props.sessionsOverflow,
+          onToggleOverflow: props.onToggleOverflow,
+          drag: props.drag,
+          now: props.now,
+          sessionsForGit: props.sessionsForGit,
+          expandedKeys: props.expandedKeys,
+          onRefresh: props.git.onRefresh,
+          onToggle: () => { actions.setGroupExpanded(repoKey, !repoOpen) },
+          t,
+          menu,
+          fileTreeUi: props.fileTreeUi,
+        }))
+      }
+      if (nogit.length > 0) {
+        allRows.push(<div key="git-note" className={css.gitNote}>{t('noGitWorkspaces')}</div>)
+        for (const workspaceId of nogit) {
+          const leaf = sessionLeafOf(workspaceById.get(workspaceId), sessions, props.state, pendingInteractions)
+          if (leaf === undefined) continue
+          allRows.push(leafRowModel({
+            leaf,
+            ancestors: [],
+            callbacks: props.callbacks,
+            sessionSeat: props.sessionSeat,
+            sessionsOverflow: props.sessionsOverflow,
+            onToggleOverflow: props.onToggleOverflow,
+            drag: props.drag,
+            now: props.now,
+            git: null,
+            gitMarkers: props.git.markers,
+            sessionsForGit: [],
+            expandedKeys: props.expandedKeys,
+            menu,
+            fileTreeUi: props.fileTreeUi,
+          }))
+        }
+      }
+      allRows.push(...unregNodes)
+    }
+  } else {
+    for (const folder of props.forest) {
+      allRows.push(folderRowModel({
+        node: folder,
+        parentName: t('moveDestinationTopLevel'),
+        callbacks: props.callbacks,
+        sessionSeat: props.sessionSeat,
+        sessionsOverflow: props.sessionsOverflow,
+        onToggleOverflow: props.onToggleOverflow,
+        drag: props.drag,
+        ancestors: [],
+        now: props.now,
+        git: props.git.probe,
+        gitMarkers: props.git.markers,
+        sessionsForGit: props.sessionsForGit,
+        expandedKeys: props.expandedKeys,
+        menu,
+        fileTreeUi: props.fileTreeUi,
+      }))
+    }
+    for (const leaf of props.topLevel) {
+      allRows.push(leafRowModel({
+        leaf,
+        ancestors: [],
+        callbacks: props.callbacks,
+        sessionSeat: props.sessionSeat,
+        sessionsOverflow: props.sessionsOverflow,
+        onToggleOverflow: props.onToggleOverflow,
+        drag: props.drag,
+        now: props.now,
+        git: props.git.probe,
+        gitMarkers: props.git.markers,
+        sessionsForGit: props.sessionsForGit(leaf.workspaceId as WorkspaceId),
+        expandedKeys: props.expandedKeys,
+        menu,
+        fileTreeUi: props.fileTreeUi,
+      }))
+    }
+    const topHint = workspaceAppendHintNode({
+      key: 'drop:root',
+      active: props.drag.appendWorkspaceFolderId === ROOT_FOLDER_ID,
+      label: t('dropWorkspaceTopLevelEnd'),
+      depth: 0,
+    })
+    if (topHint !== null) allRows.push(topHint)
+    if (props.ungrouped !== undefined) {
+      allRows.push(leafRowModel({
+        leaf: props.ungrouped,
+        ancestors: [],
+        callbacks: props.callbacks,
+        sessionSeat: props.sessionSeat,
+        sessionsOverflow: props.sessionsOverflow,
+        onToggleOverflow: props.onToggleOverflow,
+        drag: props.drag,
+        now: props.now,
+        git: null,
+        gitMarkers: props.git.markers,
+        sessionsForGit: [],
+        menu,
+        fileTreeUi: props.fileTreeUi,
+      }))
+    }
+    allRows.push(...unregNodes)
+  }
+  const showAll = props.forest.length > 0 || props.topLevel.length > 0 || props.ungrouped !== undefined || props.state.groupBy === 'repo'
+  return (
+    <>
+      {props.recents.length > 0 && (
+        <section className={`${css.section} ${css.sectionDivider}`}>
+          <div className={css.sectionHeader}>
+            <h3 className={css.sectionTitle}>{t('recents')}</h3>
+            <Tooltip label={t('collapseAll')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('collapseAll')}
+                onClick={props.onCollapseRecents}
+              >
+                <IconChevronUpOutline14 />
+              </button>
+            </Tooltip>
+          </div>
+          {props.fileTreeUi.renderFileTree({ treeKey: 'recents', rows: recentsRows })}
+        </section>
+      )}
+      {showAll && (
+        <section className={css.section}>
+          <div className={css.sectionHeader}>
+            <h3 className={css.sectionTitle}>{t('all')}</h3>
+            <div className={css.headerActions}>
+              <Tooltip label={t('collapseAll')} side="bottom" delayMs={500}>
+                <button
+                  type="button"
+                  className={css.iconButton}
+                  aria-label={t('collapseAll')}
+                  onClick={props.onCollapseAll}
+                >
+                  <IconChevronUpOutline14 />
+                </button>
+              </Tooltip>
+              <Tooltip label={t('newFolder')} side="bottom" delayMs={500}>
+                <button
+                  type="button"
+                  className={css.iconButton}
+                  aria-label={t('newFolder')}
+                  onClick={props.openers.onNewFolder}
+                >
+                  <IconPlusOutline16 />
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+          {props.fileTreeUi.renderFileTree({ treeKey: 'all', rows: allRows })}
+        </section>
+      )}
+    </>
   )
 }

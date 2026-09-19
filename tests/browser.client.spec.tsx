@@ -17,7 +17,7 @@ import type { SessionPendingInteraction } from '@deepseek-ai/dsh-client-ui-sessi
 // Type-only: the service fixture seat is typed against the provider's v1
 // contract (runtime fixtures are constructed from the real components below
 // in file-tree-ui.client.spec.tsx).
-import type { FileTreeUiServiceV1 } from 'dsh-file-tree-ui/client-contract'
+import type { FileTreeUiServiceV2 } from 'dsh-file-tree-ui/client-contract'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
 import { SessionHoverContent, WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
 import {
@@ -38,6 +38,7 @@ import { ROOT_FOLDER_ID, recentGroupKey, type SessionNode } from '../src/client/
 import { zh } from '../src/client/locales.ts'
 import type { EnhancedWorkspaceState } from '../src/client/store.ts'
 import { createEnhancedWorkspaceStore } from '../src/client/store.ts'
+import { sessionMention } from '../src/client/reference.ts'
 
 const W = (id: string): WorkspaceId => id as WorkspaceId
 
@@ -111,10 +112,10 @@ let sessionsState: typeof SESSIONS_STATE = SESSIONS_STATE
 let directoryFlowOccupied = false
 let flowOwners: EnhancedDirectoryFlowOwnerProps[] = []
 
-/** fileTreeUi v1 service seat fixture: undefined by default (the missing
+/** fileTreeUi v2 service seat fixture: undefined by default (the missing
  *  provider posture → built-in session rows); a spec flips it to a service
  *  fixture and re-renders to exercise the service path. */
-let fileTreeUiSeat: FileTreeUiServiceV1 | undefined = undefined
+let fileTreeUiSeat: FileTreeUiServiceV2 | undefined = undefined
 
 /** Search-hole fixture: the owner object of every search `renderSlot` call,
  *  and the handle the (real) slot inject face would deliver to an occupant. */
@@ -163,7 +164,7 @@ async function renderBrowser(
     actions: instance.actions,
     t,
     useDirectoryFlow: (selector: (occupied: boolean) => unknown) => selector(directoryFlowOccupied),
-    useFileTreeUi: (selector: (value: FileTreeUiServiceV1 | undefined) => unknown) => selector(fileTreeUiSeat),
+    useFileTreeUi: (selector: (value: FileTreeUiServiceV2 | undefined) => unknown) => selector(fileTreeUiSeat),
     renderSlot: ((key: string, owner: unknown) => {
       expect([DIRECTORY_FLOW_SLOT, SEARCH_SLOT]).toContain(key)
       if (key === SEARCH_SLOT) {
@@ -956,6 +957,19 @@ describe('enhanced workspace browser', () => {
     const workspaceRow = treeRowByText('绘画收集')!
     if (workspaceRow.getAttribute('aria-expanded') !== 'true') click(workspaceRow)
     const sessionRow = sessionRowByText('画布草图')!
+    // The workspace drag references its primary session (current, else the
+    // most recent member — s1 here, fixture current is undefined) under the
+    // workspace title; the session drag references the session itself.
+    const expected: Record<string, Record<string, unknown>> = {
+      workspace: {
+        version: 1, kind: 'workspace', id: 'w-art', label: '绘画收集', sessionId: 's1',
+        mention: sessionMention('s1', '绘画收集'),
+      },
+      session: {
+        version: 1, kind: 'session', id: 's1', label: '画布草图',
+        mention: sessionMention('s1', '画布草图'),
+      },
+    }
     for (const [row, kind, id, effect] of [[workspaceRow, 'workspace', 'w-art', 'copyMove'], [sessionRow, 'session', 's1', 'copy']] as const) {
       const data = new Map<string, string>()
       const transfer = { effectAllowed: '', setData: (key: string, value: string) => data.set(key, value) }
@@ -963,7 +977,8 @@ describe('enhanced workspace browser', () => {
       Object.defineProperty(event, 'dataTransfer', { value: transfer })
       act(() => { row.dispatchEvent(event) })
       expect(row.draggable).toBe(true)
-      expect(JSON.parse(data.get('application/x-dsh-reference+json')!)).toEqual({ version: 1, kind, id })
+      expect(JSON.parse(data.get('application/x-dsh-reference+json')!)).toEqual(expected[kind])
+      expect(data.get('text/plain'), 'the drop payload is the canonical mention, never a raw id').toBe(expected[kind].mention as string)
       expect(transfer.effectAllowed).toBe(effect)
       act(() => { row.dispatchEvent(dragEvent('dragend', 0)) })
     }

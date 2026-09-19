@@ -42,16 +42,20 @@ import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { EnhancedWorkspaceBrowser } from './Browser.tsx'
 import {
+  createChatDropAffordance,
+  installChatDropRouter,
+} from './chat-drop.ts'
+import {
   DIRECTORY_FLOW_SLOT,
   FILE_TREE_UI_SERVICE,
   FILE_TREE_UI_PROTOCOL_VERSION,
-  resolveFileTreeUiServiceV1,
+  resolveFileTreeUiServiceV2,
   SEARCH_SLOT,
   searchHandle,
   type EnhancedWorkspaceInjected,
   type EnhancedWorkspacePersistence,
 } from './contract.ts'
-import type { FileTreeUiServiceV1 } from 'dsh-file-tree-ui/client-contract'
+import type { FileTreeUiServiceV2 } from 'dsh-file-tree-ui/client-contract'
 import { NS, en, zh, type EnhancedWorkspaceKey } from './locales.ts'
 import { createGitProbe, createPersistence } from './persistence.ts'
 import { createRemoteGitSource } from './remote-git.ts'
@@ -90,11 +94,11 @@ const CONTINUE_TITLE_WAIT_MS = 3000
 /** The consumer-side diagnostic text (provider contract header recipe,
  *  Chinese, one-shot per degraded episode to avoid console spam). */
 const FILE_TREE_UI_DIAGNOSTIC = '[dsh-file-tree-ui] 服务缺失或协议不兼容：'
-  + `fileTreeUi 应为 v${FILE_TREE_UI_PROTOCOL_VERSION}（renderRow/`
-  + 'renderGuideLayer/renderRowMenu 均为函数）；当前值将被忽略并回退本地渲染。'
+  + `fileTreeUi 应为 v${FILE_TREE_UI_PROTOCOL_VERSION}（renderFileTree/`
+  + 'renderRowMenu 均为函数）；当前值将被忽略并回退本地渲染。'
 
 /**
- * Build the snapshot reader for the OPTIONAL fileTreeUi v1 service seat.
+ * Build the snapshot reader for the OPTIONAL fileTreeUi v2 service seat.
  *
  * The service is never declared in this plugin's cordis `inject` array
  * (cordis has no optional inject — a hard injection would fail the whole
@@ -113,10 +117,10 @@ const FILE_TREE_UI_DIAGNOSTIC = '[dsh-file-tree-ui] 服务缺失或协议不兼�
 export function createFileTreeUiResolver(
   get: () => unknown,
   warn: (message: string) => void = message => console.warn(message),
-): () => FileTreeUiServiceV1 | undefined {
+): () => FileTreeUiServiceV2 | undefined {
   let degraded = false
   return () => {
-    const resolved = resolveFileTreeUiServiceV1(get())
+    const resolved = resolveFileTreeUiServiceV2(get())
     if (resolved !== undefined) {
       degraded = false
       return resolved
@@ -168,6 +172,26 @@ export const inject = ['slots', 'sessions', 'workspaces', 'uiWorkspace', 'locale
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-enhanced-workspace: dictionaries')
 
+  // Drag → chat-input router (fiber level, NOT the browser tree — the sidebar
+  // may be collapsed while the chat column stays live). Plugin workspace and
+  // session rows drag a canonical DSH session-reference mention; this router
+  // routes drops over the conversation column into the composer draft, where
+  // DSH's own plain-text reference scan and the host's pre-step mention parse
+  // turn them into real referenced-session context (see chat-drop.ts).
+  ctx.effect(() => {
+    const affordance = createChatDropAffordance()
+    const offRouter = installChatDropRouter({
+      onActive: payload => affordance.update(payload),
+      onInsert: () => {
+        /* Framework seam: post-insert feedback (toast / flash) hooks here. */
+      },
+    })
+    return () => {
+      offRouter()
+      affordance.dispose()
+    }
+  }, 'dsh-enhanced-workspace: chat drop router')
+
   // Resolve the service at call time; a captured absent handle must not
   // permanently disable persistence after the connection becomes available.
   const buildPersistence = (): EnhancedWorkspacePersistence => createPersistence(
@@ -181,7 +205,7 @@ export function apply(ctx: ClientContext): void {
   // and the silent-degrade posture.
   const remoteGit = createRemoteGitSource()
 
-  // Optional fileTreeUi v1 service seat: one per apply() (per fiber
+  // Optional fileTreeUi v2 service seat: one per apply() (per fiber
   // lifecycle), so the warn-once state survives repeated snapshot reads
   // while the reader itself never caches a service handle across
   // activations — getSnapshot re-reads ctx.get every call.
@@ -197,7 +221,7 @@ export function apply(ctx: ClientContext): void {
         getSnapshot: () => ctx.slots.entries(DIRECTORY_FLOW_SLOT).length > 0,
         subscribe: listener => ctx.slots.subscribe(DIRECTORY_FLOW_SLOT, listener),
       },
-      // The optional fileTreeUi v1 service seat (see createFileTreeUiResolver
+      // The optional fileTreeUi v2 service seat (see createFileTreeUiResolver
       // above): a snapshot/subscribe pair. The readonly `internal/service`
       // bus fires on every provide/unload change; the snapshot re-reads the
       // live value each time, so a late provider arrival lights up the rows

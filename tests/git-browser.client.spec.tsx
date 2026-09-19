@@ -20,10 +20,10 @@ import { DIRECTORY_FLOW_SLOT, SEARCH_SLOT, type EnhancedWorkspaceBrowserProps } 
 import { zh } from '../src/client/locales.ts'
 import { createEnhancedWorkspaceStore, type EnhancedWorkspaceState } from '../src/client/store.ts'
 import type { GitProbeResultJSON, RemoteGitMarker } from '../src/shared/git.ts'
-// Type-only: the fileTreeUi v1 seat (this spec keeps the missing-provider
+// Type-only: the fileTreeUi v2 seat (this spec keeps the missing-provider
 // posture — built-in session rows; the service-path spec lives in
 // file-tree-ui.client.spec.tsx).
-import type { FileTreeUiServiceV1 } from 'dsh-file-tree-ui/client-contract'
+import type { FileTreeUiServiceV2 } from 'dsh-file-tree-ui/client-contract'
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -154,7 +154,7 @@ async function renderBrowser(probe: GitProbeResultJSON | null = PROBE, markers: 
     actions: instance.actions,
     t,
     useDirectoryFlow: (selector: (occupied: boolean) => unknown) => selector(false),
-    useFileTreeUi: (selector: (value: FileTreeUiServiceV1 | undefined) => unknown) => selector(undefined),
+    useFileTreeUi: (selector: (value: FileTreeUiServiceV2 | undefined) => unknown) => selector(undefined),
     renderSlot: ((_key: string) => {
       // The region renders both plugin-owned holes while wide; this spec's
       // git assertions are occupant-agnostic, so every key renders nothing.

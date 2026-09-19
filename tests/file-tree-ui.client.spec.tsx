@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 /**
- * Component spec of the P2 fileTreeUi v1 consumer integration (provider:
- * dsh-file-tree-ui). With the service present, session rows render through
- * the provider's REAL TreeRow / RowMenu / TreeGuideLayer components; without
- * it (missing / mismatched / unloaded) the built-in fallback rows render.
+ * Component spec of the fileTreeUi v2 consumer integration (provider:
+ * dsh-file-tree-ui). With the service present the browser builds WHOLE-TREE
+ * row models per section and renders each section through ONE
+ * `renderFileTree` call (the provider's real FileTree framework owns the
+ * tree chrome, the fold interaction and the guide-hover seat); without it
+ * (missing / mismatched / unloaded) the built-in fallback rows render,
+ * byte-for-byte the pre-v1 shape.
  *
  * The service fixture is built from the upstream source components — vitest
  * is outside the client-bundle purity gate, so value-importing
@@ -21,15 +24,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { TreeRow } from 'dsh-file-tree-ui/src/client/TreeRow.tsx'
-import { TreeGuideLayer } from 'dsh-file-tree-ui/src/client/TreeGuideLayer.tsx'
+import { FileTree } from 'dsh-file-tree-ui/src/client/FileTree.tsx'
 import { RowMenu } from 'dsh-file-tree-ui/src/client/RowMenu.tsx'
-import type { FileTreeUiServiceV1 } from 'dsh-file-tree-ui/client-contract'
+import type {
+  FileTreeProps,
+  FileTreeRowModel,
+  FileTreeNode,
+  FileTreeUiServiceV2,
+} from 'dsh-file-tree-ui/client-contract'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER } from '../src/client/Browser.tsx'
 import { DIRECTORY_FLOW_SLOT, SEARCH_SLOT, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { createFileTreeUiResolver } from '../src/client/index.tsx'
 import { zh } from '../src/client/locales.ts'
 import { ROOT_FOLDER_ID } from '../src/client/model.ts'
+import { sessionMention } from '../src/client/reference.ts'
 import { createEnhancedWorkspaceStore, type EnhancedWorkspaceState } from '../src/client/store.ts'
 import type { GitProbeResultJSON } from '../src/shared/git.ts'
 
@@ -93,21 +101,51 @@ let workspacesState: typeof WORKSPACES_STATE = WORKSPACES_STATE
 let sessionsState: typeof SESSIONS_STATE = SESSIONS_STATE
 
 /**
- * The fileTreeUi v1 service seat: undefined by default (missing provider →
- * built-in session rows); a test binds a REAL provider-shaped service here
- * and re-renders — the same way the `internal/service` subscription flips
- * the snapshot at runtime.
+ * The fileTreeUi v2 service seat: undefined by default (missing provider →
+ * built-in rows); a test binds a REAL provider-shaped service here and
+ * re-renders — the same way the `internal/service` subscription flips the
+ * snapshot at runtime.
  */
-let fileTreeUiSeat: FileTreeUiServiceV1 | undefined = undefined
+let fileTreeUiSeat: FileTreeUiServiceV2 | undefined = undefined
 
-/** The provider-shaped service fixture: the REAL upstream components. */
-function makeFileTreeUiService(): FileTreeUiServiceV1 {
+/** The provider-shaped v2 service fixture: the REAL upstream components
+ *  (FileTree framework + RowMenu). */
+function makeFileTreeUiService(): FileTreeUiServiceV2 {
   return {
-    protocolVersion: 1,
-    renderRow: props => <TreeRow {...props} />,
-    renderGuideLayer: props => <TreeGuideLayer {...props} />,
+    protocolVersion: 2,
+    renderFileTree: props => <FileTree {...props} />,
     renderRowMenu: props => <RowMenu {...props} />,
   }
+}
+
+/** Like makeFileTreeUiService but records every renderFileTree props object
+ *  (model-shape assertions while still rendering through the real FileTree). */
+function makeRecordingFileTreeUiService(): { service: FileTreeUiServiceV2; trees: FileTreeProps[] } {
+  const trees: FileTreeProps[] = []
+  const service: FileTreeUiServiceV2 = {
+    protocolVersion: 2,
+    renderFileTree: props => {
+      trees.push(props)
+      return <FileTree {...props} />
+    },
+    renderRowMenu: props => <RowMenu {...props} />,
+  }
+  return { service, trees }
+}
+
+/** True when the node is a FileTreeRowModel (a label-carrying object — the
+ *  framework's own discrimination). */
+function isRowModel(node: FileTreeNode): node is FileTreeRowModel {
+  return typeof node === 'object' && node !== null && 'label' in node
+}
+
+/** One model row by key inside a tree's row list. */
+function rowModelOf(tree: FileTreeProps | undefined, key: string): FileTreeRowModel | undefined {
+  if (tree === undefined) return undefined
+  for (const node of tree.rows) {
+    if (isRowModel(node) && node.key === key) return node
+  }
+  return undefined
 }
 
 /** Minimal locale seat over the zh dictionary. */
@@ -142,7 +180,7 @@ async function renderBrowser(probe: GitProbeResultJSON | null = null): Promise<E
     actions: instance.actions,
     t,
     useDirectoryFlow: (selector: (occupied: boolean) => unknown) => selector(false),
-    useFileTreeUi: (selector: (value: FileTreeUiServiceV1 | undefined) => unknown) => selector(fileTreeUiSeat),
+    useFileTreeUi: (selector: (value: FileTreeUiServiceV2 | undefined) => unknown) => selector(fileTreeUiSeat),
     renderSlot: ((_key: string) => {
       expect([DIRECTORY_FLOW_SLOT, SEARCH_SLOT]).toContain(_key)
       return null
@@ -176,6 +214,12 @@ async function rerender(): Promise<void> {
   await act(async () => {
     root.render(<EnhancedWorkspaceBrowser {...latestProps} />)
   })
+}
+
+/** Wait out the framework's fold EXIT animation (timeout fallback =
+ *  FOLD_ANIMATION_MS + 80ms) so assertions read the final DOM state. */
+async function settleFold(): Promise<void> {
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 350)) })
 }
 
 /** One treeitem row whose text contains `text`, or undefined. */
@@ -285,6 +329,12 @@ function dragEnd(row: HTMLElement): void {
   act(() => { row.dispatchEvent(dragEvent('dragend', 0)) })
 }
 
+/** The framework row's chevron toggle (v2: clickable when the model carries
+ *  expanded + onToggle). */
+function chevronOf(row: HTMLElement): HTMLElement | null {
+  return row.querySelector<HTMLElement>('[class*="chevron"]')
+}
+
 /** The provider's resting-indicator hover rule, read from its stylesheet —
  *  the JS-mutual-exclusion counterpart the service path relies on (jsdom
  *  applies no styles, so the rule itself is asserted). */
@@ -314,8 +364,8 @@ afterEach(() => {
   }
 })
 
-describe('fileTreeUi v1 service seat (index.tsx resolver)', () => {
-  it('resolves a valid v1 service and warns exactly once per degraded episode', () => {
+describe('fileTreeUi v2 service seat (index.tsx resolver)', () => {
+  it('resolves a valid v2 service and warns exactly once per degraded episode', () => {
     const warn = vi.fn()
     const service = makeFileTreeUiService()
     // One reader for the whole episode: warn-once state must persist across
@@ -327,13 +377,13 @@ describe('fileTreeUi v1 service seat (index.tsx resolver)', () => {
     expect(resolver()).toBeUndefined()
     expect(warn, 'missing service warns once').toHaveBeenCalledTimes(1)
 
-    // Protocol mismatch (version 2) → still the same degraded episode.
-    currentValue = { ...service, protocolVersion: 2 }
+    // Protocol mismatch (version 1) → still the same degraded episode.
+    currentValue = { ...service, protocolVersion: 1 }
     expect(resolver()).toBeUndefined()
     expect(warn).toHaveBeenCalledTimes(1)
 
-    // Partial implementation (missing a render method) → undefined.
-    const { renderRowMenu: _dropped, ...partial } = service
+    // Partial implementation (missing renderFileTree) → undefined.
+    const { renderFileTree: _dropped, ...partial } = service
     currentValue = partial
     expect(resolver()).toBeUndefined()
     expect(warn).toHaveBeenCalledTimes(1)
@@ -381,7 +431,8 @@ describe('fileTreeUi service path (tree session rows)', () => {
     expect(row, 'session row renders').toBeDefined()
 
     // Skeleton replacement: the built-in sessionRow class is gone; the row
-    // is a service TreeRow (compact) with the status slot as its leading.
+    // is the framework's compact TreeRow with the status slot as its
+    // leading (the model-driven DOM passthrough rides the same TreeRow).
     expect(isFallbackSessionRow(row), 'service row drops the built-in skeleton').toBe(false)
     expect(row.getAttribute('role')).toBe('treeitem')
     expect(row.querySelector('[class*="sessionStatusSlot"]'), 'status-dot leading slot keeps the 16px caption').not.toBeNull()
@@ -418,11 +469,13 @@ describe('fileTreeUi service path (tree session rows)', () => {
     click(row)
     expect(props.open).toHaveBeenCalledWith('s1')
 
-    // Drag source unchanged: copy semantics + x-dsh-reference payload.
+    // Drag source unchanged: copy semantics + x-dsh-reference payload — the
+    // reference payload now carries the canonical mention as the drop text.
     const drag = dragStartWithPayload(row)
     expect(drag.effectAllowed).toBe('copy')
     expect(drag.payloads['application/x-dsh-reference+json'])
-      .toBe(JSON.stringify({ version: 1, kind: 'session', id: 's1' }))
+      .toBe(JSON.stringify({ version: 1, kind: 'session', id: 's1', label: '画布草图', mention: sessionMention('s1', '画布草图') }))
+    expect(drag.payloads['text/plain']).toBe(sessionMention('s1', '画布草图'))
   })
 
   it('carries the current-session wash (active) and stays draggable=false for blank rows', async () => {
@@ -488,23 +541,24 @@ describe('fileTreeUi service path (flat list + container layer)', () => {
     const sessionRow = sessionRowByText('画布草图')!
     const bands = sessionRow.querySelectorAll<HTMLElement>('[class*="guideHit"]')
     expect(bands.length, 'one band per ancestor column (folder + workspace)').toBe(2)
-    // The container (TreeGuideLayer) owns the continuous strokes…
-    const layer = [...container.querySelectorAll<HTMLElement>('[class*="sessionList"]')]
-      .find(el => el.querySelector('[role="treeitem"]') !== null)
-    expect(layer, 'sessionList container becomes the guide layer').toBeDefined()
+    // The workspace's children list is the framework's continuous guide
+    // layer (childrenList 'layer' — the built-in sessionListLayer's role),
+    // while the row paints NOTHING until a band is hovered (onlyHighlight).
+    const layer = sessionRow.closest<HTMLElement>('[class*="layer"]')
+    expect(layer, 'session rows sit inside the container layer').not.toBeNull()
     expect(layer!.style.backgroundImage, 'the layer paints the full stroke set').toContain('linear-gradient')
-    // …while the row paints NOTHING until a band is hovered (paintMode
-    // 'layer' — no double strokes).
     expect(sessionRow.style.backgroundImage, 'row stays clean until hover').toBe('')
 
     // Hovering the deepest band lights the whole workspace column on the row.
     mouseEnter(bands[1]!)
     expect(sessionRow.style.backgroundImage).toContain(GUIDE_STROKE_HOVER)
 
-    // Clicking the deepest band collapses the session list WITHOUT opening.
+    // Clicking the deepest band collapses the session list WITHOUT opening
+    // (the framework routes the band click to the column's onToggle).
     click(bands[1]!)
     expect(props.open, 'band clicks never open the session').not.toHaveBeenCalled()
     expect(instance.getSnapshot().groupExpansion['w-art'], 'deepest band folds the workspace').toBe(false)
+    await settleFold()
     expect(sessionRowByText('画布草图'), 'session list folded').toBeUndefined()
 
     // Reopen and click the folder column band — folds the folder instead.
@@ -513,6 +567,7 @@ describe('fileTreeUi service path (flat list + container layer)', () => {
     click(again.querySelectorAll<HTMLElement>('[class*="guideHit"]')[0]!)
     expect(props.open).not.toHaveBeenCalled()
     expect(instance.getSnapshot().folderExpansion[alpha], 'folder column band folds the folder').toBe(false)
+    await settleFold()
     expect(treeRowByText('绘画收集'), 'the folded folder hides its workspace row').toBeUndefined()
   })
 })
@@ -520,13 +575,19 @@ describe('fileTreeUi service path (flat list + container layer)', () => {
 describe('fileTreeUi hover card interlock', () => {
   it('opens its hover card on dwell and stays disabled while the row menu is open', async () => {
     // Real timers + explicit dwell waits: the HoverCard's open delay is a
-    // plain setTimeout (ui-primitives), both paths behave identically.
+    // plain setTimeout (ui-primitives), both paths behave identically. The
+    // v2 card anchor rides the row's LABEL slot (the framework owns the row
+    // chrome), so the dwell target is the label span inside the row.
     await renderBrowser()
     fileTreeUiSeat = makeFileTreeUiService()
     await rerender()
     click(treeRowByText('绘画收集')!)
     const row = sessionRowByText('画布草图')!
+    const label = row.querySelector<HTMLElement>('[class*="rowLabel"]')!
     const props = latestProps
+    // The hover-card trigger is the wrapper span around the label slot's
+    // anchor (the framework's rowLabel span wraps that wrapper).
+    const anchorWrapper = (): HTMLElement => label.firstElementChild as HTMLElement
 
     const dwell = async (): Promise<void> => {
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 700)) })
@@ -537,8 +598,8 @@ describe('fileTreeUi hover card interlock', () => {
     const titleCount = (): number => (document.body.textContent?.split('画布草图').length ?? 1) - 1
     expect(titleCount(), 'closed card adds no title').toBe(1)
 
-    // Dwell 500ms on the row (service row inside the HoverCard anchor).
-    pointerEnter(row.parentElement!)
+    // Dwell 500ms on the row's label (the service row's hover-card anchor).
+    pointerEnter(anchorWrapper())
     await dwell()
     expect(titleCount(), 'hover card opens with the row title').toBe(2)
 
@@ -548,7 +609,7 @@ describe('fileTreeUi hover card interlock', () => {
     click(menuButton!)
     expect(menuItemByText(zh.rename)).toBeDefined()
     expect(titleCount(), 'opening the menu closes the open card').toBe(1)
-    pointerEnter(row.parentElement!)
+    pointerEnter(anchorWrapper())
     await dwell()
     expect(titleCount(), 'menu open keeps the card disabled').toBe(1)
 
@@ -556,7 +617,7 @@ describe('fileTreeUi hover card interlock', () => {
     click(menuItemByText(zh.sessionFork)!)
     expect(props.forkSession, 'RowMenu select still runs the business action').toHaveBeenCalledWith('s1')
     expect(menuItemByText(zh.sessionFork), 'menu closes after select').toBeUndefined()
-    pointerEnter(row.parentElement!)
+    pointerEnter(anchorWrapper())
     await dwell()
     expect(titleCount(), 'card returns once the menu closes').toBe(2)
   })
@@ -594,6 +655,7 @@ describe('fileTreeUi snapshot flips (provider ↔ missing)', () => {
     expect(props.open).toHaveBeenCalledWith('s1')
   })
 })
+
 /** The acme probe: two trees of one repo (own tree + linked worktree). */
 const PROBE_MAIN = '/work/acme'
 const PROBE_LINK = '/tmp/acme/feat-payment'
@@ -631,7 +693,7 @@ describe('fileTreeUi service path (FolderRow)', () => {
 
     const alphaRow = folderRowByText('alpha')!
     const betaRow = folderRowByText('beta')!
-    // Skeleton replacement on folder rows too.
+    // Skeleton replacement on folder rows too (the framework TreeRow).
     expect(alphaRow.className, 'folder row rides the service skeleton').not.toContain('folderRow')
     expect(alphaRow.getAttribute('role')).toBe('treeitem')
     expect(alphaRow.getAttribute('aria-expanded')).toBe('true')
@@ -648,12 +710,16 @@ describe('fileTreeUi service path (FolderRow)', () => {
     expect(betaRow.style.backgroundImage, 'expanded: the corner trunk').toContain('transparent 100%)')
     click(betaRow)
     expect(instance.getSnapshot().folderExpansion[beta], 'row click folds the folder').toBe(false)
+    // Clicks flip the MODEL's expanded — the row itself re-renders
+    // immediately (only the fold SUBTREE plays its exit animation).
     expect(folderRowByText('beta')!.style.backgroundImage, 'collapsed: corner gone').not.toContain('linear-gradient(0deg')
     expect(folderRowByText('beta')!.style.backgroundImage, 'collapsed: ancestor vertical stays').toContain('linear-gradient(90deg')
-    // Reopen beta, then fold alpha from its own row — the subtree unmounts.
+    // Reopen beta, then fold alpha from its own row — the subtree unmounts
+    // after the fold exit animation completes.
     click(folderRowByText('beta')!)
     click(alphaRow)
     expect(instance.getSnapshot().folderExpansion[alpha], 'row click folds the ancestor too').toBe(false)
+    await settleFold()
     expect(folderRowByText('beta'), 'folding unmounts the subtree').toBeUndefined()
   })
 
@@ -793,24 +859,25 @@ describe('fileTreeUi service path (LeafRow)', () => {
     fileTreeUiSeat = makeFileTreeUiService()
     await rerender()
     const row = treeRowByText('绘画收集')!
+    const label = row.querySelector<HTMLElement>('[class*="rowLabel"]')!
     const dwell = async (): Promise<void> => {
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 700)) })
     }
     const card = (): HTMLElement | null => document.body.querySelector('[class*="hoverContent"]')
-    pointerEnter(row.parentElement!)
+    pointerEnter(label.firstElementChild!)
     await dwell()
     expect(card(), 'workspace hover card opens').not.toBeNull()
     // Opening the row menu disables the HoverCard for the same hover.
     click(row.querySelector<HTMLButtonElement>('button[aria-label]')!)
     expect(menuItemByText(zh.rename)).toBeDefined()
-    pointerEnter(row.parentElement!)
-    await dwell
+    pointerEnter(label.firstElementChild!)
+    await dwell()
     expect(card(), 'menu open keeps the card closed').toBeNull()
   })
 })
 
 describe('fileTreeUi service path (container continuity + subws headers)', () => {
-  it('keeps the overflow button inside the TreeGuideLayer so the container supplies its line', async () => {
+  it('keeps the overflow button inside the framework layer so the container supplies its line', async () => {
     await renderBrowser()
     fileTreeUiSeat = makeFileTreeUiService()
     workspacesState = {
@@ -833,13 +900,13 @@ describe('fileTreeUi service path (container continuity + subws headers)', () =>
     click(treeRowByText('绘画收集')!)
     const overflow = container.querySelector<HTMLButtonElement>('[class*="overflowButton"]')
     expect(overflow, 'the overflow control renders under the service path').not.toBeNull()
-    const layer = overflow!.closest('[class*="sessionList"]') as HTMLElement | null
-    expect(layer, 'the button sits inside the TreeGuideLayer container').not.toBeNull()
+    const layer = overflow!.closest('[class*="layer"]') as HTMLElement | null
+    expect(layer, 'the button sits inside the framework layer container').not.toBeNull()
     expect(layer!.style.backgroundImage, 'the layer keeps painting the full stroke set').toContain('linear-gradient')
     expect(overflow!.style.backgroundImage, 'the button itself carries no row background').toBe('')
   })
 
-  it('renders the subwsRow header with paintMode layer: no baseline strokes of its own, hover lights the column', async () => {
+  it('renders the subwsRow header with no baseline strokes of its own, hover lights the column', async () => {
     await renderBrowser(PROBE)
     fileTreeUiSeat = makeFileTreeUiService()
     workspacesState = {
@@ -860,16 +927,16 @@ describe('fileTreeUi service path (container continuity + subws headers)', () =>
     click(treeRowByText('acme')!)
     const header = treeRowByText('feat/payment')
     expect(header, 'the linked-tree group header renders').toBeDefined()
-    expect(header!.className, 'header rides the service compact variant').toContain('rowCompact')
+    expect(header!.className, 'header rides the framework compact variant').toContain('rowCompact')
     // indentPx = workspace indent (8, top level) + the 20px session offset.
     expect(header!.style.paddingLeft).toBe('28px')
-    // paintMode 'layer': the TreeGuideLayer container owns the strokes — the
-    // header itself paints NOTHING until a band is hovered (no double draw).
+    // The workspace's children list is the framework layer — the header
+    // itself paints NOTHING until a band is hovered (no double draw).
     expect(header!.style.backgroundImage, 'header draws no baseline strokes').toBe('')
     const band = header!.querySelectorAll<HTMLElement>('[class*="guideHit"]')[0]!
     mouseEnter(band)
     expect(header!.style.backgroundImage, 'hover lights only the hovered column').toContain(GUIDE_STROKE_HOVER)
-    const layer = header!.closest('[class*="sessionList"]') as HTMLElement | null
+    const layer = header!.closest('[class*="layer"]') as HTMLElement | null
     expect(layer, 'header sits inside the container layer').not.toBeNull()
     expect(layer!.style.backgroundImage, 'the container keeps the continuous strokes').toContain('linear-gradient')
   })
@@ -890,7 +957,7 @@ describe('fileTreeUi snapshot flips (all row kinds)', () => {
     expect(treeRowByText('绘画收集')!.className).toContain('workspaceRow')
     expect(sessionRowByText('画布草图')!.className).toContain('sessionRow')
 
-    // 2. Provider arrives: every kind switches to the service skeleton and
+    // 2. Provider arrives: every kind switches to the framework skeleton and
     // stays interactive (folder click still folds, session click still opens).
     fileTreeUiSeat = makeFileTreeUiService()
     await rerender()
@@ -910,5 +977,152 @@ describe('fileTreeUi snapshot flips (all row kinds)', () => {
     expect(folderRowByText('alpha')!.className, 'folder falls back').toContain('folderRow')
     expect(treeRowByText('绘画收集')!.className, 'workspace falls back').toContain('workspaceRow')
     expect(sessionRowByText('画布草图')!.className, 'session falls back').toContain('sessionRow')
+  })
+})
+
+describe('fileTreeUi v2 model building (renderFileTree props)', () => {
+  it('builds the whole-tree row models: slots, children/childrenList, expanded/onToggle wiring and DOM passthrough', async () => {
+    await renderBrowser()
+    // One folder with the workspace moved in; both levels open so the
+    // workspace carries its session rows.
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
+    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-art'), alpha) })
+    act(() => { instance.actions.setFolderExpanded(alpha, true) })
+    act(() => { instance.actions.setGroupExpanded('w-art', true) })
+    const { service, trees } = makeRecordingFileTreeUiService()
+    fileTreeUiSeat = service
+    await rerender()
+
+    // The recency module and the "all" section each render through ONE
+    // renderFileTree call (the recency fixture is empty → no rows).
+    const all = trees.filter(tree => tree.treeKey === 'all').at(-1)
+    expect(all, 'the "all" section renders through one renderFileTree call').toBeDefined()
+    const recents = trees.find(tree => tree.treeKey === 'recents')
+    expect(recents, 'the recency module renders through one renderFileTree call').toBeDefined()
+    // The recency module lists every workspace (activity-scored) — each row
+    // is a top-level leaf model with its prefixed group key.
+    expect(recents!.rows).toHaveLength(2)
+    expect(rowModelOf(recents, 'recent:w-art'), 'recents rows are leaf models').toBeDefined()
+
+    // The folder row model: slot content + expansion state wiring + DOM
+    // semantics + 'plain' children list (built-in folderChildren shape).
+    const folder = rowModelOf(all, alpha)
+    expect(folder, 'folder row model').toBeDefined()
+    expect(folder!.label).toBe('alpha')
+    expect(folder!.expanded).toBe(true)
+    expect(typeof folder!.onToggle).toBe('function')
+    expect(folder!.guideColumns, 'top-level folder owns no guide columns').toHaveLength(0)
+    expect(folder!.junction).toBe(true)
+    expect(folder!.indentPx).toBe(8)
+    expect(folder!.active).toBe(false)
+    expect(folder!.childrenList).toBe('plain')
+    expect(folder!.role).toBe('treeitem')
+    expect(folder!.draggable).toBe(true)
+    expect(typeof folder!.onClick).toBe('function')
+    expect(typeof folder!.onDragStart).toBe('function')
+    // The subtree is ALWAYS carried (fold gating belongs to the framework);
+    // the append-drop hint is absent while no append is armed.
+    expect(folder!.children, 'folder children = the moved-in workspace row').toHaveLength(1)
+
+    // The workspace leaf model: its session list rides the 'layer' variant
+    // (the built-in renderGuideLayer/sessionListLayer shape) and the rows
+    // carry the folder + workspace guide columns. It hangs under the folder
+    // model's children, like the built-in subtree.
+    const leaf = (folder!.children as FileTreeNode[])
+      .find(node => isRowModel(node) && node.key === 'w-art') as FileTreeRowModel | undefined
+    expect(leaf, 'workspace leaf model').toBeDefined()
+    expect(leaf!.expanded).toBe(true)
+    expect(typeof leaf!.onToggle).toBe('function')
+    expect(leaf!.childrenList).toBe('layer')
+    expect(leaf!.junction).toBe(true)
+    expect(leaf!.indentPx).toBe(16)
+    expect(leaf!.guideColumns, 'one column per ancestor folder').toHaveLength(1)
+    expect(leaf!.guideColumns![0]!.id).toBe(alpha)
+    expect(typeof leaf!.guideColumns![0]!.onToggle).toBe('function')
+    expect(leaf!.children!.length, 'both session rows ride the children').toBe(2)
+
+    // The session row model: content slots + DOM passthrough (the values
+    // the v1 renderRow call carried, now model fields).
+    const sessionModel = (leaf!.children as FileTreeNode[]).find(node => isRowModel(node) && node.key === 's1') as FileTreeRowModel
+    expect(sessionModel, 'session row model').toBeDefined()
+    expect(sessionModel.expanded).toBeUndefined()
+    expect(sessionModel.compact).toBe(true)
+    expect(sessionModel.leadingSlotWidth).toBe(16)
+    expect(sessionModel.active).toBe(false)
+    expect(sessionModel.guideColumns, 'folder column + the workspace own column').toHaveLength(2)
+    expect(sessionModel.guideColumns![1]!.id).toBe('w-art')
+    expect(sessionModel.role).toBe('treeitem')
+    expect(sessionModel.draggable).toBe(true)
+    expect(typeof sessionModel.onClick).toBe('function')
+    expect(typeof sessionModel.onDragStart).toBe('function')
+  })
+
+  it('gates the subtree by expanded in the final DOM (framework fold gate) and reopens cleanly', async () => {
+    const props = await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    await rerender()
+    // Open the session list, then fold the workspace: the framework plays
+    // the exit animation and unmounts the children; reopening restores them
+    // — no consumer-side conditional rendering, no white screen.
+    click(treeRowByText('绘画收集')!)
+    expect(sessionRowByText('画布草图'), 'session rows visible while expanded').toBeDefined()
+    click(treeRowByText('绘画收集')!)
+    expect(instance.getSnapshot().groupExpansion['w-art'], 'row click folds the workspace').toBe(false)
+    await settleFold()
+    expect(sessionRowByText('画布草图'), 'folded: session rows unmount after the exit animation').toBeUndefined()
+    click(treeRowByText('绘画收集')!)
+    expect(sessionRowByText('画布草图'), 'reopened: session rows return').toBeDefined()
+    click(sessionRowByText('画布草图')!)
+    expect(props.open).toHaveBeenCalledWith('s1')
+  })
+
+  it('routes the chevron click to onToggle (toggle, stopPropagation — never opens a session)', async () => {
+    const props = await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    await rerender()
+    const row = treeRowByText('绘画收集')!
+    const chevron = chevronOf(row)
+    expect(chevron, 'expandable rows carry the framework chevron').not.toBeNull()
+    expect(instance.getSnapshot().groupExpansion['w-art'], 'starts collapsed').toBeUndefined()
+    click(chevron!)
+    expect(instance.getSnapshot().groupExpansion['w-art'], 'chevron toggles the workspace open').toBe(true)
+    expect(props.open, 'chevron clicks stop propagation — no session opens').not.toHaveBeenCalled()
+    click(chevronOf(treeRowByText('绘画收集')!)!)
+    expect(instance.getSnapshot().groupExpansion['w-art'], 'chevron toggles the workspace shut again').toBe(false)
+    await settleFold()
+    expect(sessionRowByText('画布草图'), 'chevron fold unmounts the session list').toBeUndefined()
+  })
+
+  it('lights the ancestor line across rows through the FRAMEWORK-internal seat (consumer holds no seat)', async () => {
+    await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    // Two nested folders + a workspace with an open session list: hovering
+    // the folder band must light the SAME column on the session rows below —
+    // the seat lives inside the provider's FileTree (the consumer no longer
+    // carries GuideHover state or guideHitBands of its own).
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
+    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    act(() => { instance.actions.createFolder(alpha, 'beta') })
+    const beta = instance.getSnapshot().folders[alpha]!.folderIds[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-art'), beta) })
+    act(() => { instance.actions.setFolderExpanded(alpha, true) })
+    act(() => { instance.actions.setFolderExpanded(beta, true) })
+    await rerender()
+    click(treeRowByText('绘画收集')!) // open the session list
+    const sessionRow = sessionRowByText('画布草图')!
+    expect(sessionRow.style.backgroundImage, 'no hover → no strokes on the layer rows').toBe('')
+    // Hover the folder band on the beta row: col 0 = alpha — the session
+    // rows' own column 0 is the same alpha stroke, so their line lights up.
+    const betaRow = folderRowByText('beta')!
+    mouseEnter(betaRow.querySelectorAll<HTMLElement>('[class*="guideHit"]')[0]!)
+    expect(sessionRow.style.backgroundImage, 'the framework seat lights the descendant line').toContain(GUIDE_STROKE_HOVER)
+    // Moving off the band clears the seat — the descendant stroke returns
+    // to its resting state (per-row highlight only, nothing stale).
+    act(() => {
+      betaRow.querySelectorAll<HTMLElement>('[class*="guideHit"]')[0]!
+        .dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+    })
+    expect(sessionRow.style.backgroundImage, 'seat cleared → descendant line rests').toBe('')
   })
 })
