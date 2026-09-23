@@ -493,6 +493,41 @@ describe('enhanced workspace browser', () => {
     expect(folderBranch!.textContent).toContain('产品组')
   })
 
+  it('creates a subfolder straight from the folder-row plus, without toggling the row', async () => {
+    await renderBrowser()
+
+    // A collapsed root-level folder to host the subfolder.
+    click(buttonByAria('新建目录')!)
+    let input = [...document.body.querySelectorAll<HTMLInputElement>('input')]
+      .filter(field => field.getAttribute('aria-label') === '目录名称').at(-1)
+    typeText(input!, '产品组')
+    click([...document.body.querySelectorAll('button')].find(button => button.textContent === '确认')!)
+    const folderRow = rowByText('产品组')
+    expect(folderRow, 'the folder row appears').toBeDefined()
+    expect(folderRow!.getAttribute('aria-expanded'), 'new folders start collapsed').toBe('false')
+
+    // The plus sits in the folder row's own action group, tagged for the folder.
+    const plus = folderRow!.querySelector<HTMLButtonElement>(
+      `button[aria-label="${zh.newSubfolderAria.replace('{name}', '产品组')}"]`,
+    )
+    expect(plus, 'the folder row exposes the new-subfolder plus').toBeDefined()
+    click(plus!)
+
+    // The same in-place dialog the menu's "新建子目录" opens: folder-name input.
+    input = [...document.body.querySelectorAll<HTMLInputElement>('input')]
+      .filter(field => field.getAttribute('aria-label') === '目录名称').at(-1)
+    expect(input, 'the row plus opens the create-subfolder dialog').toBeDefined()
+    typeText(input!, '客户端')
+    click([...document.body.querySelectorAll('button')].find(button => button.textContent === '确认')!)
+
+    // The plus click stops propagation: the collapsed folder stays collapsed,
+    // and its new child hides under it until expanded.
+    expect(folderRow!.getAttribute('aria-expanded'), 'clicking the plus does not fold the row').toBe('false')
+    expect(rowByText('客户端'), 'the subfolder hides under the collapsed parent').toBeUndefined()
+    click(folderRow!)
+    expect(rowByText('客户端'), 'the subfolder lands inside the folder').toBeDefined()
+  })
+
   it('deleting a folder promotes its workspaces back to the top level', async () => {
     const props = await renderBrowser()
     // Create 归档 at the root, move 绘画收集 into it.

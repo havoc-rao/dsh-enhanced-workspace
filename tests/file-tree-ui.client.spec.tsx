@@ -790,7 +790,7 @@ describe('fileTreeUi service path (FolderRow)', () => {
 
     // Menu route: new-subfolder opens the input dialog.
     const alphaRow = folderRowByText('alpha')!
-    click(alphaRow.querySelector<HTMLButtonElement>('button[aria-label]')!)
+    click(alphaRow.querySelector<HTMLButtonElement>(`button[aria-label="${zh.rowMenuAria.replace('{name}', 'alpha')}"]`)!)
     expect(menuItemByText(zh.newSubfolder)).toBeDefined()
     click(menuItemByText(zh.newSubfolder)!)
     const folderInput = [...document.body.querySelectorAll<HTMLInputElement>('input')]
@@ -798,7 +798,7 @@ describe('fileTreeUi service path (FolderRow)', () => {
     expect(folderInput, 'new-subfolder opens the folder-name dialog').toBeDefined()
 
     // Menu route: delete opens the confirm dialog.
-    click(folderRowByText('beta')!.querySelector<HTMLButtonElement>('button[aria-label]')!)
+    click(folderRowByText('beta')!.querySelector<HTMLButtonElement>(`button[aria-label="${zh.rowMenuAria.replace('{name}', 'beta')}"]`)!)
     click(menuItemByText(zh.deleteFolderTitle)!)
     expect([...document.body.querySelectorAll('[role="dialog"]')]
       .some(dialog => dialog.textContent?.includes(zh.deleteFolderTitle)),

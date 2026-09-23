@@ -1899,6 +1899,19 @@ function FolderRow(props: {
               </button>
             )}
           />
+          <Tooltip label={callbacks.t('newSubfolder')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={callbacks.t('newSubfolderAria', { name: node.name })}
+              onClick={event => {
+                event.stopPropagation()
+                callbacks.openers.onNewSubfolder(node.folderId)
+              }}
+            >
+              <IconPlusOutline16 />
+            </button>
+          </Tooltip>
         </span>
       </div>
     )
@@ -3629,13 +3642,30 @@ function folderRowModel(props: {
     indentPx: rowIndent(props.ancestors.length),
     active,
     ...(dropZone === undefined ? {} : { dropState: dropZone }),
-    actions: props.fileTreeUi.renderRowMenu({
-      open: props.menu.open(menuKey),
-      onOpenChange: open => props.menu.onOpenChange(menuKey, open),
-      items: folderMenuEntries,
-      onSelect: onFolderMenuSelect,
-      label: callbacks.t('rowMenuAria', { name: node.name }),
-    }),
+    actions: (
+      <>
+        {props.fileTreeUi.renderRowMenu({
+          open: props.menu.open(menuKey),
+          onOpenChange: open => props.menu.onOpenChange(menuKey, open),
+          items: folderMenuEntries,
+          onSelect: onFolderMenuSelect,
+          label: callbacks.t('rowMenuAria', { name: node.name }),
+        })}
+        <Tooltip label={callbacks.t('newSubfolder')} side="bottom" delayMs={500}>
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={callbacks.t('newSubfolderAria', { name: node.name })}
+            onClick={event => {
+              event.stopPropagation()
+              callbacks.openers.onNewSubfolder(node.folderId)
+            }}
+          >
+            <IconPlusOutline16 />
+          </button>
+        </Tooltip>
+      </>
+    ),
     role: 'treeitem',
     draggable: true,
     onDragStart: folderDragStart,
