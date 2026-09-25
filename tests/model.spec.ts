@@ -8,6 +8,7 @@ import type {
   SessionPendingInteractionSnapshot,
 } from '@deepseek-ai/dsh-client-ui-session/client'
 import {
+  ChildAnchorMissingError,
   FolderCycleError,
   FolderDepthExceededError,
   FolderId,
@@ -16,10 +17,10 @@ import {
   FolderRootProtectedError,
   MAX_FOLDER_DEPTH,
   ROOT_FOLDER_ID,
-  WorkspaceAnchorMissingError,
   WorkspaceNotInTreeError,
   adoptWorkspaceIn,
   createFolderIn,
+  folderChild,
   isPersistedViewState,
   deleteFolderIn,
   depthOf,
@@ -46,14 +47,18 @@ import {
   sessionStatusDot,
   treeOrder,
   UNGROUPED_KEY,
+  workspaceChild,
   workspaceSessionStatus,
+  type FolderNode,
   type FolderRecord,
   type FolderTree,
   type ForestResult,
   type ForestView,
   type LiveKeysSlice,
+  type PersistedViewState,
   type SessionPendingInteractions,
   type SubagentDescendantSummary,
+  type WorkspaceLeaf,
 } from '../src/client/model.ts'
 
 const F = (id: string): FolderId => FolderId(id)
@@ -67,8 +72,12 @@ function folder(id: string, name: string, parent: FolderId | null, folderIds: st
     folderId: F(id),
     name,
     parentFolderId: parent,
-    workspaceIds: workspaceIds.map(W),
-    folderIds: folderIds.map(F),
+    // The unified child account: subfolders first, then workspaces (the
+    // legacy accounts' render order) — fixtures stay readable.
+    children: [
+      ...folderIds.map(id => folderChild(F(id))),
+      ...workspaceIds.map(id => workspaceChild(W(id))),
+    ],
     createdAt: NOW,
     updatedAt: NOW,
   }
@@ -77,6 +86,22 @@ function folder(id: string, name: string, parent: FolderId | null, folderIds: st
 function rootTree(workspaceIds: string[] = []): FolderTree {
   return { [ROOT_FOLDER_ID]: folder('root', 'Root', null, [], workspaceIds) }
 }
+
+/** A record's folder-kind children, in account order. */
+const folderIdsOf = (record: FolderRecord | undefined): FolderId[] =>
+  (record?.children ?? []).filter(child => child.kind === 'folder').map(child => child.id as FolderId)
+
+/** A record's workspace-kind children, in account order. */
+const workspaceIdsOf = (record: FolderRecord | undefined): WorkspaceId[] =>
+  (record?.children ?? []).filter(child => child.kind === 'workspace').map(child => child.id as WorkspaceId)
+
+/** The forest's top-level folder rows, in display order. */
+const topFoldersOf = (result: ForestResult): readonly FolderNode[] =>
+  result.topRows.filter(row => row.kind === 'folder').map(row => row.node)
+
+/** The forest's top-level workspace leaves, in display order. */
+const topWorkspacesOf = (result: ForestResult): readonly WorkspaceLeaf[] =>
+  result.topRows.filter(row => row.kind === 'workspace').map(row => row.leaf)
 
 describe('folder tree depth and lookup', () => {
   it('counts depth with root = 1', () => {
@@ -99,8 +124,8 @@ describe('createFolderIn', () => {
   it('appends a new folder to the parent account and stamps both records', () => {
     const tree = rootTree()
     const next = createFolderIn(tree, ROOT_FOLDER_ID, '团队', F('a'), NOW)
-    expect(next.folders[ROOT_FOLDER_ID]?.folderIds).toEqual([F('a')])
-    expect(next.folders[F('a')]).toMatchObject({ name: '团队', parentFolderId: ROOT_FOLDER_ID, workspaceIds: [], folderIds: [] })
+    expect(folderIdsOf(next.folders[ROOT_FOLDER_ID])).toEqual([F('a')])
+    expect(next.folders[F('a')]).toMatchObject({ name: '团队', parentFolderId: ROOT_FOLDER_ID, children: [] })
     expect(next.folders[F('a')]?.updatedAt).toBe(NOW)
   })
 
@@ -154,23 +179,22 @@ describe('deleteFolderIn (promotion)', () => {
     return tree
   }
 
-  it('promotes subfolders first, then workspaces, at the deleted slot in both accounts', () => {
-    // Build: root folderIds = [] then [a]; its workspaces move into `a`, so
-    // the account ends with folderIds = [a], workspaceIds = [].
+  it("promotes the deleted folder's whole child account at its slot (subfolders, then workspaces)", () => {
+    // Build: root children = [a]; its workspaces move into `a`.
     let tree = rootTree(['w1', 'w2'])
     tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
     tree = createFolderIn(tree, F('a'), 'b', F('b'), NOW).folders
     tree = moveWorkspaceIn(tree, W('w1'), F('a'), undefined, NOW)
     tree = moveWorkspaceIn(tree, W('w2'), F('a'), undefined, NOW)
     const rootBefore = tree[ROOT_FOLDER_ID]!
-    expect(rootBefore.folderIds).toEqual([F('a')])
-    expect(rootBefore.workspaceIds).toEqual([])
+    expect(folderIdsOf(rootBefore)).toEqual([F('a')])
+    expect(workspaceIdsOf(rootBefore)).toEqual([])
 
     const next = deleteFolderIn(tree, F('a'), NOW)
     const root = next[ROOT_FOLDER_ID]!
     // Subfolders first, then workspaces, in relative order — all at slot 0.
-    expect(root.folderIds).toEqual([F('b')])
-    expect(root.workspaceIds).toEqual([W('w1'), W('w2')])
+    expect(folderIdsOf(root)).toEqual([F('b')])
+    expect(workspaceIdsOf(root)).toEqual([W('w1'), W('w2')])
     expect(next[F('a')]).toBeUndefined()
     // Promoted child re-parented to the root.
     expect(next[F('b')]?.parentFolderId).toBe(ROOT_FOLDER_ID)
@@ -183,11 +207,34 @@ describe('deleteFolderIn (promotion)', () => {
     tree = createFolderIn(tree, ROOT_FOLDER_ID, 'y', F('y'), NOW).folders
     tree = createFolderIn(tree, F('a'), 'b', F('b'), NOW).folders
     tree = moveWorkspaceIn(tree, W('w1'), F('a'), undefined, NOW)
-    // root folderIds: [x, a, y]; delete `a` at index 1.
+    // root children: [x, a, y] (folders) with [w0] at the head; delete `a`
+    // at its slot, its own children land there.
     const next = deleteFolderIn(tree, F('a'), NOW)
-    expect(next[ROOT_FOLDER_ID]?.folderIds).toEqual([F('x'), F('b'), F('y')])
-    // workspaceIds at the same index: [w0, w1] (w1 promoted at index 1).
-    expect(next[ROOT_FOLDER_ID]?.workspaceIds).toEqual([W('w0'), W('w1')])
+    // Root children: [w0, x, a, y] with a=[b, w1]; the deleted slot splices
+    // the whole mixed account in place.
+    expect(next[ROOT_FOLDER_ID]?.children).toEqual([
+      workspaceChild(W('w0')),
+      folderChild(F('x')),
+      folderChild(F('b')),
+      workspaceChild(W('w1')),
+      folderChild(F('y')),
+    ])
+  })
+
+  it('promotes an interleaved child account keeping its mixed order at the slot', () => {
+    let tree = rootTree(['w0', 'w1'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    tree = moveWorkspaceIn(tree, W('w0'), F('a'), undefined, NOW)
+    tree = createFolderIn(tree, F('a'), 'sub', F('sub'), NOW).folders
+    // Interleave inside `a`: workspace w1, workspace w0, folder sub.
+    tree = moveWorkspaceIn(tree, W('w1'), F('a'), workspaceChild(W('w0')), NOW)
+    const next = deleteFolderIn(tree, F('a'), NOW)
+    expect(next[ROOT_FOLDER_ID]?.children).toEqual([
+      workspaceChild(W('w1')),
+      workspaceChild(W('w0')),
+      folderChild(F('sub')),
+    ])
+    expect(next[F('sub')]?.parentFolderId).toBe(ROOT_FOLDER_ID)
   })
 
   it('protects the root and rejects unknown folders', () => {
@@ -206,23 +253,23 @@ describe('moveFolderIn', () => {
 
   it('reorders within the same parent (anchor / end / no-op)', () => {
     // [a, b, c] → move a before c → [b, a, c].
-    const move = moveFolderIn(tree(), F('a'), F('c'), undefined, NOW)
-    expect(move[ROOT_FOLDER_ID]?.folderIds).toEqual([F('b'), F('a'), F('c')])
+    const move = moveFolderIn(tree(), F('a'), folderChild(F('c')), undefined, NOW)
+    expect(folderIdsOf(move[ROOT_FOLDER_ID])).toEqual([F('b'), F('a'), F('c')])
     // Then a to the end: [b, c, a].
     const toEnd = moveFolderIn(move, F('a'), undefined, undefined, NOW)
-    expect(toEnd[ROOT_FOLDER_ID]?.folderIds).toEqual([F('b'), F('c'), F('a')])
-    expect(moveFolderIn(tree(), F('a'), F('b'), undefined, NOW)[ROOT_FOLDER_ID]?.folderIds)
+    expect(folderIdsOf(toEnd[ROOT_FOLDER_ID])).toEqual([F('b'), F('c'), F('a')])
+    expect(folderIdsOf(moveFolderIn(tree(), F('a'), folderChild(F('b')), undefined, NOW)[ROOT_FOLDER_ID]))
       .toEqual([F('a'), F('b'), F('c')])
   })
 
   it('moves across parents (re-parent + position) and updates parentFolderId', () => {
     const moved = moveFolderIn(tree(), F('b'), undefined, F('a'), NOW)
-    expect(moved[F('a')]?.folderIds).toEqual([F('deep'), F('b')])
+    expect(folderIdsOf(moved[F('a')])).toEqual([F('deep'), F('b')])
     expect(moved[F('b')]?.parentFolderId).toBe(F('a'))
-    expect(moved[ROOT_FOLDER_ID]?.folderIds).toEqual([F('a'), F('c')])
+    expect(folderIdsOf(moved[ROOT_FOLDER_ID])).toEqual([F('a'), F('c')])
     // Anchored insert into the target.
-    const anchored = moveFolderIn(tree(), F('b'), F('deep'), F('a'), NOW)
-    expect(anchored[F('a')]?.folderIds).toEqual([F('b'), F('deep')])
+    const anchored = moveFolderIn(tree(), F('b'), folderChild(F('deep')), F('a'), NOW)
+    expect(folderIdsOf(anchored[F('a')])).toEqual([F('b'), F('deep')])
   })
 
   it('rejects a cycle (self or descendant target), depth overflow, and root moves', () => {
@@ -246,33 +293,63 @@ describe('moveFolderIn', () => {
   it('rejects unknown folders and anchors not in the target', () => {
     const t = tree()
     expect(() => moveFolderIn(t, F('nope'), undefined, ROOT_FOLDER_ID, NOW)).toThrow(FolderNotFoundError)
-    expect(() => moveFolderIn(t, F('a'), F('c'), F('a'), NOW)).toThrow(FolderNotFoundError)
+    expect(() => moveFolderIn(t, F('a'), folderChild(F('c')), F('a'), NOW)).toThrow(ChildAnchorMissingError)
+    // A workspace-kind anchor is a valid folder anchor: move b before w-x.
+    let interleaved = rootTree(['w-x'])
+    interleaved = createFolderIn(interleaved, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    interleaved = createFolderIn(interleaved, ROOT_FOLDER_ID, 'b', F('b'), NOW).folders
+    const moved = moveFolderIn(interleaved, F('b'), workspaceChild(W('w-x')), undefined, NOW)
+    expect(moved[ROOT_FOLDER_ID]?.children).toEqual([
+      folderChild(F('b')),
+      workspaceChild(W('w-x')),
+      folderChild(F('a')),
+    ])
   })
 })
 
 describe('moveWorkspaceIn', () => {
   it('reorders within one folder and moves across folders at the anchor', () => {
     let t = rootTree(['w1', 'w2', 'w3'])
-    const within = moveWorkspaceIn(t, W('w3'), ROOT_FOLDER_ID, W('w1'), NOW)
-    expect(within[ROOT_FOLDER_ID]?.workspaceIds).toEqual([W('w3'), W('w1'), W('w2')])
+    const within = moveWorkspaceIn(t, W('w3'), ROOT_FOLDER_ID, workspaceChild(W('w1')), NOW)
+    expect(workspaceIdsOf(within[ROOT_FOLDER_ID])).toEqual([W('w3'), W('w1'), W('w2')])
     t = createFolderIn(t, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
     const moved = moveWorkspaceIn(t, W('w2'), F('a'), undefined, NOW)
-    expect(moved[F('a')]?.workspaceIds).toEqual([W('w2')])
-    expect(moved[ROOT_FOLDER_ID]?.workspaceIds).toEqual([W('w1'), W('w3')])
+    expect(workspaceIdsOf(moved[F('a')])).toEqual([W('w2')])
+    expect(workspaceIdsOf(moved[ROOT_FOLDER_ID])).toEqual([W('w1'), W('w3')])
+  })
+
+  it('interleaves a workspace between folders via a folder-kind anchor', () => {
+    // moving w-x before folder `b` lands it BETWEEN a and b.
+    let t = rootTree(['w-x'])
+    t = createFolderIn(t, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    t = createFolderIn(t, ROOT_FOLDER_ID, 'b', F('b'), NOW).folders
+    const interleaved = moveWorkspaceIn(t, W('w-x'), ROOT_FOLDER_ID, folderChild(F('b')), NOW)
+    expect(interleaved[ROOT_FOLDER_ID]?.children).toEqual([
+      folderChild(F('a')),
+      workspaceChild(W('w-x')),
+      folderChild(F('b')),
+    ])
+    // The same anchor inside a folder level: w-y lands between a and deep.
+    let inner = createFolderIn(rootTree(['w-y']), ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    inner = createFolderIn(inner, F('a'), 'deep', F('deep'), NOW).folders
+    const inside = moveWorkspaceIn(inner, W('w-y'), F('a'), folderChild(F('deep')), NOW)
+    expect(inside[F('a')]?.children).toEqual([workspaceChild(W('w-y')), folderChild(F('deep'))])
   })
 
   it('rejects unknown targets and workspaces outside the tree', () => {
     const t = rootTree(['w1'])
     expect(() => moveWorkspaceIn(t, W('w1'), F('nope'), undefined, NOW)).toThrow(FolderNotFoundError)
     expect(() => moveWorkspaceIn(t, W('nope'), ROOT_FOLDER_ID, undefined, NOW)).toThrow(WorkspaceNotInTreeError)
-    expect(() => moveWorkspaceIn(t, W('w1'), ROOT_FOLDER_ID, W('nope'), NOW)).toThrow(WorkspaceAnchorMissingError)
+    expect(() => moveWorkspaceIn(t, W('w1'), ROOT_FOLDER_ID, workspaceChild(W('nope')), NOW)).toThrow(ChildAnchorMissingError)
+    // A folder-kind anchor that the target folder does not hold is rejected too.
+    expect(() => moveWorkspaceIn(t, W('w1'), ROOT_FOLDER_ID, folderChild(F('nope')), NOW)).toThrow(ChildAnchorMissingError)
   })
 })
 
 describe('adoptWorkspaceIn', () => {
   it('prepends to the root account and is idempotent', () => {
     const adopted = adoptWorkspaceIn(rootTree([]), W('w1'), NOW)
-    expect(adopted[ROOT_FOLDER_ID]?.workspaceIds).toEqual([W('w1')])
+    expect(workspaceIdsOf(adopted[ROOT_FOLDER_ID])).toEqual([W('w1')])
     expect(adoptWorkspaceIn(adopted, W('w1'), NOW)).toBe(adopted)
   })
 })
@@ -293,8 +370,8 @@ describe('retainLiveKeys', () => {
 
   it('prunes dead workspace ids everywhere but keeps folders', () => {
     const retained = retainLiveKeys(slice(), [W('w1')])
-    expect(retained.folders[F('a')]?.workspaceIds).toEqual([W('w1')])
-    expect(retained.folders[ROOT_FOLDER_ID]?.folderIds).toEqual([F('a')])
+    expect(workspaceIdsOf(retained.folders[F('a')])).toEqual([W('w1')])
+    expect(folderIdsOf(retained.folders[ROOT_FOLDER_ID])).toEqual([F('a')])
     expect(retained.recentTouchById).toEqual({ w1: 1 })
     expect(retained.groupExpansion).toEqual({ w1: true })
     expect(retained.sessionOrderByAccount).toEqual({ w1: ['s'] })
@@ -304,8 +381,28 @@ describe('retainLiveKeys', () => {
 
   it('strips dead workspace memberships from folder accounts without deleting the folder', () => {
     const retained = retainLiveKeys(slice(), [])
-    expect(retained.folders[F('a')]?.workspaceIds).toEqual([])
+    expect(workspaceIdsOf(retained.folders[F('a')])).toEqual([])
     expect(retained.folders[F('a')]).toBeDefined()
+  })
+
+  it('prunes interleaved accounts in place, keeping every folder entry where it sits', () => {
+    let t = rootTree(['w1', 'dead'])
+    t = createFolderIn(t, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    // Interleaved root: w1, a, dead.
+    t = moveWorkspaceIn(t, W('w1'), ROOT_FOLDER_ID, folderChild(F('a')), NOW)
+    const state: LiveKeysSlice = {
+      folders: t,
+      folderExpansion: {},
+      recentTouchById: {},
+      groupExpansion: {},
+      sessionOrderByAccount: {},
+      sessionUpdatedAtByAccount: {},
+    }
+    const retained = retainLiveKeys(state, [W('w1')])
+    expect(retained.folders[ROOT_FOLDER_ID]?.children).toEqual([
+      workspaceChild(W('w1')),
+      folderChild(F('a')),
+    ])
   })
 
   it('returns the same references when nothing is dead', () => {
@@ -322,13 +419,39 @@ describe('retainLiveKeys', () => {
 })
 
 describe('treeOrder', () => {
-  it('walks depth-first: child subtrees before own workspaces, root first', () => {
+  it('walks depth-first following the unified child account, root first', () => {
     let t = rootTree(['w0', 'w1', 'w2'])
     t = createFolderIn(t, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
     t = createFolderIn(t, F('a'), 'b', F('b'), NOW).folders
     t = moveWorkspaceIn(t, W('w1'), F('a'), undefined, NOW)
     t = moveWorkspaceIn(t, W('w2'), F('b'), undefined, NOW)
-    expect(treeOrder(t)).toEqual([W('w2'), W('w1'), W('w0')])
+    // Root children: w0, w2, a — the account order itself (w1 was moved out
+    // after a's workspaces), so w0 surfaces BEFORE the folder subtrees.
+    expect(treeOrder(t)).toEqual([W('w0'), W('w2'), W('w1')])
+    // The classic "folders first" layout still walks folders first: a layout
+    // whose children account leads with its folders.
+    let t2 = rootTree(['w0'])
+    t2 = createFolderIn(t2, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    t2 = createFolderIn(t2, ROOT_FOLDER_ID, 'b', F('b'), NOW).folders
+    t2 = createFolderIn(t2, F('a'), 'deep', F('deep'), NOW).folders
+    t2 = moveWorkspaceIn(t2, W('w0'), ROOT_FOLDER_ID, undefined, NOW) // append after both folders
+    expect(treeOrder(t2)).toEqual([W('w0')])
+  })
+
+  it('follows an interleaved account: workspaces surface at their mixed slot', () => {
+    let t = rootTree(['w0'])
+    t = createFolderIn(t, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    t = createFolderIn(t, ROOT_FOLDER_ID, 'b', F('b'), NOW).folders
+    // Root children: a, w0, b.
+    t = moveWorkspaceIn(t, W('w0'), ROOT_FOLDER_ID, folderChild(F('b')), NOW)
+    expect(treeOrder(t)).toEqual([W('w0')])
+    // w-solo inside b surfaces after b's subtree: b, a, w0 → b's member first.
+    let t2 = rootTree(['w0', 'w-solo'])
+    t2 = createFolderIn(t2, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    t2 = moveWorkspaceIn(t2, W('w-solo'), F('a'), undefined, NOW)
+    t2 = createFolderIn(t2, ROOT_FOLDER_ID, 'b', F('b'), NOW).folders
+    t2 = moveWorkspaceIn(t2, W('w0'), ROOT_FOLDER_ID, folderChild(F('b')), NOW)
+    expect(treeOrder(t2)).toEqual([W('w-solo'), W('w0')])
   })
 })
 
@@ -533,8 +656,7 @@ describe('deriveRecentWorkspaces', () => {
       folderId: ROOT_FOLDER_ID,
       name: 'Root',
       parentFolderId: null,
-      workspaceIds: workspaceIds.map(W),
-      folderIds: [],
+      children: workspaceIds.map(id => workspaceChild(W(id))),
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     },
@@ -627,8 +749,8 @@ describe('deriveRecentWorkspaces', () => {
     // recency row, and the recency row's key never leaks into the tree.
     expect(deriveRecentWorkspaces(workspaces, sessions, {}, 5, { folderExpansion: {}, groupExpansion: { w: true } })[0]?.expanded)
       .toBe(false)
-    expect(deriveFolderForest(sessions, workspaces, rootTreeForRecents(['w']), [], { folderExpansion: {}, groupExpansion: { [recentGroupKey(W('w'))]: true } })
-      .topLevel[0]?.expanded).toBe(false)
+    expect(topWorkspacesOf(deriveFolderForest(sessions, workspaces, rootTreeForRecents(['w']), [], { folderExpansion: {}, groupExpansion: { [recentGroupKey(W('w'))]: true } }))[0]?.expanded)
+      .toBe(false)
 
     const manual = deriveRecentWorkspaces(workspaces, sessions, {}, 5, { ...view, orderBy: 'manual' })
     expect(manual[0]?.sessions.map(session => session.id)).toEqual([S('s1'), S('s2')])
@@ -680,15 +802,33 @@ describe('deriveFolderForest', () => {
       [],
       { folderExpansion: {}, groupExpansion: {} },
     )
-    expect(result.folders).toHaveLength(1)
-    const a = result.folders[0]
+    expect(topFoldersOf(result)).toHaveLength(1)
+    const a = topFoldersOf(result)[0]
     expect(a?.name).toBe('a')
     expect(a?.depth).toBe(1)
-    expect(a?.children.map(child => child.folderId)).toEqual([F('b')])
-    expect(a?.workspaceGroups.map(leaf => leaf.workspaceId)).toEqual([W('w1')])
+    expect(a?.rows.filter(row => row.kind === 'folder').map(row => row.node.folderId)).toEqual([F('b')])
+    expect(a?.rows.filter(row => row.kind === 'workspace').map(row => row.leaf.workspaceId)).toEqual([W('w1')])
     // Root-owned workspaces surface as top-level leaves.
-    expect(result.topLevel.map(leaf => leaf.workspaceId)).toEqual([W('w0')])
+    expect(topWorkspacesOf(result).map(leaf => leaf.workspaceId)).toEqual([W('w0')])
     expect(result.ungrouped).toBeUndefined()
+  })
+
+  it('renders an interleaved level in the stored child order (workspace between two dirs)', () => {
+    let tree = rootTree(['w-mid'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'b', F('b'), NOW).folders
+    // Root children: a, w-mid, b.
+    tree = moveWorkspaceIn(tree, W('w-mid'), ROOT_FOLDER_ID, folderChild(F('b')), NOW)
+    const result = deriveFolderForest(
+      sessionState([]),
+      [workspace('w-mid', [])],
+      tree,
+      [],
+      { folderExpansion: {}, groupExpansion: {} },
+    )
+    expect(result.topRows.map(row => row.kind === 'folder' ? `f:${row.node.name}` : `w:${row.leaf.workspaceId}`))
+      .toEqual(['f:a', 'w:w-mid', 'f:b'])
+    expect(result.topRows[1]).toMatchObject({ kind: 'workspace' })
   })
 
   it('gates sessions by expansion, marks containsCurrent, and buckets stray sessions', () => {
@@ -702,7 +842,7 @@ describe('deriveFolderForest', () => {
       // The ungrouped bucket is a group like any other: expand it to read rows.
       { folderExpansion: { [F('a')]: true }, groupExpansion: { w0: true, [UNGROUPED_KEY]: true } },
     )
-    const w0 = result.topLevel[0]
+    const w0 = topWorkspacesOf(result)[0]
     expect(w0?.sessions.map(session => session.id)).toEqual([S('s0')])
     expect(w0?.containsCurrent).toBe(true)
     expect(result.ungrouped?.key).toBe(UNGROUPED_KEY)
@@ -719,8 +859,8 @@ describe('deriveFolderForest', () => {
     // Account order lists the newest session LAST — 'updated' must re-sort it.
     const sessions = sessionState([summary('old', 100), summary('new', 300)])
     const leaf = (view: ForestView): readonly string[] =>
-      deriveFolderForest(sessions, [workspace('w0', ['old', 'new'])], rootTree(['w0']), [], view)
-        .topLevel[0]!.sessions.map(session => session.id)
+      topWorkspacesOf(deriveFolderForest(sessions, [workspace('w0', ['old', 'new'])], rootTree(['w0']), [], view))[0]!
+        .sessions.map(session => session.id)
 
     expect(leaf(base('updated'))).toEqual([S('new'), S('old')])
     expect(leaf(base(undefined))).toEqual([S('new'), S('old')])
@@ -737,7 +877,7 @@ describe('deriveFolderForest', () => {
       [S('arch')],
       { folderExpansion: {}, groupExpansion: { w0: true } },
     )
-    const w0 = result.topLevel[0]
+    const w0 = topWorkspacesOf(result)[0]
     expect(w0?.sessionCount).toBe(1)
     expect(w0?.sessions.map(session => session.id)).toEqual([S('ok')])
   })
@@ -828,34 +968,34 @@ describe('filterForestByQuery (in-place dirs-list filter)', () => {
 
   it('dir-level match: a workspace title keeps that leaf, everything else hides', () => {
     const filtered = filterForestByQuery(forest(), sessions, workspaces, '文档', [])
-    expect(filtered.folders).toEqual([])
-    expect(filtered.topLevel.map(leaf => leaf.workspaceId)).toEqual([W('w-docs')])
+    expect(topFoldersOf(filtered)).toEqual([])
+    expect(topWorkspacesOf(filtered).map(leaf => leaf.workspaceId)).toEqual([W('w-docs')])
     expect(filtered.ungrouped).toBeUndefined()
   })
 
   it('dir-level match: the cwd basename keeps a renamed workspace leaf', () => {
     const filtered = filterForestByQuery(forest(), sessions, workspaces, 'w-docs', [])
-    expect(filtered.topLevel.map(leaf => leaf.workspaceId)).toEqual([W('w-docs')])
+    expect(topWorkspacesOf(filtered).map(leaf => leaf.workspaceId)).toEqual([W('w-docs')])
   })
 
   it('session-level match keeps the owning dir, and the folder path opens to reveal it', () => {
     const filtered = filterForestByQuery(forest(), sessions, workspaces, '构图', [])
-    expect(filtered.topLevel).toEqual([])
+    expect(topWorkspacesOf(filtered)).toEqual([])
     expect(filtered.ungrouped).toBeUndefined()
-    expect(filtered.folders).toHaveLength(1)
-    const folder = filtered.folders[0]!
+    expect(topFoldersOf(filtered)).toHaveLength(1)
+    const folder = topFoldersOf(filtered)[0]!
     expect(folder.name).toBe('产品组')
-    expect(folder.workspaceGroups.map(leaf => leaf.workspaceId)).toEqual([W('w-art')])
+    expect(folder.rows.filter(row => row.kind === 'workspace').map(row => row.leaf.workspaceId)).toEqual([W('w-art')])
     expect(folder.expanded, 'a folder holding a descendant match opens').toBe(true)
   })
 
   it('a folder name match alone keeps the folder without opening it', () => {
     const filtered = filterForestByQuery(forest(), sessions, workspaces, '产品组', [])
-    expect(filtered.folders).toHaveLength(1)
-    const folder = filtered.folders[0]!
+    expect(topFoldersOf(filtered)).toHaveLength(1)
+    const folder = topFoldersOf(filtered)[0]!
     expect(folder.name).toBe('产品组')
     expect(folder.expanded, 'name-only matches keep the folder‘s own expansion').toBe(false)
-    expect(folder.workspaceGroups, 'non-matching workspaces hide inside a name-matched folder').toEqual([])
+    expect(folder.rows.filter(row => row.kind === 'workspace'), 'non-matching workspaces hide inside a name-matched folder').toEqual([])
   })
 
   it('the ungrouped bucket stays when its label or a stray session title matches', () => {
@@ -865,14 +1005,14 @@ describe('filterForestByQuery (in-place dirs-list filter)', () => {
 
   it('blank / subagent-origin sessions never match, and a blank query passes the forest through unchanged', () => {
     const f = forest()
-    expect(filterForestByQuery(f, sessions, workspaces, '子代理汇报', []).topLevel).toEqual([])
-    expect(filterForestByQuery(f, sessions, workspaces, '子代理汇报', []).folders).toEqual([])
+    expect(topWorkspacesOf(filterForestByQuery(f, sessions, workspaces, '子代理汇报', []))).toEqual([])
+    expect(topFoldersOf(filterForestByQuery(f, sessions, workspaces, '子代理汇报', []))).toEqual([])
     expect(filterForestByQuery(f, sessions, workspaces, '   ', []), 'a blank query returns the forest untouched').toBe(f)
     // Archived sessions never match: the only hit (s1) is hidden, so the
     // whole subtree filters out along with the leaf.
     const archived = filterForestByQuery(f, sessions, workspaces, '画布草图', [S('s1')])
-    expect(archived.topLevel).toEqual([])
-    expect(archived.folders).toEqual([])
+    expect(topWorkspacesOf(archived)).toEqual([])
+    expect(topFoldersOf(archived)).toEqual([])
   })
 })
 
@@ -928,7 +1068,7 @@ describe('isPersistedViewState', () => {
     let folders: FolderTree = {
       root: {
         folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
-        workspaceIds: [], folderIds: [], createdAt: '0', updatedAt: '0',
+        children: [], createdAt: '0', updatedAt: '0',
       },
     }
     folders = adoptWorkspaceIn(folders, W('w1'), NOW)
@@ -958,7 +1098,7 @@ describe('isPersistedViewState', () => {
     const parented = envelope()
     ;(parented.folders as FolderTree).root = {
       folderId: 'root' as FolderId, name: 'Root', parentFolderId: F('f1'),
-      workspaceIds: [], folderIds: [], createdAt: '0', updatedAt: '0',
+      children: [], createdAt: '0', updatedAt: '0',
     }
     expect(isPersistedViewState(parented)).toBe(false)
   })
@@ -968,14 +1108,14 @@ describe('isPersistedViewState', () => {
     const folders = cycle.folders as FolderTree
     folders.root = {
       folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
-      workspaceIds: [W('w1')], folderIds: [], createdAt: '0', updatedAt: '0',
+      children: [workspaceChild(W('w1'))], createdAt: '0', updatedAt: '0',
     }
     const f1 = folders[F('f1')]!
     const f2 = folders[F('f2')]!
     // f1 ↔ f2 mutual parenting: both account checks agree, only the
     // parent-chain walk can reject the loop.
     folders[F('f1')] = { ...f1, parentFolderId: F('f2') }
-    folders[F('f2')] = { ...f2, parentFolderId: F('f1'), folderIds: [F('f1')] }
+    folders[F('f2')] = { ...f2, parentFolderId: F('f1'), children: [folderChild(F('f1'))] }
     expect(isPersistedViewState(cycle)).toBe(false)
   })
 
@@ -991,14 +1131,14 @@ describe('isPersistedViewState', () => {
       delete folders[F('f2')]
       folders.root = {
         folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
-        workspaceIds: [], folderIds: [F('d1')], createdAt: '0', updatedAt: '0',
+        children: [folderChild(F('d1'))], createdAt: '0', updatedAt: '0',
       }
       for (let level = 1; level <= count; level++) {
         const id = F(`d${level}`)
         folders[id] = {
           folderId: id, name: `lvl-${level}`,
           parentFolderId: level === 1 ? ROOT_FOLDER_ID : F(`d${level - 1}`),
-          workspaceIds: [], folderIds: level === count ? [] : [F(`d${level + 1}`)],
+          children: level === count ? [] : [folderChild(F(`d${level + 1}`))],
           createdAt: '0', updatedAt: '0',
         }
       }
@@ -1008,6 +1148,53 @@ describe('isPersistedViewState', () => {
     expect(isPersistedViewState(chain(MAX_FOLDER_DEPTH - 1))).toBe(true)
     // One folder deeper than the cap: rejected.
     expect(isPersistedViewState(chain(MAX_FOLDER_DEPTH))).toBe(false)
+  })
+
+  it('accepts a legacy two-account envelope (folders first) for upgrade reads', () => {
+    const legacy = envelope()
+    const folders = legacy.folders as Record<string, Record<string, unknown>>
+    // Rewrite every record onto the PRE-unified shape: workspaceIds + folderIds.
+    const toLegacy = (record: FolderRecord): Record<string, unknown> => ({
+      folderId: record.folderId,
+      name: record.name,
+      parentFolderId: record.parentFolderId,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      folderIds: record.children.filter(child => child.kind === 'folder').map(child => child.id),
+      workspaceIds: record.children.filter(child => child.kind === 'workspace').map(child => child.id),
+    })
+    for (const [folderId, record] of Object.entries(folders)) {
+      folders[folderId] = toLegacy(record as unknown as FolderRecord)
+    }
+    expect(isPersistedViewState(legacy)).toBe(true)
+  })
+
+  it('rejects records mixing or missing both child-account shapes, and anonymous children entries', () => {
+    const mixed = envelope()
+    const mixedRecord = mixed.folders as FolderTree
+    mixedRecord.root = {
+      folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
+      children: [], workspaceIds: [], folderIds: [], createdAt: '0', updatedAt: '0',
+    } as unknown as FolderRecord
+    expect(isPersistedViewState(mixed)).toBe(false)
+    const none = envelope()
+    ;(none.folders as FolderTree).root = {
+      folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
+      createdAt: '0', updatedAt: '0',
+    } as unknown as FolderRecord
+    expect(isPersistedViewState(none)).toBe(false)
+    const anonymous = envelope()
+    ;(anonymous.folders as FolderTree).root = {
+      folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
+      children: [{ id: 'x' }], createdAt: '0', updatedAt: '0',
+    } as unknown as FolderRecord
+    expect(isPersistedViewState(anonymous)).toBe(false)
+    const duplicated = envelope()
+    ;(duplicated.folders as FolderTree).root = {
+      folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
+      children: [workspaceChild(W('w')), workspaceChild(W('w'))], createdAt: '0', updatedAt: '0',
+    } as unknown as FolderRecord
+    expect(isPersistedViewState(duplicated)).toBe(false)
   })
 
   it('rejects mistyped maps and enums', () => {
@@ -1032,7 +1219,7 @@ describe('restoredState', () => {
     let folders: FolderTree = {
       root: {
         folderId: 'root' as FolderId, name: 'Root', parentFolderId: null,
-        workspaceIds: [W('w2')], folderIds: [], createdAt: '0', updatedAt: '0',
+        children: [workspaceChild(W('w2'))], createdAt: '0', updatedAt: '0',
       },
     }
     folders = adoptWorkspaceIn(folders, W('w2'), NOW)
@@ -1054,9 +1241,9 @@ describe('restoredState', () => {
 
   it('restores the tree and viewing maps, adopting live workspaces the envelope lacks', () => {
     const next = restoredState(envelope(), [W('w1'), W('w2'), W('w3')], NOW)
-    expect(next.folders[F('f2')]?.workspaceIds).toEqual([W('w1')])
-    expect(next.folders[ROOT_FOLDER_ID]?.workspaceIds).toContain(W('w2'))
-    expect(next.folders[ROOT_FOLDER_ID]?.workspaceIds).toContain(W('w3'))
+    expect(workspaceIdsOf(next.folders[F('f2')])).toEqual([W('w1')])
+    expect(workspaceIdsOf(next.folders[ROOT_FOLDER_ID])).toContain(W('w2'))
+    expect(workspaceIdsOf(next.folders[ROOT_FOLDER_ID])).toContain(W('w3'))
     expect(next.folderExpansion[F('f1')]).toBe(true)
     expect(next.groupBy).toBe('flat')
     expect(next.orderBy).toBe('manual')
@@ -1064,11 +1251,37 @@ describe('restoredState', () => {
 
   it('prunes dead workspace ids from every workspace-keyed map and folder account', () => {
     const next = restoredState(envelope(), [W('w1')], NOW)
-    expect(next.folders[ROOT_FOLDER_ID]?.workspaceIds).toEqual([])
+    expect(workspaceIdsOf(next.folders[ROOT_FOLDER_ID])).toEqual([])
     expect(next.recentTouchById).toEqual({ w1: 1 })
     expect(next.groupExpansion).toEqual({ w1: true, 'recent:w1': true })
     expect(next.sessionOrderByAccount).toEqual({ w1: ['s1'] })
     expect(next.sessionUpdatedAtByAccount).toEqual({ w1: { s1: 1 } })
+  })
+
+  it('migrates a legacy two-account envelope onto the unified children shape', () => {
+    const legacy = envelope()
+    const folders = legacy.folders as Record<string, Record<string, unknown>>
+    const toLegacy = (record: FolderRecord): Record<string, unknown> => ({
+      folderId: record.folderId,
+      name: record.name,
+      parentFolderId: record.parentFolderId,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      folderIds: record.children.filter(child => child.kind === 'folder').map(child => child.id),
+      workspaceIds: record.children.filter(child => child.kind === 'workspace').map(child => child.id),
+    })
+    for (const [folderId, record] of Object.entries(folders)) {
+      folders[folderId] = toLegacy(record as unknown as FolderRecord)
+    }
+    const delivered: PersistedViewState = restoredState(legacy, [W('w1'), W('w2')], NOW)
+    // Every record now carries the unified account; nothing reordered.
+    expect(delivered.folders[F('f2')]?.children).toEqual([workspaceChild(W('w1'))])
+    for (const record of Object.values(delivered.folders)) {
+      expect(Array.isArray(record.children)).toBe(true)
+      expect('workspaceIds' in record).toBe(false)
+    }
+    // A subsequent restore round-trips as the unified shape.
+    expect(isPersistedViewState(delivered)).toBe(true)
   })
 
   it('drops expansion keys of folders the envelope does not hold', () => {

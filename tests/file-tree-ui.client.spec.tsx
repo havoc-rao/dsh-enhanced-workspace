@@ -42,12 +42,16 @@ import { GUIDE_STROKE_HOVER as PROVIDER_GUIDE_STROKE_HOVER } from 'dsh-file-tree
 import { DIRECTORY_FLOW_SLOT, SEARCH_SLOT, type EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { createFileTreeUiResolver } from '../src/client/index.tsx'
 import { zh } from '../src/client/locales.ts'
-import { ROOT_FOLDER_ID } from '../src/client/model.ts'
+import { ROOT_FOLDER_ID, type FolderId, type FolderRecord } from '../src/client/model.ts'
 import { sessionMention } from '../src/client/reference.ts'
 import { createEnhancedWorkspaceStore, type EnhancedWorkspaceState } from '../src/client/store.ts'
 import type { GitProbeResultJSON } from '../src/shared/git.ts'
 
 const W = (id: string): WorkspaceId => id as WorkspaceId
+
+/** A record's folder-kind children, in account order. */
+const folderIdsOf = (record: FolderRecord | undefined): FolderId[] =>
+  (record?.children ?? []).filter(child => child.kind === 'folder').map(child => child.id as FolderId)
 
 /** Fixed "now" for deterministic relative-time labels. */
 const NOW = Date.now()
@@ -545,7 +549,7 @@ describe('fileTreeUi service path (flat list + container layer)', () => {
     fileTreeUiSeat = makeFileTreeUiService()
     // One ancestor folder → session rows carry 2 columns (folder + workspace).
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
-    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     act(() => { instance.actions.moveWorkspaceIn(W('w-art'), alpha) })
     act(() => { instance.actions.setFolderExpanded(alpha, true) })
     await rerender()
@@ -697,9 +701,9 @@ describe('fileTreeUi service path (FolderRow)', () => {
     await renderBrowser()
     fileTreeUiSeat = makeFileTreeUiService()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
-    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     act(() => { instance.actions.createFolder(alpha, 'beta') })
-    const beta = instance.getSnapshot().folders[alpha]!.folderIds[0]!
+    const beta = folderIdsOf(instance.getSnapshot().folders[alpha])[0]!
     act(() => { instance.actions.moveWorkspaceIn(W('w-art'), beta) })
     act(() => { instance.actions.setFolderExpanded(alpha, true) })
     act(() => { instance.actions.setFolderExpanded(beta, true) })
@@ -741,9 +745,9 @@ describe('fileTreeUi service path (FolderRow)', () => {
     await renderBrowser()
     fileTreeUiSeat = makeFileTreeUiService()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
-    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     act(() => { instance.actions.createFolder(alpha, 'beta') })
-    const beta = instance.getSnapshot().folders[alpha]!.folderIds[0]!
+    const beta = folderIdsOf(instance.getSnapshot().folders[alpha])[0]!
     act(() => { instance.actions.setFolderExpanded(alpha, true) })
     act(() => { instance.actions.setFolderExpanded(beta, true) })
     await rerender()
@@ -770,9 +774,9 @@ describe('fileTreeUi service path (FolderRow)', () => {
     await renderBrowser()
     fileTreeUiSeat = makeFileTreeUiService()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
-    act(() => { instance.actions.setFolderExpanded(instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!, true) })
+    act(() => { instance.actions.setFolderExpanded(folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!, true) })
     await rerender()
-    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     const drag = dragStartWithPayload(folderRowByText('alpha')!)
     expect(drag.effectAllowed).toBe('move')
     expect(drag.payloads['text/plain']).toBe(alpha)
@@ -782,9 +786,9 @@ describe('fileTreeUi service path (FolderRow)', () => {
     await renderBrowser()
     fileTreeUiSeat = makeFileTreeUiService()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
-    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     act(() => { instance.actions.createFolder(alpha, 'beta') })
-    const beta = instance.getSnapshot().folders[alpha]!.folderIds[0]!
+    const beta = folderIdsOf(instance.getSnapshot().folders[alpha])[0]!
     act(() => { instance.actions.setFolderExpanded(alpha, true) })
     await rerender()
 
@@ -960,7 +964,7 @@ describe('fileTreeUi snapshot flips (all row kinds)', () => {
   it('falls every migrated row kind back to the built-in on unload, white-screen free', async () => {
     const props = await renderBrowser()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
-    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     act(() => { instance.actions.moveWorkspaceIn(W('w-art'), alpha) })
     act(() => { instance.actions.setFolderExpanded(alpha, true) })
     await rerender()
@@ -1000,7 +1004,7 @@ describe('fileTreeUi v2 model building (renderFileTree props)', () => {
     // One folder with the workspace moved in; both levels open so the
     // workspace carries its session rows.
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
-    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     act(() => { instance.actions.moveWorkspaceIn(W('w-art'), alpha) })
     act(() => { instance.actions.setFolderExpanded(alpha, true) })
     act(() => { instance.actions.setGroupExpanded('w-art', true) })
@@ -1116,9 +1120,9 @@ describe('fileTreeUi v2 model building (renderFileTree props)', () => {
     // the seat lives inside the provider's FileTree (the consumer no longer
     // carries GuideHover state or guideHitBands of its own).
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
-    const alpha = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     act(() => { instance.actions.createFolder(alpha, 'beta') })
-    const beta = instance.getSnapshot().folders[alpha]!.folderIds[0]!
+    const beta = folderIdsOf(instance.getSnapshot().folders[alpha])[0]!
     act(() => { instance.actions.moveWorkspaceIn(W('w-art'), beta) })
     act(() => { instance.actions.setFolderExpanded(alpha, true) })
     act(() => { instance.actions.setFolderExpanded(beta, true) })

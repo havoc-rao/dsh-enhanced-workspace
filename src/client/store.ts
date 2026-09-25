@@ -21,6 +21,7 @@ import {
   renameFolderIn,
   restoredState,
   retainLiveKeys,
+  type FolderChild,
   type FolderId,
   type FolderTree,
   type LiveKeysSlice,
@@ -89,11 +90,11 @@ type EnhancedWorkspaceActions = {
   renameFolder: (draft: EnhancedWorkspaceState, folderId: FolderId, name: string) => void
   /** Delete a folder, promoting its children into the parent; the root is protected. */
   deleteFolder: (draft: EnhancedWorkspaceState, folderId: FolderId) => void
-  /** Move a folder (re-parent + sibling positioning); cycle/depth guards throw. */
+  /** Move a folder (re-parent + child positioning); cycle/depth guards throw. */
   moveFolder: (
     draft: EnhancedWorkspaceState,
     folderId: FolderId,
-    beforeFolderId?: FolderId,
+    beforeChild?: FolderChild,
     parentFolderId?: FolderId,
   ) => void
   /** Move a workspace into a folder at the anchor (omitted anchor appends). */
@@ -101,7 +102,7 @@ type EnhancedWorkspaceActions = {
     draft: EnhancedWorkspaceState,
     workspaceId: WorkspaceId,
     targetFolderId: FolderId,
-    beforeWorkspaceId?: WorkspaceId,
+    beforeChild?: FolderChild,
   ) => void
   /** Adopt a Host-created workspace at the root account head (idempotent). */
   adoptWorkspace: (draft: EnhancedWorkspaceState, workspaceId: WorkspaceId) => void
@@ -134,8 +135,7 @@ export function createEnhancedWorkspaceStore(): EngineStoreHandle<EnhancedWorksp
           folderId: 'root' as FolderId,
           name: 'Root',
           parentFolderId: null,
-          workspaceIds: [],
-          folderIds: [],
+          children: [],
           createdAt: '0',
           updatedAt: '0',
         },
@@ -197,11 +197,11 @@ export function createEnhancedWorkspaceStore(): EngineStoreHandle<EnhancedWorksp
         draft.folders = deleteFolderIn(draft.folders, folderId, now())
         delete draft.folderExpansion[folderId]
       },
-      moveFolder: (draft, folderId, beforeFolderId, parentFolderId) => {
-        draft.folders = moveFolderIn(draft.folders, folderId, beforeFolderId, parentFolderId, now())
+      moveFolder: (draft, folderId, beforeChild, parentFolderId) => {
+        draft.folders = moveFolderIn(draft.folders, folderId, beforeChild, parentFolderId, now())
       },
-      moveWorkspaceIn: (draft, workspaceId, targetFolderId, beforeWorkspaceId) => {
-        draft.folders = moveWorkspaceIn(draft.folders, workspaceId, targetFolderId, beforeWorkspaceId, now())
+      moveWorkspaceIn: (draft, workspaceId, targetFolderId, beforeChild) => {
+        draft.folders = moveWorkspaceIn(draft.folders, workspaceId, targetFolderId, beforeChild, now())
       },
       adoptWorkspace: (draft, workspaceId) => {
         draft.folders = adoptWorkspaceIn(draft.folders, workspaceId, now())

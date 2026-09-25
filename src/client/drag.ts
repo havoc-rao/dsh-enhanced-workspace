@@ -6,23 +6,33 @@
  * operation through the store actions, which enforce the tree guards
  * (cycle / depth / root / sibling names) and fail non-fatally.
  *
- * Drop semantics follow the design doc FR-1: a workspace dragged onto a
- * folder row's MIDDLE ('on') moves INTO that folder (appended); the row's
- * BOTTOM edge ('after') also moves INTO it; the row's TOP EDGE / the gap
- * above it ('before') anchors the workspace BEFORE the folder row — folders
- * and workspaces cannot interleave at one level, so the anchor is
- * represented as the workspace account of the folder's PARENT (the outer
- * level, appended). A workspace dragged onto a workspace row anchors
- * before/after it inside that row's owning folder. A folder dragged onto a
- * folder row moves under it ('on') or reorders relative to it
- * ('before'/'after'). Interleaving folders and workspaces at one level is
- * not representable, so folder targets never serve as workspace anchors and
- * vice versa. Dropping a row onto itself is a no-op.
+ * Drop semantics follow the design doc FR-1 with one level's children now
+ * living in ONE unified account (folders and workspaces interleave): a
+ * workspace dragged onto a folder row's MIDDLE ('on') moves INTO that folder
+ * (appended); the row's TOP/BOTTOM edges ('before'/'after') position the
+ * workspace at that folder's own slot in its parent level — directly before
+ * or after the folder row, interleaving the level (a top-level folder's
+ * parent is the root, so the workspace lands at the browser's top level). A
+ * workspace dragged onto a workspace row anchors before/after it inside that
+ * row's owning folder. A folder dragged onto a folder row moves under it
+ * ('on') or reorders relative to it; a folder dragged onto a workspace row
+ * reorders relative to that workspace (folders and workspaces are equal
+ * anchor citizens now). Dropping a row onto itself is a no-op.
  * @module dsh-enhanced-workspace/client/drag
  */
 
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { FolderId, folderOfWorkspace, ROOT_FOLDER_ID, type FolderId as FolderIdBrand, type FolderTree } from './model.ts'
+import {
+  FolderId,
+  ROOT_FOLDER_ID,
+  folderChild,
+  folderOfWorkspace,
+  isChildOf,
+  workspaceChild,
+  type FolderChild,
+  type FolderId as FolderIdBrand,
+  type FolderTree,
+} from './model.ts'
 
 /** What is being dragged. */
 export type DragKind = 'workspace' | 'folder'
@@ -46,8 +56,8 @@ export interface DropTarget {
 /** Outcome of a drop resolution: nothing to do, or a move to dispatch. */
 export type DropResolution =
   | { kind: 'noop' }
-  | { kind: 'move-workspace'; folderId: FolderIdBrand; beforeWorkspaceId?: WorkspaceId }
-  | { kind: 'move-folder'; beforeFolderId?: FolderIdBrand; parentFolderId?: FolderIdBrand }
+  | { kind: 'move-workspace'; folderId: FolderIdBrand; beforeChild?: FolderChild }
+  | { kind: 'move-folder'; beforeChild?: FolderChild; parentFolderId?: FolderIdBrand }
 
 /**
  * Drop zone over a workspace row: the pointer above the row's midpoint lands
@@ -61,7 +71,8 @@ export function rowDropZone(rect: Pick<DOMRect, 'top' | 'height'>, clientY: numb
 
 /**
  * Drop zone over a folder row: a middle band means 'on' (move into that
- * folder); the edges reorder relative to the folder row within its parent.
+ * folder); the edges position the row relative to that folder within its
+ * parent level.
  * @param rect - the target row's bounding rect.
  * @param clientY - the pointer's viewport Y.
  */
@@ -74,18 +85,16 @@ export function folderDropZone(rect: Pick<DOMRect, 'top' | 'height'>, clientY: n
 
 /**
  * Resolve dropping a workspace onto a target row:
- * - folder target, 'on' or 'after': move into that folder, appended
- *   ("拖到目录行 = 移入该目录末尾");
- * - folder target, 'before': the gap above the folder row — the workspace
- *   anchors BEFORE the folder, i.e. at the OUTER level: the folder's parent
- *   folder's workspace account, appended (interleaving folders and
- *   workspaces at one level is not representable, so "before this folder
- *   row" becomes "into its parent"); a top-level folder's parent is the
- *   root, so the workspace lands at the browser's top level;
+ * - folder target, 'on': move into that folder, appended ("拖到目录行正中 =
+ *   移入该目录末尾");
+ * - folder target, 'before' / 'after': position the workspace at the folder
+ *   row's own slot in the parent level — before or after the folder row,
+ *   interleaving the level (levels share one child account, so no outer-level
+ *   fallback is needed anymore);
  * - workspace target: anchor-insert inside the target's owning folder —
  *   'before' inserts right before it, 'after' right after it (or appends when
- *   the target is the folder's last workspace). Dropping onto the workspace's
- *   own row is a no-op.
+ *   the target is the level's last child). Dropping onto the workspace's own
+ *   row is a no-op.
  * @param folders - the plugin's folder tree (display authority).
  * @param workspaceId - the dragged workspace.
  * @param targetKind - the drop-target row kind.
@@ -102,57 +111,86 @@ export function resolveWorkspaceDrop(
   zone: DropZone,
 ): DropResolution {
   if (targetKind === 'folder') {
+    if (zone === 'on') return { kind: 'move-workspace', folderId: FolderId(targetId) }
+    const parentId = folders[targetId as FolderId]?.parentFolderId
+    if (parentId === null || parentId === undefined) return { kind: 'noop' }
     if (zone === 'before') {
-      const parentId = folders[targetId as FolderId]?.parentFolderId
-      if (parentId === null || parentId === undefined) return { kind: 'noop' }
-      return { kind: 'move-workspace', folderId: parentId }
+      return { kind: 'move-workspace', folderId: parentId, beforeChild: folderChild(FolderId(targetId)) }
     }
-    return { kind: 'move-workspace', folderId: FolderId(targetId) }
+    // 'after': insert after the folder row at its parent level.
+    const parent = folders[parentId]
+    const at = parent?.children.findIndex(child => isChildOf(child, 'folder', targetId)) ?? -1
+    const next = parent?.children[at + 1]
+    if (next !== undefined) return { kind: 'move-workspace', folderId: parentId, beforeChild: next }
+    return { kind: 'move-workspace', folderId: parentId }
   }
   if (targetId === workspaceId) return { kind: 'noop' }
   const ownerId = folderOfWorkspace(folders, targetId as WorkspaceId) ?? ROOT_FOLDER_ID
   const owner = folders[ownerId]
   if (owner !== undefined && zone === 'after') {
-    const at = owner.workspaceIds.indexOf(targetId as WorkspaceId)
-    const next = owner.workspaceIds[at + 1]
-    if (next !== undefined) return { kind: 'move-workspace', folderId: ownerId, beforeWorkspaceId: next }
+    const at = owner.children.findIndex(child => isChildOf(child, 'workspace', targetId))
+    const next = owner.children[at + 1]
+    if (next !== undefined) return { kind: 'move-workspace', folderId: ownerId, beforeChild: next }
   }
   return {
     kind: 'move-workspace',
     folderId: ownerId,
-    ...(zone === 'before' ? { beforeWorkspaceId: targetId as WorkspaceId } : {}),
+    ...(zone === 'before' ? { beforeChild: workspaceChild(targetId as WorkspaceId) } : {}),
   }
 }
 
 /**
- * Resolve dropping a folder onto a target folder row:
- * - 'on' moves it under the target (appended);
- * - 'before' reorders it right before the target inside the target's parent;
- * - 'after' reorders it right after the target (or appends when the target
- *   is its parent's last folder). Dropping the folder onto itself is a no-op.
+ * Resolve dropping a folder onto a target row:
+ * - folder target, 'on': move it under the target (appended);
+ * - folder target, 'before' / 'after': reorder it relative to the target
+ *   inside the target's parent level;
+ * - workspace target: reorder it relative to that workspace row inside the
+ *   workspace's owning folder ('before' / 'after'; appends when the target is
+ *   the level's last child) — folders and workspaces interleave as equals.
+ * Dropping the folder onto itself is a no-op.
  * Cycle / depth / root guards stay with the store action.
  * @param folders - the plugin's folder tree.
  * @param folderId - the dragged folder.
- * @param targetId - the drop-target folder row.
+ * @param targetKind - the drop-target row kind.
+ * @param targetId - the drop-target row id (folder id or workspace id).
  * @param zone - the pointer zone over the target row.
- * @returns the drop resolution; `{}`-like no-op when the target is not a folder.
+ * @returns the drop resolution; a no-op when the target cannot serve as an anchor.
  */
 export function resolveFolderDrop(
   folders: FolderTree,
   folderId: FolderIdBrand,
-  targetId: FolderIdBrand,
+  targetKind: 'folder' | 'workspace',
+  targetId: string,
   zone: DropZone,
 ): DropResolution {
+  if (targetKind === 'workspace') {
+    if (zone === 'on') return { kind: 'noop' }
+    const ownerId = folderOfWorkspace(folders, targetId as WorkspaceId) ?? ROOT_FOLDER_ID
+    const owner = folders[ownerId]
+    if (owner === undefined) return { kind: 'noop' }
+    if (zone === 'before') {
+      return { kind: 'move-folder', parentFolderId: ownerId, beforeChild: workspaceChild(targetId as WorkspaceId) }
+    }
+    const at = owner.children.findIndex(child => isChildOf(child, 'workspace', targetId))
+    const next = owner.children[at + 1]
+    if (next !== undefined) return { kind: 'move-folder', parentFolderId: ownerId, beforeChild: next }
+    return { kind: 'move-folder', parentFolderId: ownerId }
+  }
   if (folderId === targetId) return { kind: 'noop' }
-  const target = folders[targetId]
+  const target = folders[targetId as FolderIdBrand]
   if (target === undefined) return { kind: 'noop' }
-  if (zone === 'on') return { kind: 'move-folder', parentFolderId: targetId }
+  if (zone === 'on') return { kind: 'move-folder', parentFolderId: targetId as FolderIdBrand }
   const parentId = target.parentFolderId
   if (parentId === null) return { kind: 'noop' }
   const parent = folders[parentId]
   if (parent === undefined) return { kind: 'noop' }
-  if (zone === 'before') return { kind: 'move-folder', beforeFolderId: targetId, parentFolderId: parentId }
-  const next = parent.folderIds[parent.folderIds.indexOf(targetId) + 1]
-  if (next !== undefined) return { kind: 'move-folder', beforeFolderId: next, parentFolderId: parentId }
+  if (zone === 'before') {
+    return { kind: 'move-folder', parentFolderId: parentId, beforeChild: folderChild(targetId as FolderIdBrand) }
+  }
+  const at = parent.children.findIndex(child => isChildOf(child, 'folder', targetId))
+  const next = parent.children[at + 1]
+  // The dragged folder sitting right after the target resolves to the
+  // self-anchor; the model treats "before itself" as a no-op.
+  if (next !== undefined) return { kind: 'move-folder', parentFolderId: parentId, beforeChild: next }
   return { kind: 'move-folder', parentFolderId: parentId }
 }

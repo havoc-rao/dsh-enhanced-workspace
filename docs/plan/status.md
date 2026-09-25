@@ -47,8 +47,9 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
     点击/打开不再 touch）、UI 不展示计数与相对时间、独立展开键
     `recent:<id>`（前缀键随工作区清账）；
   - 会话排序策略：`orderBy` updated（活动倒序，默认）/ manual（账号顺序）；
-  - 拖拽状态机（`drag.ts` 纯函数 + HTML5 DnD 接线：目录行 = 移入末尾、
-    行间 = 锚点插入、自拖 noop、环/深度守卫非致命）；
+  - 拖拽状态机（`drag.ts` 纯函数 + HTML5 DnD 接线：目录行正中 = 移入末尾、
+    行上/下边 = 在目录行自己位置插入、行间 = 锚点插入、自拖 noop、环/深度
+    守卫非致命）；
   - 圆角同步：行的 current-session wash 与拖拽指示器（dropBefore/After/On）
     统一读取行级 `--dsw-row-radius`（全树统一 8px，folder 行同步为
     workspace·session 常规 hover 的圆角），任何状态不改变行的 fillet
@@ -197,6 +198,35 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   （Browser/contract/index + 3 个 spec 文件，均为迁移前既有代码，零处在本
   功能新增模块）。功能代码本身验证不受影响；待上游迁移定稿后随 V1→V2
   升级一并清理。
+
+### 目录/工作区同层穿插排列（unified children 账户）
+
+- **需求**：原 `FolderRecord` 是两个独立有序账户（`folderIds` + `workspaceIds`），
+  渲染固定「子目录在前、工作区在后」——目录与工作区无法同层交错（拖拽
+  语义被迫「目录行上边 = 落到父级末尾」）。
+- **数据面**：`FolderRecord.children: FolderChild[]`（`{kind:'folder'|'workspace',
+  id}` 单一有序账户）取代双账户；`createFolderIn` / `deleteFolderIn`（整体
+  子账户插回被删槽位）/ `moveFolderIn` / `moveWorkspaceIn`（锚点统一为
+  `beforeChild`，可指向任意 kind）/ `adoptWorkspaceIn`（头插）/ `folderOfWorkspace`
+  / `treeOrder`（按 child 顺序深度优先）/ `retainLiveKeys`（保位剪枝）全部
+  迁移。派生层 `FolderNode.children+workspaceGroups` → 单一 `rows`（可交错），
+  `ForestResult.folders+topLevel` → 单一 `topRows`；两条渲染路径（内置
+  `FolderRow` 与 fileTreeUi v2 `folderRowModel`）按序渲染混合行。
+- **拖拽**：目录行正中（'on'）= 移入该目录末尾；上/下边 = 在该目录行自己
+  槽位插入（上 = 锚自己，下 = 锚下一个兄弟）；工作区行与目录行互为锚点
+  （目录也可拖到工作区行前/后重排）；原「拖到目录行上边 → 父级末尾」的
+  兜底语义删除，append 预览提示只对 'on' 触发。
+- **信封兼容**：旧双账户信封仍可读（host `validateEnvelope` 与 client
+  `isPersistedViewState` 双形状接受、逐记录互斥校验；父反查按各自形状
+  解析），`restoredState` 边界迁移为 `children`（子目录在前、工作区在后，
+  与旧渲染序一致，升级不重排）；应用态永远写回统一形状。信封结构改动
+  已同步 host/storage.ts 与 client/model.ts 两侧校验（AGENTS.md 硬约束）。
+- **验证**：`pnpm typecheck` 0 错误；`pnpm test` **327/327**（新增
+  穿插/迁移/互斥形状用例：deleteFolderIn 混合提升、moveFolderIn/
+  moveWorkspaceIn kind 互锚、treeOrder/deriveFolderForest/filterForestByQuery
+  交错序、isPersistedViewState/restoredState/host 校验双形状等 18 例）；
+  `pnpm build` 双通道 + 纯度门通过。行为变更：目录行下边（原「移入」）与
+  上边（原「父级末尾」）现在都是同层穿插。
 
 ## 关键约束备忘
 

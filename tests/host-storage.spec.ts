@@ -17,15 +17,18 @@ import {
   validateEnvelope,
   writeEnvelopeFile,
   type PersistedEnvelope,
+  type PersistedFolderRecord,
 } from '../src/host/storage.ts'
 
 const HOME = '/Users/tester'
-const ROOT_RECORD = {
+const ROOT_RECORD: PersistedFolderRecord = {
   folderId: 'root',
   name: 'Root',
   parentFolderId: null,
-  workspaceIds: [],
-  folderIds: ['f1'],
+  children: [
+    { kind: 'folder', id: 'f1' },
+    { kind: 'workspace', id: 'w0' },
+  ],
   createdAt: '0',
   updatedAt: '0',
 }
@@ -39,8 +42,10 @@ function validEnvelope(): PersistedEnvelope {
         folderId: 'f1',
         name: '团队',
         parentFolderId: 'root',
-        workspaceIds: ['w1'],
-        folderIds: ['f2'],
+        children: [
+          { kind: 'folder', id: 'f2' },
+          { kind: 'workspace', id: 'w1' },
+        ],
         createdAt: '2026-09-04T00:00:00.000Z',
         updatedAt: '2026-09-04T00:00:00.000Z',
       },
@@ -48,8 +53,7 @@ function validEnvelope(): PersistedEnvelope {
         folderId: 'f2',
         name: '产品',
         parentFolderId: 'f1',
-        workspaceIds: ['w2'],
-        folderIds: [],
+        children: [{ kind: 'workspace', id: 'w2' }],
         createdAt: '2026-09-04T00:00:00.000Z',
         updatedAt: '2026-09-04T00:00:00.000Z',
       },
@@ -61,6 +65,18 @@ function validEnvelope(): PersistedEnvelope {
     groupExpansion: { w1: true, 'recent:w1': true },
     sessionOrderByAccount: { w1: ['s1', 's2'], __flat_session_order__: [] },
     sessionUpdatedAtByAccount: { w1: { s1: 1, s2: 2 } },
+  }
+}
+
+/** Rewrite a unified-shape record onto the legacy two-account shape. */
+function toLegacy(record: { children?: Array<{ kind: 'folder' | 'workspace'; id: string }> }): Record<string, unknown> {
+  const pf = (record.children ?? []).filter(child => child.kind === 'folder').map(child => child.id)
+  const pw = (record.children ?? []).filter(child => child.kind === 'workspace').map(child => child.id)
+  return {
+    ...record,
+    folderIds: pf,
+    workspaceIds: pw,
+    children: undefined,
   }
 }
 
@@ -148,22 +164,57 @@ describe('validateEnvelope', () => {
 
   it('rejects a child that does not exist, that names the wrong parent, or that the parent does not list', () => {
     const ghost = envelope()
-    ghost.folders.f1 = { ...ghost.folders.f1!, folderIds: ['ghost'] }
+    ghost.folders.f1 = { ...ghost.folders.f1!, children: [{ kind: 'folder', id: 'ghost' }] }
     expect(validateEnvelope(ghost)).toBe(false)
     const wrongParent = envelope()
     wrongParent.folders.f2 = { ...wrongParent.folders.f2!, parentFolderId: 'root' }
     expect(validateEnvelope(wrongParent)).toBe(false)
     // root does not list f1, but f1 claims root: both sides must agree.
     const unlisted = envelope()
-    unlisted.folders.root = { ...unlisted.folders.root!, folderIds: [] }
+    unlisted.folders.root = { ...unlisted.folders.root!, children: [{ kind: 'workspace', id: 'w0' }] }
     expect(validateEnvelope(unlisted)).toBe(false)
+  })
+
+  it('accepts a legacy two-account envelope (pre-upgrade files stay readable)', () => {
+    const legacy = envelope()
+    for (const [folderId, record] of Object.entries(legacy.folders)) {
+      legacy.folders[folderId as keyof PersistedEnvelope['folders']] = toLegacy(record) as never
+    }
+    expect(validateEnvelope(legacy)).toBe(true)
+  })
+
+  it('rejects records mixing or missing both child-account shapes, and malformed children entries', () => {
+    const mixed = envelope()
+    mixed.folders.f1 = {
+      ...mixed.folders.f1!,
+      children: [],
+      workspaceIds: ['w1'],
+      folderIds: [],
+    } as unknown as PersistedEnvelope['folders'][string]
+    expect(validateEnvelope(mixed)).toBe(false)
+    const none = envelope()
+    delete (none.folders.f1 as Partial<PersistedEnvelope['folders'][string]>).children
+    expect(validateEnvelope(none)).toBe(false)
+    const anonymous = envelope()
+    anonymous.folders.f1 = { ...anonymous.folders.f1!, children: [{ id: 'x' }] } as unknown as PersistedEnvelope['folders'][string]
+    expect(validateEnvelope(anonymous)).toBe(false)
+    const duplicated = envelope()
+    duplicated.folders.f1 = {
+      ...duplicated.folders.f1!,
+      children: [
+        { kind: 'folder', id: 'f2' },
+        { kind: 'workspace', id: 'w1' },
+        { kind: 'workspace', id: 'w1' },
+      ],
+    } as unknown as PersistedEnvelope['folders'][string]
+    expect(validateEnvelope(duplicated)).toBe(false)
   })
 
   it('rejects a folder cycle', () => {
     const cycle = envelope()
-    cycle.folders.root = { ...ROOT_RECORD, folderIds: ['f1'] }
-    cycle.folders.f1 = { ...cycle.folders.f1!, parentFolderId: 'f2', folderIds: ['f2'] }
-    cycle.folders.f2 = { ...cycle.folders.f2!, parentFolderId: 'f1', folderIds: ['f1'] }
+    cycle.folders.root = { ...ROOT_RECORD, children: [{ kind: 'folder', id: 'f1' }] }
+    cycle.folders.f1 = { ...cycle.folders.f1!, parentFolderId: 'f2', children: [{ kind: 'folder', id: 'f2' }] }
+    cycle.folders.f2 = { ...cycle.folders.f2!, parentFolderId: 'f1', children: [{ kind: 'folder', id: 'f1' }] }
     expect(validateEnvelope(cycle)).toBe(false)
   })
 
@@ -175,18 +226,17 @@ describe('validateEnvelope', () => {
       // the bidirectional account checks pass and the walk decides.
       delete next.folders.f1
       delete next.folders.f2
-      next.folders.root = { ...ROOT_RECORD, folderIds: ['d1'] }
+      next.folders.root = { ...ROOT_RECORD, children: [{ kind: 'folder', id: 'd1' }] }
       for (let level = 1; level <= count; level++) {
         const id = `d${level}`
-        next.folders[id] = {
+        next.folders[id as keyof PersistedEnvelope['folders']] = {
           folderId: id,
           name: `lvl-${level}`,
           parentFolderId: level === 1 ? 'root' : `d${level - 1}`,
-          workspaceIds: [],
-          folderIds: level === count ? [] : [`d${level + 1}`],
+          children: level === count ? [] : [{ kind: 'folder', id: `d${level + 1}` }],
           createdAt: '0',
           updatedAt: '0',
-        }
+        } as PersistedEnvelope['folders'][string]
       }
       return next
     }

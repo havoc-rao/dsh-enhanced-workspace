@@ -36,13 +36,20 @@ export const MAX_ENVELOPE_BYTES = 1024 * 1024
 /** Maximum tree depth, root included — the client's model cap, mirrored for validation. */
 export const MAX_FOLDER_DEPTH = 6
 
-/** One durable folder record of the persisted envelope (see the client's FolderRecord). */
+/**
+ * One durable folder record of the persisted envelope (see the client's
+ * FolderRecord). The child account is the unified `children` list
+ * (subfolders and workspaces interleave); legacy envelopes written before
+ * the unified account still carry the `folderIds` + `workspaceIds` pair and
+ * stay readable — validation accepts exactly one of the two shapes.
+ */
 export interface PersistedFolderRecord {
   folderId: string
   name: string
   parentFolderId: string | null
-  workspaceIds: string[]
-  folderIds: string[]
+  children?: Array<{ kind: 'folder' | 'workspace'; id: string }>
+  workspaceIds?: string[]
+  folderIds?: string[]
   createdAt: string
   updatedAt: string
 }
@@ -95,11 +102,20 @@ function isFiniteNumberTable(value: unknown): value is Record<string, Record<str
   return isPlainRecord(value) && Object.values(value).every(isFiniteNumberRecord)
 }
 
+function isFolderChild(value: unknown): value is { kind: 'folder' | 'workspace'; id: string } {
+  return isPlainRecord(value)
+    && (value.kind === 'folder' || value.kind === 'workspace')
+    && typeof value.id === 'string'
+}
+
 /**
  * Whether `value` is one structurally sound {@link PersistedEnvelope}: exact
  * top-level key set, typed maps, and a folder tree that is cycle-free,
- * depth-capped, root-anchored, and bidirectionally accounted (every child is
- * listed by its parent and every listed child names that parent). Strict by
+ * depth-capped, root-anchored, and bidirectionally accounted (every folder
+ * child is listed by its parent and every listed folder child names that
+ * parent back). Every record carries exactly one child-account shape — the
+ * unified `children` list or the legacy `folderIds` + `workspaceIds` pair —
+ * so envelopes written before the unified account still load. Strict by
  * design — the client's model functions are cycle-guarded and fail loud, so
  * the durable boundary must reject anything they cannot render.
  * @param value - candidate envelope (any JSON value).
@@ -127,18 +143,50 @@ export function validateEnvelope(value: unknown): value is PersistedEnvelope {
     if (!isPlainRecord(record)) return false
     if (record.folderId !== key) return false
     if (typeof record.name !== 'string' || record.name.trim() === '') return false
-    if (!isStringArray(record.workspaceIds) || !isStringArray(record.folderIds)) return false
     if (typeof record.createdAt !== 'string' || typeof record.updatedAt !== 'string') return false
+    // Exactly one child-account shape per record.
+    const unified = Array.isArray(record.children)
+    const legacy = Array.isArray(record.workspaceIds) && Array.isArray(record.folderIds)
+    if (unified === legacy) return false
+    let children: unknown[]
+    if (unified) {
+      children = record.children as unknown[]
+      const seen = new Set<string>()
+      for (const child of children) {
+        if (!isFolderChild(child)) return false
+        const childKey = `${child.kind}\u0000${child.id}`
+        if (seen.has(childKey)) return false
+        seen.add(childKey)
+      }
+    } else {
+      const workspaceIds = record.workspaceIds as unknown[]
+      const folderIds = record.folderIds as unknown[]
+      if (!workspaceIds.every(item => typeof item === 'string')
+        || !folderIds.every(item => typeof item === 'string')) return false
+      children = [
+        ...folderIds.map(id => ({ kind: 'folder', id })),
+        ...workspaceIds.map(id => ({ kind: 'workspace', id })),
+      ] as unknown[]
+    }
     const parent = record.parentFolderId
     if (parent !== null) {
       if (typeof parent !== 'string') return false
-      const parentRecord = folders[parent] as { readonly folderIds: unknown } | undefined
-      if (parentRecord === undefined || !Array.isArray(parentRecord.folderIds) || !parentRecord.folderIds.includes(key)) return false
+      const parentRecord = folders[parent] as { readonly children?: unknown; readonly folderIds?: unknown } | undefined
+      if (parentRecord === undefined) return false
+      // Back-refs resolve against the parent's folder-kind children in EITHER
+      // shape (legacy accounts render folders-first, so the normalized walk
+      // and the legacy walk agree on membership).
+      const listed = Array.isArray(parentRecord.children)
+        ? (parentRecord.children as unknown[]).some(child => isFolderChild(child) && child.kind === 'folder' && child.id === key)
+        : Array.isArray(parentRecord.folderIds) && (parentRecord.folderIds as unknown[]).includes(key)
+      if (!listed) return false
     }
-    // Child accounts: every listed child exists and names this folder back.
-    for (const childId of record.folderIds) {
-      const child = folders[childId] as { readonly parentFolderId: unknown } | undefined
-      if (child === undefined || child.parentFolderId !== key) return false
+    // Folder-kind children must exist and name this folder back; workspace
+    // ids are opaque leaves with no back-reference.
+    for (const child of children as Array<{ kind: string; id: string }>) {
+      if (child.kind !== 'folder') continue
+      const childRecord = folders[child.id] as { readonly parentFolderId: unknown } | undefined
+      if (childRecord === undefined || childRecord.parentFolderId !== key) return false
     }
   }
 

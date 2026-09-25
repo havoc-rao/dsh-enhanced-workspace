@@ -135,17 +135,43 @@ export const ROOT_FOLDER_ID = FolderId('root')
  */
 export const MAX_FOLDER_DEPTH = 6
 
-/** One durable folder record: identity, name, parent, and the two ordered child accounts. */
+/** One entry of a folder's unified child account: a subfolder or a workspace. */
+export type FolderChild =
+  | { readonly kind: 'folder'; readonly id: FolderId }
+  | { readonly kind: 'workspace'; readonly id: WorkspaceId }
+
+/** A folder-kind child entry. */
+export function folderChild(id: FolderId): FolderChild {
+  return { kind: 'folder', id }
+}
+
+/** A workspace-kind child entry. */
+export function workspaceChild(id: WorkspaceId): FolderChild {
+  return { kind: 'workspace', id }
+}
+
+/** Whether a child entry holds the given kind and id. */
+export function isChildOf(child: FolderChild, kind: FolderChild['kind'], id: string): boolean {
+  return child.kind === kind && child.id === id
+}
+
+/** Child-entry equality (kind + id). */
+export function sameChild(left: FolderChild, right: FolderChild): boolean {
+  return left.kind === right.kind && left.id === right.id
+}
+
+/** One durable folder record: identity, name, parent, and ONE ordered child
+ *  account. Subfolders and workspaces share the `children` list, so a level
+ *  may interleave custom dirs and workspaces in any order (a "dirs first"
+ *  layout needs no special casing — the leaf just sits after its folder). */
 export interface FolderRecord {
   folderId: FolderId
   /** Display name; non-empty, unique among the folder's siblings (workspace titles may match). */
   name: string
   /** Owning folder; null only for the root record. */
   parentFolderId: FolderId | null
-  /** Directly owned workspaces in display order (subfolder rows render first). */
-  workspaceIds: WorkspaceId[]
-  /** Direct child folders in display order. */
-  folderIds: FolderId[]
+  /** Direct children (subfolders and workspaces) in display order, interleavable. */
+  children: FolderChild[]
   /** ISO-8601 creation instant. */
   createdAt: string
   /** ISO-8601 last-mutation instant. */
@@ -201,10 +227,10 @@ export class WorkspaceNotInTreeError extends Error {
 }
 
 /** A workspace move named an anchor that the target folder does not hold. */
-export class WorkspaceAnchorMissingError extends Error {
-  constructor(readonly workspaceId: WorkspaceId, readonly folderId: FolderId) {
-    super(`workspace '${workspaceId}' is not accounted by folder '${folderId}'`)
-    this.name = 'WorkspaceAnchorMissingError'
+export class ChildAnchorMissingError extends Error {
+  constructor(readonly child: FolderChild, readonly folderId: FolderId) {
+    super(`child '${child.kind}:${child.id}' is not accounted by folder '${folderId}'`)
+    this.name = 'ChildAnchorMissingError'
   }
 }
 
@@ -239,10 +265,10 @@ export function depthOf(folders: FolderTree, folderId: FolderId): number {
   return depth
 }
 
-/** The folder whose workspace account holds the id, when one does. */
+/** The folder whose child account holds the id, when one does. */
 export function folderOfWorkspace(folders: FolderTree, workspaceId: WorkspaceId): FolderId | undefined {
   for (const record of Object.values(folders)) {
-    if (record.workspaceIds.includes(workspaceId)) return record.folderId
+    if (record.children.some(child => isChildOf(child, 'workspace', workspaceId))) return record.folderId
   }
   return undefined
 }
@@ -266,14 +292,15 @@ function isDescendantOf(folders: FolderTree, candidate: FolderId, ancestor: Fold
 }
 
 function assertSiblingNameFree(folders: FolderTree, parent: FolderRecord, excludeId: FolderId | undefined, name: string): void {
-  if (parent.folderIds.some(id => id !== excludeId && folders[id]?.name === name)) {
+  if (parent.children.some(child =>
+    child.kind === 'folder' && child.id !== excludeId && folders[child.id]?.name === name)) {
     throw new FolderNameConflictError(name)
   }
 }
 
 /**
  * Create one folder under an existing parent: validate depth and sibling-name
- * uniqueness, then append the new record to the parent's `folderIds` account.
+ * uniqueness, then append the new record to the parent's `children` account.
  * @param folders - current tree.
  * @param parentFolderId - owning folder (the root creates a top-level folder).
  * @param name - display name, non-empty and sibling-unique.
@@ -299,8 +326,7 @@ export function createFolderIn(
     folderId,
     name,
     parentFolderId,
-    workspaceIds: [],
-    folderIds: [],
+    children: [],
     createdAt: now,
     updatedAt: now,
   }
@@ -308,7 +334,7 @@ export function createFolderIn(
     folders: {
       ...folders,
       [folderId]: record,
-      [parentFolderId]: { ...parent, folderIds: [...parent.folderIds, folderId], updatedAt: now },
+      [parentFolderId]: { ...parent, children: [...parent.children, folderChild(folderId)], updatedAt: now },
     },
     folderId,
   }
@@ -337,10 +363,10 @@ export function renameFolderIn(folders: FolderTree, folderId: FolderId, name: st
 }
 
 /**
- * Delete one folder and promote its children into the parent: the subfolders,
- * then the workspaces, keep their relative order and land at the deleted
- * folder's slot in both parent accounts (subfolders first, workspaces after —
- * the display order). The root cannot be deleted.
+ * Delete one folder and promote its children into the parent: the deleted
+ * folder's whole child list (subfolders and workspaces in their stored,
+ * possibly interleaved order) lands at the deleted folder's slot in the
+ * parent's unified account. The root cannot be deleted.
  * @param folders - current tree.
  * @param folderId - folder to delete.
  * @param now - ISO-8601 stamp for the touched parent.
@@ -356,7 +382,7 @@ export function deleteFolderIn(folders: FolderTree, folderId: FolderId, now: str
   }
   const parent = folders[parentId]
   if (parent === undefined) throw new FolderNotFoundError(parentId)
-  const at = parent.folderIds.indexOf(folderId)
+  const at = parent.children.findIndex(child => isChildOf(child, 'folder', folderId))
   if (at === -1) {
     throw new Error(`folder tree is inconsistent: folder '${folderId}' is absent from its parent's account`)
   }
@@ -364,28 +390,30 @@ export function deleteFolderIn(folders: FolderTree, folderId: FolderId, now: str
   delete next[folderId]
   next[parentId] = {
     ...parent,
-    folderIds: [...parent.folderIds.slice(0, at), ...record.folderIds, ...parent.folderIds.slice(at + 1)],
-    workspaceIds: [...parent.workspaceIds.slice(0, at), ...record.workspaceIds, ...parent.workspaceIds.slice(at)],
+    children: [...parent.children.slice(0, at), ...record.children, ...parent.children.slice(at + 1)],
     updatedAt: now,
   }
-  for (const childId of record.folderIds) {
-    const child = next[childId]
-    if (child !== undefined) next[childId] = { ...child, parentFolderId: parentId, updatedAt: now }
+  for (const child of record.children) {
+    if (child.kind !== 'folder') continue
+    const childRecord = next[child.id]
+    if (childRecord !== undefined) next[child.id] = { ...childRecord, parentFolderId: parentId, updatedAt: now }
   }
   return next
 }
 
 /**
  * Move one folder within the tree, DOM-insertBefore-like: with an anchor the
- * folder lands before that sibling; without one it appends to the end of the
- * target parent's `folderIds` account. The target parent defaults to the
- * folder's current parent, so an omitted parent is an in-place reorder.
+ * folder lands before that child entry (a folder OR a workspace — levels may
+ * interleave, so a folder can be anchored before a workspace row and vice
+ * versa); without one it appends to the end of the target parent's unified
+ * `children` account. The target parent defaults to the folder's current
+ * parent, so an omitted parent is an in-place reorder.
  * Moving under the folder itself or one of its descendants is rejected as a
  * cycle; a target whose depth already equals {@link MAX_FOLDER_DEPTH} is
  * rejected as too deep.
  * @param folders - current tree.
  * @param folderId - folder to move.
- * @param beforeFolderId - sibling anchor in the target parent; omitted appends.
+ * @param beforeChild - child anchor in the target parent; omitted appends.
  * @param parentFolderId - target parent; omitted keeps the current parent.
  * @param now - ISO-8601 stamp for every touched record.
  * @returns the next tree.
@@ -393,7 +421,7 @@ export function deleteFolderIn(folders: FolderTree, folderId: FolderId, now: str
 export function moveFolderIn(
   folders: FolderTree,
   folderId: FolderId,
-  beforeFolderId: FolderId | undefined,
+  beforeChild: FolderChild | undefined,
   parentFolderId: FolderId | undefined,
   now: string,
 ): FolderTree {
@@ -403,14 +431,14 @@ export function moveFolderIn(
   if (currentParentId === null) throw new FolderRootProtectedError('move')
   const currentParent = folders[currentParentId]
   if (currentParent === undefined) throw new FolderNotFoundError(currentParentId)
-  if (!currentParent.folderIds.includes(folderId)) {
+  if (!currentParent.children.some(child => isChildOf(child, 'folder', folderId))) {
     throw new Error(`folder tree is inconsistent: folder '${folderId}' is absent from its parent's account`)
   }
   const targetParentId = parentFolderId ?? currentParentId
   const targetParent = folders[targetParentId]
   if (targetParent === undefined) throw new FolderNotFoundError(targetParentId)
-  if (beforeFolderId !== undefined && !targetParent.folderIds.includes(beforeFolderId)) {
-    throw new FolderNotFoundError(beforeFolderId)
+  if (beforeChild !== undefined && !targetParent.children.some(child => sameChild(child, beforeChild))) {
+    throw new ChildAnchorMissingError(beforeChild, targetParentId)
   }
   if (targetParentId !== currentParentId) {
     if (targetParentId === folderId || isDescendantOf(folders, targetParentId, folderId)) {
@@ -420,22 +448,23 @@ export function moveFolderIn(
       throw new FolderDepthExceededError(folderId, targetParentId, MAX_FOLDER_DEPTH)
     }
   }
+  const entry = folderChild(folderId)
   if (targetParentId === currentParentId) {
-    if (beforeFolderId === folderId) return folders
-    const without = currentParent.folderIds.filter(candidate => candidate !== folderId)
-    const at = beforeFolderId === undefined ? without.length : without.indexOf(beforeFolderId)
-    const folderIds = [...without.slice(0, at), folderId, ...without.slice(at)]
-    if (folderIds.every((candidate, index) => candidate === currentParent.folderIds[index])) return folders
-    return { ...folders, [currentParentId]: { ...currentParent, folderIds, updatedAt: now } }
+    if (beforeChild !== undefined && sameChild(beforeChild, entry)) return folders
+    const without = currentParent.children.filter(child => !isChildOf(child, 'folder', folderId))
+    const at = beforeChild === undefined ? without.length : without.findIndex(child => sameChild(child, beforeChild))
+    const children = [...without.slice(0, at), entry, ...without.slice(at)]
+    if (children.every((child, index) => sameChild(child, currentParent.children[index]!))) return folders
+    return { ...folders, [currentParentId]: { ...currentParent, children, updatedAt: now } }
   }
-  const without = currentParent.folderIds.filter(candidate => candidate !== folderId)
-  const at = beforeFolderId === undefined ? targetParent.folderIds.length : targetParent.folderIds.indexOf(beforeFolderId)
+  const without = currentParent.children.filter(child => !isChildOf(child, 'folder', folderId))
+  const at = beforeChild === undefined ? targetParent.children.length : targetParent.children.findIndex(child => sameChild(child, beforeChild))
   return {
     ...folders,
-    [currentParentId]: { ...currentParent, folderIds: without, updatedAt: now },
+    [currentParentId]: { ...currentParent, children: without, updatedAt: now },
     [targetParentId]: {
       ...targetParent,
-      folderIds: [...targetParent.folderIds.slice(0, at), folderId, ...targetParent.folderIds.slice(at)],
+      children: [...targetParent.children.slice(0, at), entry, ...targetParent.children.slice(at)],
       updatedAt: now,
     },
     [folderId]: { ...record, parentFolderId: targetParentId, updatedAt: now },
@@ -443,13 +472,16 @@ export function moveFolderIn(
 }
 
 /**
- * Move one workspace within the tree: out of its current owner's workspace
- * account and into the target folder's account (at the anchor, appended when
- * omitted). Depth and cycle guards do not apply — workspaces are leaves.
+ * Move one workspace within the tree: out of its current owner's unified
+ * child account and into the target folder's account (at the anchor, appended
+ * when omitted). The anchor may be ANY child entry of the target — a
+ * workspace can land between workspaces, and directly before or after a
+ * folder row, interleaving the level. Depth and cycle guards do not apply —
+ * workspaces are leaves.
  * @param folders - current tree.
  * @param workspaceId - workspace to move.
  * @param targetFolderId - new owner folder.
- * @param beforeWorkspaceId - workspace anchor in the target folder; omitted appends.
+ * @param beforeChild - child anchor in the target folder; omitted appends.
  * @param now - ISO-8601 stamp for every touched record.
  * @returns the next tree.
  */
@@ -457,33 +489,34 @@ export function moveWorkspaceIn(
   folders: FolderTree,
   workspaceId: WorkspaceId,
   targetFolderId: FolderId,
-  beforeWorkspaceId: WorkspaceId | undefined,
+  beforeChild: FolderChild | undefined,
   now: string,
 ): FolderTree {
   const target = folders[targetFolderId]
   if (target === undefined) throw new FolderNotFoundError(targetFolderId)
-  if (beforeWorkspaceId !== undefined && !target.workspaceIds.includes(beforeWorkspaceId)) {
-    throw new WorkspaceAnchorMissingError(beforeWorkspaceId, targetFolderId)
+  if (beforeChild !== undefined && !target.children.some(child => sameChild(child, beforeChild))) {
+    throw new ChildAnchorMissingError(beforeChild, targetFolderId)
   }
   const ownerId = folderOfWorkspace(folders, workspaceId)
   if (ownerId === undefined) throw new WorkspaceNotInTreeError(workspaceId)
   const owner = folders[ownerId] as FolderRecord
+  const entry = workspaceChild(workspaceId)
   if (ownerId === targetFolderId) {
-    if (beforeWorkspaceId === workspaceId) return folders
-    const without = owner.workspaceIds.filter(candidate => candidate !== workspaceId)
-    const at = beforeWorkspaceId === undefined ? without.length : without.indexOf(beforeWorkspaceId)
-    const workspaceIds = [...without.slice(0, at), workspaceId, ...without.slice(at)]
-    if (workspaceIds.every((candidate, index) => candidate === owner.workspaceIds[index])) return folders
-    return { ...folders, [ownerId]: { ...owner, workspaceIds, updatedAt: now } }
+    if (beforeChild !== undefined && sameChild(beforeChild, entry)) return folders
+    const without = owner.children.filter(child => !isChildOf(child, 'workspace', workspaceId))
+    const at = beforeChild === undefined ? without.length : without.findIndex(child => sameChild(child, beforeChild))
+    const children = [...without.slice(0, at), entry, ...without.slice(at)]
+    if (children.every((child, index) => sameChild(child, owner.children[index]!))) return folders
+    return { ...folders, [ownerId]: { ...owner, children, updatedAt: now } }
   }
-  const without = owner.workspaceIds.filter(candidate => candidate !== workspaceId)
-  const at = beforeWorkspaceId === undefined ? target.workspaceIds.length : target.workspaceIds.indexOf(beforeWorkspaceId)
+  const without = owner.children.filter(child => !isChildOf(child, 'workspace', workspaceId))
+  const at = beforeChild === undefined ? target.children.length : target.children.findIndex(child => sameChild(child, beforeChild))
   return {
     ...folders,
-    [ownerId]: { ...owner, workspaceIds: without, updatedAt: now },
+    [ownerId]: { ...owner, children: without, updatedAt: now },
     [targetFolderId]: {
       ...target,
-      workspaceIds: [...target.workspaceIds.slice(0, at), workspaceId, ...target.workspaceIds.slice(at)],
+      children: [...target.children.slice(0, at), entry, ...target.children.slice(at)],
       updatedAt: now,
     },
   }
@@ -504,16 +537,17 @@ export function adoptWorkspaceIn(folders: FolderTree, workspaceId: WorkspaceId, 
   if (root === undefined) return folders
   return {
     ...folders,
-    [ROOT_FOLDER_ID]: { ...root, workspaceIds: [workspaceId, ...root.workspaceIds], updatedAt: now },
+    [ROOT_FOLDER_ID]: { ...root, children: [workspaceChild(workspaceId), ...root.children], updatedAt: now },
   }
 }
 
 /**
  * The persisted slice `retainLiveKeys` prunes: workspace-keyed maps plus the
  * folder tree. Workspaces the Host no longer lists are removed from every
- * folder account, the expansion state, the touch timestamps, the session
- * order accounts, and the update-stamp accounts; folders themselves are kept
- * (only a folder delete removes a folder).
+ * folder's child account (folder-kind entries stay put and keep the
+ * interleaved order), from the expansion state, the touch timestamps, the
+ * session order accounts, and the update-stamp accounts; folders themselves
+ * are kept (only a folder delete removes a folder).
  */
 export interface LiveKeysSlice {
   folders: FolderTree
@@ -539,20 +573,25 @@ export function retainLiveKeys(state: LiveKeysSlice, liveWorkspaceIds: readonly 
     live.has(key) || (key.startsWith(RECENT_GROUP_KEY_PREFIX) && live.has(key.slice(RECENT_GROUP_KEY_PREFIX.length)))
   const pruneWorkspaceKeys = (map: Record<string, unknown>): boolean =>
     Object.keys(map).some(key => !isLiveKey(key))
+  const deadWorkspaceChild = (record: FolderRecord): boolean =>
+    record.children.some(child => child.kind === 'workspace' && !live.has(child.id as string))
   if (!pruneWorkspaceKeys(state.recentTouchById)
     && !pruneWorkspaceKeys(state.groupExpansion)
     && !pruneWorkspaceKeys(state.sessionOrderByAccount)
     && !pruneWorkspaceKeys(state.sessionUpdatedAtByAccount)
-    && !Object.values(state.folders).some(record => record.workspaceIds.some(id => !live.has(id as string)))) {
+    && !Object.values(state.folders).some(deadWorkspaceChild)) {
     return state
   }
   const folders: FolderTree = {}
   for (const [folderId, record] of Object.entries(state.folders)) {
-    if (record.workspaceIds.length === 0 || record.workspaceIds.every(id => live.has(id as string))) {
+    if (!deadWorkspaceChild(record)) {
       folders[folderId as FolderId] = record
       continue
     }
-    folders[folderId as FolderId] = { ...record, workspaceIds: record.workspaceIds.filter(id => live.has(id as string)) }
+    folders[folderId as FolderId] = {
+      ...record,
+      children: record.children.filter(child => child.kind === 'folder' || live.has(child.id as string)),
+    }
   }
   const keep = (map: Record<string, unknown>): Record<string, unknown> =>
     Object.fromEntries(Object.entries(map).filter(([key]) => isLiveKey(key)))
@@ -576,7 +615,8 @@ export function retainLiveKeys(state: LiveKeysSlice, liveWorkspaceIds: readonly 
  * so the flat-list order travels with the envelope like every other order.
  */
 export interface PersistedViewState {
-  /** The folder tree (root record included); display order = the records' child accounts. */
+  /** The folder tree (root record included); display order = the records' unified
+   *  child accounts (subfolders and workspaces interleaved). */
   folders: FolderTree
   /** Per-folder expand/collapse (root itself is never rendered, never keyed here). */
   folderExpansion: Record<string, boolean>
@@ -638,17 +678,54 @@ export function isPersistedViewState(value: unknown): value is PersistedViewStat
     if (!isPlainRecord(record)) return false
     if (record.folderId !== key) return false
     if (typeof record.name !== 'string' || record.name.trim() === '') return false
-    if (!Array.isArray(record.workspaceIds) || !record.workspaceIds.every(item => typeof item === 'string')) return false
-    if (!Array.isArray(record.folderIds) || !record.folderIds.every(item => typeof item === 'string')) return false
+    // Exactly one child-account shape: the unified `children` list
+    // (interleavable) or the legacy pair (`folderIds` + `workspaceIds`,
+    // subfolders always first). A record mixing or missing both is corrupt.
+    const unified = Array.isArray(record.children)
+    const legacy = Array.isArray(record.folderIds) && Array.isArray(record.workspaceIds)
+    if (unified === legacy) return false
+    let children: unknown[]
+    if (unified) {
+      children = record.children as unknown[]
+      const seen = new Set<string>()
+      for (const child of children as Array<Record<string, unknown>>) {
+        if (!isPlainRecord(child)) return false
+        if (child.kind !== 'folder' && child.kind !== 'workspace') return false
+        if (typeof child.id !== 'string') return false
+        const keyOf = `${child.kind}\u0000${child.id}`
+        if (seen.has(keyOf)) return false
+        seen.add(keyOf)
+      }
+    } else {
+      const folderIds = record.folderIds as unknown[]
+      const workspaceIds = record.workspaceIds as unknown[]
+      if (!folderIds.every(item => typeof item === 'string')
+        || !workspaceIds.every(item => typeof item === 'string')) return false
+      children = [
+        ...folderIds.map(id => ({ kind: 'folder', id })),
+        ...workspaceIds.map(id => ({ kind: 'workspace', id })),
+      ] as unknown[]
+    }
     const parent = record.parentFolderId
     if (parent !== null) {
       if (typeof parent !== 'string') return false
-      const parentRecord = folders[parent] as { readonly folderIds: unknown } | undefined
-      if (parentRecord === undefined || !Array.isArray(parentRecord.folderIds) || !parentRecord.folderIds.includes(key)) return false
+      const parentRecord = folders[parent] as { readonly children?: unknown; readonly folderIds?: unknown } | undefined
+      if (parentRecord === undefined) return false
+      // Back-refs resolve against the parent's folder-kind children in EITHER
+      // shape (legacy accounts render as folders-first, so normalization and
+      // the unified walk agree on membership).
+      const listed = Array.isArray(parentRecord.children)
+        ? parentRecord.children.some((child: unknown) =>
+          isPlainRecord(child) && child.kind === 'folder' && child.id === key)
+        : Array.isArray(parentRecord.folderIds) && (parentRecord.folderIds as unknown[]).includes(key)
+      if (!listed) return false
     }
-    for (const childId of record.folderIds) {
-      const child = folders[childId] as { readonly parentFolderId: unknown } | undefined
-      if (child === undefined || child.parentFolderId !== key) return false
+    // Folder-kind children must exist and name this folder back; workspace
+    // ids are opaque leaves with no back-reference.
+    for (const child of children as Array<{ kind: string; id: string }>) {
+      if (child.kind !== 'folder') continue
+      const folderChildRecord = folders[child.id] as { readonly parentFolderId: unknown } | undefined
+      if (folderChildRecord === undefined || folderChildRecord.parentFolderId !== key) return false
     }
   }
   for (const folderId of Object.keys(folders)) {
@@ -670,6 +747,58 @@ export function isPersistedViewState(value: unknown): value is PersistedViewStat
   return true
 }
 
+/** Structural JSON shape of a pre-interleave folder record (two accounts). */
+interface LegacyFolderRecordJSON {
+  folderId: string
+  name: string
+  parentFolderId: string | null
+  workspaceIds: string[]
+  folderIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * Normalize one child account onto the unified {@link FolderRecord} shape:
+ * a record already carrying `children` passes through; a legacy record
+ * (the `folderIds` + `workspaceIds` pair) becomes `children` with the
+ * subfolders first, then the workspaces — exactly the order the old renderer
+ * displayed, so upgrading reshuffles nothing.
+ * @param record - validated record in either shape.
+ * @returns the unified-shape record (legacy keys dropped).
+ */
+function normalizeFolderRecord(record: FolderRecord | LegacyFolderRecordJSON): FolderRecord {
+  if (Array.isArray((record as FolderRecord).children)) return record as FolderRecord
+  const legacy = record as LegacyFolderRecordJSON
+  return {
+    folderId: legacy.folderId as FolderId,
+    name: legacy.name,
+    parentFolderId: legacy.parentFolderId as FolderId | null,
+    createdAt: legacy.createdAt,
+    updatedAt: legacy.updatedAt,
+    children: [
+      ...legacy.folderIds.map(id => folderChild(id as FolderId)),
+      ...legacy.workspaceIds.map(id => workspaceChild(id as WorkspaceId)),
+    ],
+  }
+}
+
+/**
+ * Normalize a validated envelope's whole tree onto the unified child-account
+ * shape ({@link normalizeFolderRecord} per record).
+ * @param folders - validated folder tree in either record shape.
+ * @returns the unified-shape tree.
+ */
+function normalizeFolderTree(folders: FolderTree): FolderTree {
+  let out: FolderTree = folders
+  for (const [folderId, record] of Object.entries(folders)) {
+    if (Array.isArray((record as FolderRecord).children)) continue
+    if (out === folders) out = { ...folders }
+    out[folderId as FolderId] = normalizeFolderRecord(record as unknown as LegacyFolderRecordJSON)
+  }
+  return out
+}
+
 /**
  * Rebuild the viewing state from a persisted envelope and converge it onto
  * the Host baseline: take the stored tree and maps, adopt every live
@@ -679,6 +808,9 @@ export function isPersistedViewState(value: unknown): value is PersistedViewStat
  * the stored tree does not hold are dropped as well. Ordering converges
  * once the Host baseline is ready: callers must never pass a loading or
  * stale baseline here, because an empty list authoritatively prunes all ids.
+ * Legacy envelopes (the two-account folder record shape) are normalized onto
+ * the unified interleavable shape at the boundary — validators accept both,
+ * but application state always writes the unified shape back.
  * @param envelope - the persisted envelope (validated by
  *   {@link isPersistedViewState}; anything else throws `TypeError`).
  * @param liveWorkspaceIds - workspaces the Host baseline lists.
@@ -694,7 +826,7 @@ export function restoredState(
     throw new TypeError('dsh-enhanced-workspace: refusing to restore an invalid persisted envelope')
   }
   const live = liveWorkspaceIds.map(id => id as WorkspaceId)
-  let folders = envelope.folders
+  let folders = normalizeFolderTree(envelope.folders)
   for (const workspaceId of live) {
     folders = adoptWorkspaceIn(folders, workspaceId, now)
   }
@@ -727,10 +859,12 @@ export function restoredState(
 }
 
 /**
- * Depth-first workspace order over the folder tree: for every folder its
- * child folders' subtrees first, then its directly owned workspaces, starting
- * at the root. This is the order the browser renders AND the order the Host's
- * flat registry display is reconciled to (see {@link orderDeltas}).
+ * Depth-first workspace order over the folder tree following each folder's
+ * unified `children` account: a folder child's whole subtree first, then the
+ * child itself contributes its direct workspaces, in the stored (possibly
+ * interleaved) order, starting at the root. This is the order the browser
+ * renders AND the order the Host's flat registry display is reconciled to
+ * (see {@link orderDeltas}).
  * @param folders - current tree.
  * @returns workspace ids in tree order (unreachable folders contribute nothing).
  */
@@ -741,8 +875,10 @@ export function treeOrder(folders: FolderTree): WorkspaceId[] {
     visited.add(folderId)
     const record = folders[folderId]
     if (record === undefined) return
-    for (const childId of record.folderIds) walk(childId, visited)
-    out.push(...record.workspaceIds)
+    for (const child of record.children) {
+      if (child.kind === 'folder') walk(child.id, visited)
+      else out.push(child.id)
+    }
   }
   walk(ROOT_FOLDER_ID, new Set())
   return out
@@ -980,6 +1116,12 @@ export interface WorkspaceLeaf {
   primarySession?: { id: SessionId; title?: string }
 }
 
+/** One derived row of a folder level: a subfolder node or a workspace leaf,
+ *  in the record's unified child order (levels may interleave freely). */
+export type FolderRowNode =
+  | { readonly kind: 'folder'; readonly node: FolderNode }
+  | { readonly kind: 'workspace'; readonly leaf: WorkspaceLeaf }
+
 /** One folder node of the derived forest. */
 export interface FolderNode {
   folderId: FolderId
@@ -987,23 +1129,19 @@ export interface FolderNode {
   /** Tree depth, root = 0 (top-level folders render at depth 1, indent depth - 1). */
   depth: number
   expanded: boolean
-  children: readonly FolderNode[]
-  workspaceGroups: readonly WorkspaceLeaf[]
+  /** Child rows in display order: subfolders and workspaces interleaved. */
+  rows: readonly FolderRowNode[]
   /** Visible top-level sessions directly in this folder's workspaces. */
   sessionCount: number
   /** The subtree contains the selected session. */
   containsCurrent: boolean
 }
 
-/** The derived forest: folder nodes + the root's own workspace leaves + the trailing ungrouped bucket. */
+/** The derived forest: the root's interleaved child rows plus the trailing ungrouped bucket. */
 export interface ForestResult {
-  folders: readonly FolderNode[]
-  /**
-   * Workspaces the root account owns directly, as top-level leaves. Render
-   * order at every level is `folderIds` then `workspaceIds`, so these land
-   * between the folder nodes and the ungrouped bucket.
-   */
-  topLevel: readonly WorkspaceLeaf[]
+  /** Top-level rows (the root record's unified children) in display order —
+   *  subfolders and workspaces may interleave. */
+  topRows: readonly FolderRowNode[]
   ungrouped: WorkspaceLeaf | undefined
 }
 
@@ -1249,16 +1387,16 @@ export function deriveWorkspaceLeaf(
 
 /**
  * Derive the browser forest: the folder tree (top level = the root record's
- * children) with each folder's workspaces as {@link WorkspaceLeaf} rows in
- * account order, sessions populated under expanded groups, plus the trailing
- * ungrouped bucket for sessions outside every workspace. Unreachable folders
- * (not reachable from the root) are never rendered.
+ * children) with every folder's rows — subfolders and workspaces interleaved
+ * in the stored child order — sessions populated under expanded groups, plus
+ * the trailing ungrouped bucket for sessions outside every workspace.
+ * Unreachable folders (not reachable from the root) are never rendered.
  * @param list - sessions list snapshot (`current` feeds containsCurrent).
  * @param workspaces - real workspaces in stable Host order (leaves resolve by id).
  * @param folders - the plugin's folder tree.
  * @param archivedSessionIds - registry-global archive set.
  * @param view - expansion state and the browser-local ungrouped order.
- * @returns folder nodes in render order plus the ungrouped bucket.
+ * @returns top-level rows in render order plus the ungrouped bucket.
  */
 export function deriveFolderForest(
   list: SessionListState,
@@ -1279,28 +1417,28 @@ export function deriveFolderForest(
       ?? UNGROUPED_KEY
 
   const buildFolder = (record: FolderRecord, depth: number, visited: Set<FolderId>): FolderNode => {
-    const children: FolderNode[] = []
-    const workspaceGroups: WorkspaceLeaf[] = []
+    const rows: FolderRowNode[] = []
     let sessionCount = 0
     let containsCurrent = false
     if (!visited.has(record.folderId)) {
       const nextVisited = new Set(visited)
       nextVisited.add(record.folderId)
-      for (const childId of record.folderIds) {
-        const child = folders[childId]
-        if (child === undefined) continue
-        const node = buildFolder(child, depth + 1, nextVisited)
-        children.push(node)
-        sessionCount += node.sessionCount
-        containsCurrent ||= node.containsCurrent
-      }
-      for (const id of record.workspaceIds) {
-        const workspace = workspaceById.get(id)
-        if (workspace === undefined) continue
-        const leaf = buildLeaf(workspace, list, archived, expandedGroups, view, descendants, pending)
-        workspaceGroups.push(leaf)
-        sessionCount += leaf.sessionCount
-        containsCurrent ||= leaf.containsCurrent
+      for (const child of record.children) {
+        if (child.kind === 'folder') {
+          const childRecord = folders[child.id]
+          if (childRecord === undefined) continue
+          const node = buildFolder(childRecord, depth + 1, nextVisited)
+          rows.push({ kind: 'folder', node })
+          sessionCount += node.sessionCount
+          containsCurrent ||= node.containsCurrent
+        } else {
+          const workspace = workspaceById.get(child.id)
+          if (workspace === undefined) continue
+          const leaf = buildLeaf(workspace, list, archived, expandedGroups, view, descendants, pending)
+          rows.push({ kind: 'workspace', leaf })
+          sessionCount += leaf.sessionCount
+          containsCurrent ||= leaf.containsCurrent
+        }
       }
     }
     return {
@@ -1308,20 +1446,16 @@ export function deriveFolderForest(
       name: record.name,
       depth,
       expanded: view.folderExpansion[record.folderId] === true,
-      children,
-      workspaceGroups,
+      rows,
       sessionCount,
       containsCurrent,
     }
   }
 
   const root = folders[ROOT_FOLDER_ID]
-  let foldersOut: readonly FolderNode[] = []
-  let topLevel: readonly WorkspaceLeaf[] = []
+  let topRows: readonly FolderRowNode[] = []
   if (root !== undefined) {
-    const rootNode = buildFolder(root, 0, new Set())
-    foldersOut = rootNode.children
-    topLevel = rootNode.workspaceGroups
+    topRows = buildFolder(root, 0, new Set()).rows
   }
 
   const accounted = new Set<SessionId>()
@@ -1367,7 +1501,7 @@ export function deriveFolderForest(
         : [],
     }
   }
-  return { folders: foldersOut, topLevel, ungrouped }
+  return { topRows, ungrouped }
 }
 
 /**
@@ -1468,27 +1602,34 @@ export function filterForestByQuery(
     return visibleSessionTitles(forestUngroupedSessionIds).some(title => has(title))
   }
 
-  const filterFolder = (node: FolderNode): FolderNode | undefined => {
-    const children: FolderNode[] = []
-    for (const child of node.children) {
-      const filtered = filterFolder(child)
-      if (filtered !== undefined) children.push(filtered)
+  /** Keep the interleaved rows whose folder subtree / workspace leaf matches. */
+  const filterRows = (rows: readonly FolderRowNode[]): FolderRowNode[] => {
+    const kept: FolderRowNode[] = []
+    for (const row of rows) {
+      if (row.kind === 'folder') {
+        const filtered = filterFolder(row.node)
+        if (filtered !== undefined) kept.push({ kind: 'folder', node: filtered })
+      } else if (workspaceMatches(row.leaf)) {
+        kept.push(row)
+      }
     }
-    const workspaceGroups = node.workspaceGroups.filter(workspaceMatches)
-    if (children.length === 0 && workspaceGroups.length === 0 && !has(node.name)) return undefined
+    return kept
+  }
+
+  const filterFolder = (node: FolderNode): FolderNode | undefined => {
+    const rows = filterRows(node.rows)
+    if (rows.length === 0 && !has(node.name)) return undefined
     return {
       ...node,
-      children,
-      workspaceGroups,
+      rows,
       // A folder holding a descendant match opens so the kept rows show;
       // a name-only match keeps the folder's own expansion state.
-      expanded: node.expanded || children.length > 0 || workspaceGroups.length > 0,
+      expanded: node.expanded || rows.length > 0,
     }
   }
 
   return {
-    folders: forest.folders.map(filterFolder).filter((node): node is FolderNode => node !== undefined),
-    topLevel: forest.topLevel.filter(workspaceMatches),
+    topRows: filterRows(forest.topRows),
     ungrouped: forest.ungrouped !== undefined && workspaceMatches(forest.ungrouped) ? forest.ungrouped : undefined,
   }
 }

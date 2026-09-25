@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { FolderId, FolderTree } from '../src/client/model.ts'
-import { ROOT_FOLDER_ID, createFolderIn, moveWorkspaceIn, FolderId as folderIdOf } from '../src/client/model.ts'
+import {
+  ROOT_FOLDER_ID,
+  createFolderIn,
+  folderChild,
+  moveWorkspaceIn,
+  workspaceChild,
+  FolderId as folderIdOf,
+} from '../src/client/model.ts'
 import { folderDropZone, resolveFolderDrop, resolveWorkspaceDrop, rowDropZone } from '../src/client/drag.ts'
 
 const W = (id: string): WorkspaceId => id as WorkspaceId
@@ -14,8 +21,7 @@ function rootTree(workspaceIds: readonly string[] = []): FolderTree {
       folderId: ROOT_FOLDER_ID,
       name: 'Root',
       parentFolderId: null,
-      workspaceIds: workspaceIds.map(W),
-      folderIds: [],
+      children: workspaceIds.map(id => workspaceChild(W(id))),
       createdAt: NOW,
       updatedAt: NOW,
     },
@@ -39,30 +45,32 @@ describe('rowDropZone / folderDropZone', () => {
 })
 
 describe('resolveWorkspaceDrop', () => {
-  it('moves a workspace into a folder row (appended)', () => {
+  it('moves a workspace into a folder row (appended) on the middle band', () => {
     let tree = rootTree(['w1'])
     tree = createFolderIn(tree, ROOT_FOLDER_ID, '团队', F('团队'), NOW).folders
     const result = resolveWorkspaceDrop(tree, W('w1'), 'folder', '团队', 'on')
     expect(result).toEqual({ kind: 'move-workspace', folderId: F('团队') })
   })
 
-  it('anchors a workspace in the gap ABOVE a folder row at the OUTER level, and same-level zones still move in', () => {
+  it('interleaves at the folder row\'s own slot on the before/after edges', () => {
     let tree = rootTree(['w1'])
     tree = createFolderIn(tree, ROOT_FOLDER_ID, '团队', F('团队'), NOW).folders
     tree = moveWorkspaceIn(tree, W('w1'), F('团队'), undefined, NOW)
-    // 偏上（行间）：锚点到该目录行之前 → 外层 = 父目录的 workspace 账户。
+    // 偏上（行间）：锚定到该目录行之前 —— 与目录行同层交错，不再落到父级末尾。
     expect(resolveWorkspaceDrop(tree, W('w1'), 'folder', '团队', 'before'))
-      .toEqual({ kind: 'move-workspace', folderId: ROOT_FOLDER_ID })
+      .toEqual({ kind: 'move-workspace', folderId: ROOT_FOLDER_ID, beforeChild: folderChild(F('团队')) })
     // Nested target: the outer level is the nesting folder.
     tree = createFolderIn(tree, F('团队'), '子组', F('子组'), NOW).folders
     tree = moveWorkspaceIn(tree, W('w1'), F('子组'), undefined, NOW)
     expect(resolveWorkspaceDrop(tree, W('w1'), 'folder', '子组', 'before'))
-      .toEqual({ kind: 'move-workspace', folderId: F('团队') })
-    // 正中 / 偏下：仍移入目录（追加）。
-    expect(resolveWorkspaceDrop(tree, W('w1'), 'folder', '子组', 'on'))
-      .toEqual({ kind: 'move-workspace', folderId: F('子组') })
+      .toEqual({ kind: 'move-workspace', folderId: F('团队'), beforeChild: folderChild(F('子组')) })
+    // 偏下：锚定到目录行之后 —— 下一个兄弟条目（若有），否则追加到该层级末尾。
+    tree = createFolderIn(tree, F('团队'), '后组', F('后组'), NOW).folders // 团队: [子组, 后组]
     expect(resolveWorkspaceDrop(tree, W('w1'), 'folder', '子组', 'after'))
-      .toEqual({ kind: 'move-workspace', folderId: F('子组') })
+      .toEqual({ kind: 'move-workspace', folderId: F('团队'), beforeChild: folderChild(F('后组')) })
+    // Target row is the level's last child: append instead.
+    expect(resolveWorkspaceDrop(tree, W('w1'), 'folder', '后组', 'after'))
+      .toEqual({ kind: 'move-workspace', folderId: F('团队') })
   })
 
   it('anchors before/after a workspace row inside its owning folder', () => {
@@ -70,22 +78,30 @@ describe('resolveWorkspaceDrop', () => {
     tree = createFolderIn(tree, ROOT_FOLDER_ID, '团队', F('团队'), NOW).folders
     tree = moveWorkspaceIn(tree, W('w3'), F('团队'), undefined, NOW)
 
-    // w2 is under the root with w1 before it: dropping w1 after w2 anchors at w3?
-    // (root order: w1 w2; 团队 holds w3) — dropping w1 after w2 appends under root.
+    // w2's next sibling is the folder 团队: dropping w1 after w2 anchors
+    // BEFORE the folder — the workspace interleaves the root level.
     expect(resolveWorkspaceDrop(tree, W('w1'), 'workspace', 'w2', 'after'))
-      .toEqual({ kind: 'move-workspace', folderId: ROOT_FOLDER_ID })
+      .toEqual({ kind: 'move-workspace', folderId: ROOT_FOLDER_ID, beforeChild: folderChild(F('团队')) })
     // w3 is the only workspace in 团队: dropping w1 before w3 moves it in anchored there.
     expect(resolveWorkspaceDrop(tree, W('w1'), 'workspace', 'w3', 'before'))
-      .toEqual({ kind: 'move-workspace', folderId: F('团队'), beforeWorkspaceId: W('w3') })
-    // w3 is 团队's last workspace: dropping after it appends inside 团队.
+      .toEqual({ kind: 'move-workspace', folderId: F('团队'), beforeChild: workspaceChild(W('w3')) })
+    // w3 is 团队's last child: dropping after it appends inside 团队.
     expect(resolveWorkspaceDrop(tree, W('w1'), 'workspace', 'w3', 'after'))
       .toEqual({ kind: 'move-workspace', folderId: F('团队') })
   })
 
-  it('resolves "after" as anchored to the target\'s next sibling', () => {
-    const tree = rootTree(['a', 'b', 'c'])
-    expect(resolveWorkspaceDrop(tree, W('c'), 'workspace', 'a', 'after'))
-      .toEqual({ kind: 'move-workspace', folderId: ROOT_FOLDER_ID, beforeWorkspaceId: W('b') })
+  it('resolves "after" as anchored to the target\'s next sibling of ANY kind', () => {
+    // Root children: b, c, a(folder): dropping w-c after w-b anchors before…
+    // c itself (the dragged workspace already follows b → self-anchor no-op);
+    // dropping after the folder row a appends (it is the last child).
+    let tree = rootTree(['b', 'c'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    expect(resolveWorkspaceDrop(tree, W('c'), 'workspace', 'b', 'after'))
+      .toEqual({ kind: 'move-workspace', folderId: ROOT_FOLDER_ID, beforeChild: workspaceChild(W('c')) })
+    expect(resolveWorkspaceDrop(tree, W('c'), 'folder', 'a', 'after'))
+      .toEqual({ kind: 'move-workspace', folderId: ROOT_FOLDER_ID })
+    expect(resolveWorkspaceDrop(tree, W('c'), 'folder', 'a', 'before'))
+      .toEqual({ kind: 'move-workspace', folderId: ROOT_FOLDER_ID, beforeChild: folderChild(F('a')) })
   })
 
   it('treats a drop onto the workspace\'s own row as a no-op', () => {
@@ -100,7 +116,7 @@ describe('resolveFolderDrop', () => {
     let tree = rootTree()
     tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
     tree = createFolderIn(tree, ROOT_FOLDER_ID, 'b', F('b'), NOW).folders
-    expect(resolveFolderDrop(tree, F('a'), F('b'), 'on'))
+    expect(resolveFolderDrop(tree, F('a'), 'folder', 'b', 'on'))
       .toEqual({ kind: 'move-folder', parentFolderId: F('b') })
   })
 
@@ -109,16 +125,33 @@ describe('resolveFolderDrop', () => {
     tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
     tree = createFolderIn(tree, ROOT_FOLDER_ID, 'b', F('b'), NOW).folders
     tree = createFolderIn(tree, ROOT_FOLDER_ID, 'c', F('c'), NOW).folders
-    expect(resolveFolderDrop(tree, F('c'), F('a'), 'before'))
-      .toEqual({ kind: 'move-folder', beforeFolderId: F('a'), parentFolderId: ROOT_FOLDER_ID })
-    expect(resolveFolderDrop(tree, F('a'), F('c'), 'after')) // c is last → append
+    expect(resolveFolderDrop(tree, F('c'), 'folder', 'a', 'before'))
+      .toEqual({ kind: 'move-folder', parentFolderId: ROOT_FOLDER_ID, beforeChild: folderChild(F('a')) })
+    expect(resolveFolderDrop(tree, F('a'), 'folder', 'c', 'after')) // c is last → append
       .toEqual({ kind: 'move-folder', parentFolderId: ROOT_FOLDER_ID })
+  })
+
+  it('reorders a folder relative to a workspace row (interleaving as equals)', () => {
+    let tree = rootTree(['w-mid'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'b', F('b'), NOW).folders
+    // Root children: w-mid, a, b. Dragging b after w-mid anchors before a —
+    // the folder lands BETWEEN the workspace and a.
+    expect(resolveFolderDrop(tree, F('b'), 'workspace', 'w-mid', 'after'))
+      .toEqual({ kind: 'move-folder', parentFolderId: ROOT_FOLDER_ID, beforeChild: folderChild(F('a')) })
+    // Dragging a before w-mid anchors at the workspace row.
+    expect(resolveFolderDrop(tree, F('a'), 'workspace', 'w-mid', 'before'))
+      .toEqual({ kind: 'move-folder', parentFolderId: ROOT_FOLDER_ID, beforeChild: workspaceChild(W('w-mid')) })
+    // The dragged folder already following the workspace resolves to the
+    // self-anchor (a no-op).
+    expect(resolveFolderDrop(tree, F('a'), 'workspace', 'w-mid', 'after'))
+      .toEqual({ kind: 'move-folder', parentFolderId: ROOT_FOLDER_ID, beforeChild: folderChild(F('a')) })
   })
 
   it('drops onto itself or a missing/root target resolve to a no-op', () => {
     const tree = rootTree()
-    expect(resolveFolderDrop(tree, F('a'), F('a'), 'on')).toEqual({ kind: 'noop' })
-    expect(resolveFolderDrop(tree, F('a'), F('missing'), 'on')).toEqual({ kind: 'noop' })
-    expect(resolveFolderDrop(tree, F('a'), ROOT_FOLDER_ID, 'before')).toEqual({ kind: 'noop' })
+    expect(resolveFolderDrop(tree, F('a'), 'folder', 'a', 'on')).toEqual({ kind: 'noop' })
+    expect(resolveFolderDrop(tree, F('a'), 'folder', 'missing', 'on')).toEqual({ kind: 'noop' })
+    expect(resolveFolderDrop(tree, F('a'), 'folder', ROOT_FOLDER_ID as unknown as string, 'before')).toEqual({ kind: 'noop' })
   })
 })

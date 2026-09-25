@@ -7,11 +7,20 @@ import {
   FolderRootProtectedError,
   FolderId,
   ROOT_FOLDER_ID,
+  type FolderRecord,
 } from '../src/client/model.ts'
 import { createEnhancedWorkspaceStore } from '../src/client/store.ts'
 
 const W = (id: string): WorkspaceId => id as WorkspaceId
 const F = (id: string): FolderId => FolderId(id)
+
+/** A record's folder-kind children, in account order. */
+const folderIdsOf = (record: FolderRecord | undefined): FolderId[] =>
+  (record?.children ?? []).filter(child => child.kind === 'folder').map(child => child.id as FolderId)
+
+/** A record's workspace-kind children, in account order. */
+const workspaceIdsOf = (record: FolderRecord | undefined): WorkspaceId[] =>
+  (record?.children ?? []).filter(child => child.kind === 'workspace').map(child => child.id as WorkspaceId)
 
 beforeEach(() => {
   localStorage.clear()
@@ -24,8 +33,7 @@ describe('enhanced workspace store', () => {
     expect(state.folders[ROOT_FOLDER_ID]).toMatchObject({
       folderId: 'root',
       parentFolderId: null,
-      workspaceIds: [],
-      folderIds: [],
+      children: [],
     })
     expect(state.groupBy).toBe('workspace')
     expect(state.orderBy).toBe('updated')
@@ -37,7 +45,7 @@ describe('enhanced workspace store', () => {
     const instance = createEnhancedWorkspaceStore().create()
     instance.actions.createFolder(ROOT_FOLDER_ID, '产品组')
     const after = instance.getSnapshot()
-    expect(after.folders[ROOT_FOLDER_ID]?.folderIds).toHaveLength(1)
+    expect(folderIdsOf(after.folders[ROOT_FOLDER_ID])).toHaveLength(1)
     expect(() => instance.actions.createFolder(ROOT_FOLDER_ID, '产品组')).toThrow(FolderNameConflictError)
     expect(() => instance.actions.renameFolder(ROOT_FOLDER_ID, 'x')).toThrow(FolderRootProtectedError)
   })
@@ -49,7 +57,7 @@ describe('enhanced workspace store', () => {
       instance.actions.createFolder(parent, `lvl-${level}`)
       // The action mints the record id itself (crypto.randomUUID): read the
       // new folder's id back from the tree instead of assuming the name.
-      parent = instance.getSnapshot().folders[parent]!.folderIds.at(-1)!
+      parent = folderIdsOf(instance.getSnapshot().folders[parent]).at(-1)!
     }
     expect(() => instance.actions.createFolder(parent, 'too-deep')).toThrow(FolderDepthExceededError)
   })
@@ -57,11 +65,11 @@ describe('enhanced workspace store', () => {
   it('deletes folders with promotion and clears their expansion entry', () => {
     const instance = createEnhancedWorkspaceStore().create()
     instance.actions.createFolder(ROOT_FOLDER_ID, 'a')
-    const a = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const a = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     instance.actions.setFolderExpanded(a, true)
     instance.actions.deleteFolder(a)
     const after = instance.getSnapshot()
-    expect(after.folders[ROOT_FOLDER_ID]?.folderIds).toEqual([])
+    expect(folderIdsOf(after.folders[ROOT_FOLDER_ID])).toEqual([])
     expect(after.folderExpansion[a]).toBeUndefined()
   })
 
@@ -69,14 +77,14 @@ describe('enhanced workspace store', () => {
     const instance = createEnhancedWorkspaceStore().create()
     instance.actions.adoptWorkspace(W('w1'))
     instance.actions.createFolder(ROOT_FOLDER_ID, '团队')
-    const team = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const team = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     instance.actions.moveWorkspaceIn(W('w1'), team)
     const after = instance.getSnapshot()
-    expect(after.folders[team]?.workspaceIds).toEqual([W('w1')])
-    expect(after.folders[ROOT_FOLDER_ID]?.workspaceIds).toEqual([])
+    expect(workspaceIdsOf(after.folders[team])).toEqual([W('w1')])
+    expect(workspaceIdsOf(after.folders[ROOT_FOLDER_ID])).toEqual([])
     // Idempotent adoption does not duplicate membership.
     instance.actions.adoptWorkspace(W('w1'))
-    expect(instance.getSnapshot().folders[team]?.workspaceIds).toEqual([W('w1')])
+    expect(workspaceIdsOf(instance.getSnapshot().folders[team])).toEqual([W('w1')])
   })
 
   it('records touches and prunes dead keys on the baseline', () => {
@@ -87,7 +95,7 @@ describe('enhanced workspace store', () => {
     instance.actions.retainLiveKeys([W('other')])
     const after = instance.getSnapshot()
     expect(after.recentTouchById).toEqual({})
-    expect(after.folders[ROOT_FOLDER_ID]?.workspaceIds).toEqual([])
+    expect(workspaceIdsOf(after.folders[ROOT_FOLDER_ID])).toEqual([])
     expect(after.folders[ROOT_FOLDER_ID]).toBeDefined()
   })
 
@@ -95,7 +103,7 @@ describe('enhanced workspace store', () => {
     const instance = createEnhancedWorkspaceStore().create()
     instance.actions.adoptWorkspace(W('w1'))
     instance.actions.createFolder(ROOT_FOLDER_ID, 'a')
-    const a = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const a = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     instance.actions.setFolderExpanded(a, true)
     instance.actions.setGroupExpanded(W('w1'), true)
     instance.actions.setGroupExpanded('recent:w1', true)
@@ -105,14 +113,14 @@ describe('enhanced workspace store', () => {
     // the recency rows keep their expansion; the tree itself stays intact.
     expect(after.folderExpansion).toEqual({})
     expect(after.groupExpansion).toEqual({ 'recent:w1': true })
-    expect(after.folders[ROOT_FOLDER_ID]?.folderIds).toEqual([a])
+    expect(folderIdsOf(after.folders[ROOT_FOLDER_ID])).toEqual([a])
   })
 
   it('collapses only the recency rows through the recents action', () => {
     const instance = createEnhancedWorkspaceStore().create()
     instance.actions.adoptWorkspace(W('w1'))
     instance.actions.createFolder(ROOT_FOLDER_ID, 'a')
-    const a = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const a = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     instance.actions.setFolderExpanded(a, true)
     instance.actions.setGroupExpanded(W('w1'), true)
     instance.actions.setGroupExpanded('recent:w1', true)
@@ -128,7 +136,7 @@ describe('enhanced workspace store', () => {
     const instance = createEnhancedWorkspaceStore().create()
     instance.actions.adoptWorkspace(W('w1'))
     instance.actions.createFolder(ROOT_FOLDER_ID, 'a')
-    const a = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const a = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     instance.actions.setFolderExpanded(a, true)
     instance.actions.setGroupExpanded(W('w1'), true)
     instance.actions.setGroupExpanded('recent:w1', true)
@@ -138,7 +146,7 @@ describe('enhanced workspace store', () => {
     // tree-row groups, AND recency rows all fold; the tree stays intact.
     expect(after.folderExpansion).toEqual({})
     expect(after.groupExpansion).toEqual({})
-    expect(after.folders[ROOT_FOLDER_ID]?.folderIds).toEqual([a])
+    expect(folderIdsOf(after.folders[ROOT_FOLDER_ID])).toEqual([a])
   })
 
   it('keeps prefixed recency-row expansion keys in step with their workspace on the baseline', () => {
@@ -162,7 +170,7 @@ describe('enhanced workspace store persistence envelope', () => {
     // session's state): folder 团队 with w1 inside, dead w2 at root.
     instance.actions.adoptWorkspace(W('w2'))
     instance.actions.createFolder(ROOT_FOLDER_ID, '团队')
-    const team = instance.getSnapshot().folders[ROOT_FOLDER_ID]!.folderIds[0]!
+    const team = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
     instance.actions.adoptWorkspace(W('w1'))
     instance.actions.moveWorkspaceIn(W('w1'), team)
     instance.actions.setFolderExpanded(team, true)
@@ -174,12 +182,12 @@ describe('enhanced workspace store persistence envelope', () => {
     const fresh = createEnhancedWorkspaceStore().create()
     fresh.actions.restoreEnvelope(envelope, [W('w1'), W('w3')])
     const after = fresh.getSnapshot()
-    expect(after.folders[team]?.workspaceIds).toEqual([W('w1')])
+    expect(workspaceIdsOf(after.folders[team])).toEqual([W('w1')])
     expect(after.folderExpansion[team]).toBe(true)
     expect(after.recentTouchById[W('w1')]).toBeGreaterThan(0)
     // W('w2') is no longer live: pruned from the root account, and W('w3')
     // (live but absent from the envelope) is adopted at the root head.
-    expect(after.folders[ROOT_FOLDER_ID]?.workspaceIds).toEqual([W('w3')])
+    expect(workspaceIdsOf(after.folders[ROOT_FOLDER_ID])).toEqual([W('w3')])
   })
 
   it('rejects a garbage envelope with a TypeError', () => {

@@ -104,6 +104,7 @@ import {
   dirActive,
   filterFlatByQuery,
   filterForestByQuery,
+  FolderId,
   folderOfWorkspace,
   observeSessionActivity,
   orderDeltas,
@@ -116,8 +117,8 @@ import {
   workspaceSessionStatus,
   ROOT_FOLDER_ID,
   UNGROUPED_KEY,
-  type FolderId,
   type FolderNode,
+  type FolderRowNode,
   type SessionGroupBy,
   type SessionNode,
   type SessionPendingInteractions,
@@ -573,7 +574,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
         // Keep the in-memory edit, but do not silently overwrite durable data.
         const root = state.folders[ROOT_FOLDER_ID]
         if (Object.keys(state.folders).length !== 1 || root === undefined
-          || root.workspaceIds.length !== 0 || root.folderIds.length !== 0) {
+          || root.children.length !== 0) {
           throw new Error('tree changed before restore completed')
         }
         actions.restoreEnvelope(loaded.envelope, workspaces.items.map(workspace => workspace.workspaceId))
@@ -801,8 +802,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   const searchEmpty = searching
     && (state.groupBy === 'flat'
       ? filteredFlat.length === 0
-      : filteredForest.folders.length === 0
-        && filteredForest.topLevel.length === 0
+      : filteredForest.topRows.length === 0
         && filteredForest.ungrouped === undefined)
 
   // --- Browser-owned dialog seats (outlive row unmounts during collapse) ---
@@ -833,8 +833,8 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
       if (trimmed === '') return undefined
       const parent = state.folders[parentFolderId]
       if (parent === undefined) return undefined
-      const duplicate = parent.folderIds.some(id =>
-        id !== excludeId && state.folders[id]?.name === trimmed)
+      const duplicate = parent.children.some(child =>
+        child.kind === 'folder' && child.id !== excludeId && state.folders[child.id]?.name === trimmed)
       return duplicate ? t('folderNameConflict') : undefined
     }
 
@@ -1142,8 +1142,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
               ? <FlatList props={props} rows={filteredFlat} onRename={openers.onRenameSession} fileTreeUi={fileTreeUi} />
               : <GroupedView
                 props={props}
-                forest={filteredForest.folders}
-                topLevel={filteredForest.topLevel}
+                topRows={filteredForest.topRows}
                 // While filtering, the recency module is omitted: the user
                 // sees only the matching dirs of the original list.
                 recents={[]}
@@ -1161,8 +1160,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
             ? <FlatList props={props} rows={flat} onRename={openers.onRenameSession} fileTreeUi={fileTreeUi} />
             : <GroupedView
               props={props}
-              forest={forest.folders}
-              topLevel={forest.topLevel}
+              topRows={forest.topRows}
               recents={recents}
               ungrouped={forest.ungrouped}
               openers={openers}
@@ -1324,11 +1322,11 @@ interface SessionRowSeat {
   t: EnhancedWorkspaceBrowserProps['t']
 }
 
-/** The recency module plus the folder forest, root-level leaves, and the ungrouped bucket. */
+/** The recency module plus the full workspace list: the root's interleaved
+ *  rows (folder forest and root-level leaves) and the ungrouped bucket. */
 function GroupedView(props: {
   props: EnhancedWorkspaceBrowserProps
-  forest: readonly FolderNode[]
-  topLevel: readonly WorkspaceLeaf[]
+  topRows: readonly FolderRowNode[]
   recents: ReturnType<typeof deriveRecentWorkspaces>
   ungrouped: WorkspaceLeaf | undefined
   openers: RowOpeners
@@ -1477,12 +1475,12 @@ function GroupedView(props: {
   const handleRowDrop = (source: DragSource, target: DropTarget): void => {
     try {
       const resolution = source.kind === 'folder'
-        ? resolveFolderDrop(state.folders, source.id as FolderId, target.id as FolderId, target.zone)
+        ? resolveFolderDrop(state.folders, source.id as FolderId, target.kind, target.id, target.zone)
         : resolveWorkspaceDrop(state.folders, source.id as WorkspaceId, target.kind, target.id, target.zone)
       if (resolution.kind === 'move-workspace') {
-        actions.moveWorkspaceIn(source.id as WorkspaceId, resolution.folderId, resolution.beforeWorkspaceId)
+        actions.moveWorkspaceIn(source.id as WorkspaceId, resolution.folderId, resolution.beforeChild)
       } else if (resolution.kind === 'move-folder') {
-        actions.moveFolder(source.id as FolderId, resolution.beforeFolderId, resolution.parentFolderId)
+        actions.moveFolder(source.id as FolderId, resolution.beforeChild, resolution.parentFolderId)
       }
     } catch (error) {
       // Tree guards (cycle / depth / root) and corrupt trees fail non-fatally;
@@ -1495,8 +1493,12 @@ function GroupedView(props: {
   }
   const drag: DragSeat = {
     dragSource,
-    appendWorkspaceFolderId: dragSource?.kind === 'workspace' && dropTarget?.kind === 'folder' && dropTarget.zone === 'before'
-      ? state.folders[dropTarget.id as FolderId]?.parentFolderId ?? null
+    // A workspace dropped on a folder row's MIDDLE band moves INTO that
+    // folder (appended): preview the append destination at the folder's row
+    // end. Edge zones ('before'/'after') interleave the parent level instead
+    // and preview on the target row itself.
+    appendWorkspaceFolderId: dragSource?.kind === 'workspace' && dropTarget?.kind === 'folder' && dropTarget.zone === 'on'
+      ? FolderId(dropTarget.id)
       : null,
     onDragStart: source => setDragSource(source),
     onDragOver: target => setDropTarget(current =>
@@ -1512,8 +1514,6 @@ function GroupedView(props: {
     onDrop: handleRowDrop,
     dropZoneOf: (kind, id) => {
       if (dragSource === null || dropTarget === null || dropTarget.kind !== kind || dropTarget.id !== id) return undefined
-      // Workspace top-edge drops append to the parent; only that region gets a preview.
-      if (kind === 'folder' && dragSource.kind === 'workspace' && dropTarget.zone === 'before') return undefined
       return dropTarget.zone
     },
   }
@@ -1591,12 +1591,13 @@ function GroupedView(props: {
           </section>
         )
         : null}
-      {props.forest.length > 0 || props.topLevel.length > 0 || props.ungrouped !== undefined || state.groupBy === 'repo'
+      {props.topRows.length > 0 || props.ungrouped !== undefined || state.groupBy === 'repo'
         ? (
-          // The full workspace tree below the recents border: the folder
-          // forest, root-level leaves, and the ungrouped bucket — or, in the
-          // git-repo grouping mode, the repo forest with the no-git
-          // workspaces flattened below and the unregistered-tree group last.
+          // The full workspace tree below the recents border: the root's
+          // interleaved rows (folder forest and root-level leaves in child
+          // order) and the ungrouped bucket — or, in the git-repo grouping
+          // mode, the repo forest with the no-git workspaces flattened below
+          // and the unregistered-tree group last.
           <section className={css.section}>
             <div className={css.sectionHeader}>
               <h3 className={css.sectionTitle}>{t('all')}</h3>
@@ -1644,34 +1645,30 @@ function GroupedView(props: {
               )
               : (
                 <>
-                  {props.forest.map(folder => (
-                    <FolderRow
-                      key={folder.folderId}
-                      node={folder}
-                      parentName={topLevelLabel}
-                      callbacks={callbacks}
-                      sessionSeat={sessionSeat}
-                      sessionsOverflow={props.sessionsOverflow}
-                      onToggleOverflow={props.onToggleOverflow}
-                      drag={drag}
-                      ancestors={[]}
-                      guide={guide}
-                      now={now}
-                      git={props.git.probe}
-                      gitMarkers={props.git.markers}
-                      sessionsForGit={sessionCwdsByWorkspace}
-                      expandedKeys={expandedKeys}
-                    />
-                  ))}
-                  <WorkspaceDropRegion
-                    active={drag.appendWorkspaceFolderId === ROOT_FOLDER_ID}
-                    label={t('dropWorkspaceTopLevelEnd')}
-                    depth={0}
-                  >
-                    {props.topLevel.map(leaf => (
+                  {props.topRows.map(row => row.kind === 'folder'
+                    ? (
+                      <FolderRow
+                        key={row.node.folderId}
+                        node={row.node}
+                        parentName={topLevelLabel}
+                        callbacks={callbacks}
+                        sessionSeat={sessionSeat}
+                        sessionsOverflow={props.sessionsOverflow}
+                        onToggleOverflow={props.onToggleOverflow}
+                        drag={drag}
+                        ancestors={[]}
+                        guide={guide}
+                        now={now}
+                        git={props.git.probe}
+                        gitMarkers={props.git.markers}
+                        sessionsForGit={sessionCwdsByWorkspace}
+                        expandedKeys={expandedKeys}
+                      />
+                    )
+                    : (
                       <LeafRow
-                        key={leaf.key}
-                        leaf={leaf}
+                        key={row.leaf.key}
+                        leaf={row.leaf}
                         ancestors={[]}
                         callbacks={callbacks}
                         sessionSeat={sessionSeat}
@@ -1682,11 +1679,15 @@ function GroupedView(props: {
                         now={now}
                         git={props.git.probe}
                         gitMarkers={props.git.markers}
-                        sessionsForGit={sessionCwdsByWorkspace(leaf.workspaceId as WorkspaceId)}
+                        sessionsForGit={sessionCwdsByWorkspace(row.leaf.workspaceId as WorkspaceId)}
                         expandedKeys={expandedKeys}
                       />
                     ))}
-                  </WorkspaceDropRegion>
+                  <WorkspaceDropRegion
+                    active={drag.appendWorkspaceFolderId === ROOT_FOLDER_ID}
+                    label={t('dropWorkspaceTopLevelEnd')}
+                    depth={0}
+                  />
                   {props.ungrouped !== undefined && (
                     <LeafRow
                       leaf={props.ungrouped}
@@ -1719,8 +1720,7 @@ function GroupedView(props: {
           <ServiceGroupedView
             props={props.props}
             fileTreeUi={props.fileTreeUi}
-            forest={props.forest}
-            topLevel={props.topLevel}
+            topRows={props.topRows}
             recents={props.recents}
             ungrouped={props.ungrouped}
             openers={props.openers}
@@ -1748,7 +1748,7 @@ function WorkspaceDropRegion(props: {
   active: boolean
   label: string
   depth: number
-  children: ReactNode
+  children?: ReactNode
 }): ReactNode {
   return (
     <div
@@ -1921,30 +1921,26 @@ function FolderRow(props: {
       {node.expanded
         ? (
           <div className={css.folderChildren}>
-            {node.children.map(child => (
-              <FolderRow
-                key={child.folderId}
-                node={child}
-                parentName={node.name}
-                callbacks={callbacks}
-                sessionSeat={props.sessionSeat}
-                sessionsOverflow={props.sessionsOverflow}
-                onToggleOverflow={props.onToggleOverflow}
-                drag={props.drag}
-                ancestors={[...props.ancestors, node.folderId]}
-                guide={props.guide}
-                now={props.now}
-              />
-            ))}
-            <WorkspaceDropRegion
-              active={props.drag.appendWorkspaceFolderId === node.folderId}
-              label={callbacks.t('dropWorkspaceFolderEnd', { name: node.name })}
-              depth={props.ancestors.length + 1}
-            >
-              {node.workspaceGroups.map(leaf => (
+            {node.rows.map(row => row.kind === 'folder'
+              ? (
+                <FolderRow
+                  key={row.node.folderId}
+                  node={row.node}
+                  parentName={node.name}
+                  callbacks={callbacks}
+                  sessionSeat={props.sessionSeat}
+                  sessionsOverflow={props.sessionsOverflow}
+                  onToggleOverflow={props.onToggleOverflow}
+                  drag={props.drag}
+                  ancestors={[...props.ancestors, node.folderId]}
+                  guide={props.guide}
+                  now={props.now}
+                />
+              )
+              : (
                 <LeafRow
-                  key={leaf.key}
-                  leaf={leaf}
+                  key={row.leaf.key}
+                  leaf={row.leaf}
                   ancestors={[...props.ancestors, node.folderId]}
                   callbacks={callbacks}
                   sessionSeat={props.sessionSeat}
@@ -1955,11 +1951,15 @@ function FolderRow(props: {
                   now={props.now}
                   {...(props.git === undefined || props.git === null ? {} : { git: props.git })}
                   {...(props.gitMarkers === undefined ? {} : { gitMarkers: props.gitMarkers })}
-                  sessionsForGit={props.sessionsForGit?.(leaf.workspaceId as WorkspaceId) ?? []}
+                  sessionsForGit={props.sessionsForGit?.(row.leaf.workspaceId as WorkspaceId) ?? []}
                   {...(props.expandedKeys === undefined ? {} : { expandedKeys: props.expandedKeys })}
                 />
               ))}
-            </WorkspaceDropRegion>
+            <WorkspaceDropRegion
+              active={props.drag.appendWorkspaceFolderId === node.folderId}
+              label={callbacks.t('dropWorkspaceFolderEnd', { name: node.name })}
+              depth={props.ancestors.length + 1}
+            />
           </div>
         )
         : null}
@@ -3591,20 +3591,39 @@ function folderRowModel(props: {
     })
   }
   const children: FileTreeNode[] = []
-  for (const child of node.children) {
-    children.push(folderRowModel({
-      node: child,
-      parentName: node.name,
-      callbacks,
-      sessionSeat: props.sessionSeat,
-      sessionsOverflow: props.sessionsOverflow,
-      onToggleOverflow: props.onToggleOverflow,
-      drag: props.drag,
-      ancestors: [...props.ancestors, node.folderId],
-      now: props.now,
-      menu: props.menu,
-      fileTreeUi: props.fileTreeUi,
-    }))
+  for (const row of node.rows) {
+    if (row.kind === 'folder') {
+      children.push(folderRowModel({
+        node: row.node,
+        parentName: node.name,
+        callbacks,
+        sessionSeat: props.sessionSeat,
+        sessionsOverflow: props.sessionsOverflow,
+        onToggleOverflow: props.onToggleOverflow,
+        drag: props.drag,
+        ancestors: [...props.ancestors, node.folderId],
+        now: props.now,
+        menu: props.menu,
+        fileTreeUi: props.fileTreeUi,
+      }))
+    } else {
+      children.push(leafRowModel({
+        leaf: row.leaf,
+        ancestors: [...props.ancestors, node.folderId],
+        callbacks,
+        sessionSeat: props.sessionSeat,
+        sessionsOverflow: props.sessionsOverflow,
+        onToggleOverflow: props.onToggleOverflow,
+        drag: props.drag,
+        now: props.now,
+        ...(props.git === undefined || props.git === null ? {} : { git: props.git }),
+        ...(props.gitMarkers === undefined ? {} : { gitMarkers: props.gitMarkers }),
+        sessionsForGit: props.sessionsForGit?.(row.leaf.workspaceId as WorkspaceId) ?? [],
+        ...(props.expandedKeys === undefined ? {} : { expandedKeys: props.expandedKeys }),
+        menu: props.menu,
+        fileTreeUi: props.fileTreeUi,
+      }))
+    }
   }
   const hint = workspaceAppendHintNode({
     key: `drop:${node.folderId}`,
@@ -3613,24 +3632,6 @@ function folderRowModel(props: {
     depth: props.ancestors.length + 1,
   })
   if (hint !== null) children.push(hint)
-  for (const leaf of node.workspaceGroups) {
-    children.push(leafRowModel({
-      leaf,
-      ancestors: [...props.ancestors, node.folderId],
-      callbacks,
-      sessionSeat: props.sessionSeat,
-      sessionsOverflow: props.sessionsOverflow,
-      onToggleOverflow: props.onToggleOverflow,
-      drag: props.drag,
-      now: props.now,
-      ...(props.git === undefined || props.git === null ? {} : { git: props.git }),
-      ...(props.gitMarkers === undefined ? {} : { gitMarkers: props.gitMarkers }),
-      sessionsForGit: props.sessionsForGit?.(leaf.workspaceId as WorkspaceId) ?? [],
-      ...(props.expandedKeys === undefined ? {} : { expandedKeys: props.expandedKeys }),
-      menu: props.menu,
-      fileTreeUi: props.fileTreeUi,
-    }))
-  }
   return {
     key: node.folderId,
     label: node.name,
@@ -3835,8 +3836,7 @@ function unregGroupNodes(props: {
 function ServiceGroupedView(props: {
   props: EnhancedWorkspaceBrowserProps
   fileTreeUi: FileTreeUiServiceV2
-  forest: readonly FolderNode[]
-  topLevel: readonly WorkspaceLeaf[]
+  topRows: readonly FolderRowNode[]
   recents: ReturnType<typeof deriveRecentWorkspaces>
   ungrouped: WorkspaceLeaf | undefined
   openers: RowOpeners
@@ -3984,42 +3984,43 @@ function ServiceGroupedView(props: {
       allRows.push(...unregNodes)
     }
   } else {
-    for (const folder of props.forest) {
-      allRows.push(folderRowModel({
-        node: folder,
-        parentName: t('moveDestinationTopLevel'),
-        callbacks: props.callbacks,
-        sessionSeat: props.sessionSeat,
-        sessionsOverflow: props.sessionsOverflow,
-        onToggleOverflow: props.onToggleOverflow,
-        drag: props.drag,
-        ancestors: [],
-        now: props.now,
-        git: props.git.probe,
-        gitMarkers: props.git.markers,
-        sessionsForGit: props.sessionsForGit,
-        expandedKeys: props.expandedKeys,
-        menu,
-        fileTreeUi: props.fileTreeUi,
-      }))
-    }
-    for (const leaf of props.topLevel) {
-      allRows.push(leafRowModel({
-        leaf,
-        ancestors: [],
-        callbacks: props.callbacks,
-        sessionSeat: props.sessionSeat,
-        sessionsOverflow: props.sessionsOverflow,
-        onToggleOverflow: props.onToggleOverflow,
-        drag: props.drag,
-        now: props.now,
-        git: props.git.probe,
-        gitMarkers: props.git.markers,
-        sessionsForGit: props.sessionsForGit(leaf.workspaceId as WorkspaceId),
-        expandedKeys: props.expandedKeys,
-        menu,
-        fileTreeUi: props.fileTreeUi,
-      }))
+    for (const row of props.topRows) {
+      if (row.kind === 'folder') {
+        allRows.push(folderRowModel({
+          node: row.node,
+          parentName: t('moveDestinationTopLevel'),
+          callbacks: props.callbacks,
+          sessionSeat: props.sessionSeat,
+          sessionsOverflow: props.sessionsOverflow,
+          onToggleOverflow: props.onToggleOverflow,
+          drag: props.drag,
+          ancestors: [],
+          now: props.now,
+          git: props.git.probe,
+          gitMarkers: props.git.markers,
+          sessionsForGit: props.sessionsForGit,
+          expandedKeys: props.expandedKeys,
+          menu,
+          fileTreeUi: props.fileTreeUi,
+        }))
+      } else {
+        allRows.push(leafRowModel({
+          leaf: row.leaf,
+          ancestors: [],
+          callbacks: props.callbacks,
+          sessionSeat: props.sessionSeat,
+          sessionsOverflow: props.sessionsOverflow,
+          onToggleOverflow: props.onToggleOverflow,
+          drag: props.drag,
+          now: props.now,
+          git: props.git.probe,
+          gitMarkers: props.git.markers,
+          sessionsForGit: props.sessionsForGit(row.leaf.workspaceId as WorkspaceId),
+          expandedKeys: props.expandedKeys,
+          menu,
+          fileTreeUi: props.fileTreeUi,
+        }))
+      }
     }
     const topHint = workspaceAppendHintNode({
       key: 'drop:root',
@@ -4047,7 +4048,7 @@ function ServiceGroupedView(props: {
     }
     allRows.push(...unregNodes)
   }
-  const showAll = props.forest.length > 0 || props.topLevel.length > 0 || props.ungrouped !== undefined || props.state.groupBy === 'repo'
+  const showAll = props.topRows.length > 0 || props.ungrouped !== undefined || props.state.groupBy === 'repo'
   return (
     <>
       {props.recents.length > 0 && (

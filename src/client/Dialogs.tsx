@@ -12,12 +12,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button, IconCheckOutline16, IconFolderClose16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
+  ChildAnchorMissingError,
   FolderDepthExceededError,
   FolderNameConflictError,
   FolderNotFoundError,
   FolderRootProtectedError,
   ROOT_FOLDER_ID,
-  WorkspaceAnchorMissingError,
   WorkspaceNotInTreeError,
   type FolderId,
   type FolderTree,
@@ -37,7 +37,7 @@ export function folderErrorMessage(error: unknown, t: EnhancedWorkspaceBrowserPr
   if (error instanceof FolderDepthExceededError) return t('folderDepthExceeded', { max: error.maxDepth })
   if (error instanceof FolderRootProtectedError) return t('folderRootProtected')
   if (error instanceof FolderNotFoundError) return t('folderNotFound')
-  if (error instanceof WorkspaceNotInTreeError || error instanceof WorkspaceAnchorMissingError) {
+  if (error instanceof WorkspaceNotInTreeError || error instanceof ChildAnchorMissingError) {
     return t('workspaceNotInTree')
   }
   return error instanceof Error ? error.message : String(error)
@@ -200,7 +200,9 @@ export function collectMoveOptions(
       excluded.add(id)
       const record = folders[id]
       if (record === undefined) return
-      for (const childId of record.folderIds) walkExcluded(childId)
+      for (const child of record.children) {
+        if (child.kind === 'folder') walkExcluded(child.id)
+      }
     }
     walkExcluded(excludedFolderId)
   }
@@ -208,11 +210,12 @@ export function collectMoveOptions(
   const walk = (id: FolderId, depth: number): void => {
     const record = folders[id]
     if (record === undefined) return
-    for (const childId of record.folderIds) {
-      if (!excluded.has(childId)) {
-        options.push({ folderId: childId, name: folders[childId]?.name ?? childId, depth })
+    for (const child of record.children) {
+      if (child.kind !== 'folder') continue
+      if (!excluded.has(child.id)) {
+        options.push({ folderId: child.id, name: folders[child.id]?.name ?? child.id, depth })
       }
-      walk(childId, depth + 1)
+      walk(child.id, depth + 1)
     }
   }
   walk(ROOT_FOLDER_ID, 1)

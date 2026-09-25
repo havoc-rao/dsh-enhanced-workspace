@@ -85,6 +85,13 @@ pnpm test:mount          # 挂载冒烟：真实 DSH 无头渲染（需 PATH 上
   `docs/plan/2026-09-04-plugin-mode-design.md` §7。
 - 目录树为插件本地权威，跨标签页并发编辑 last-writer-wins；Host 平铺顺序
   reconcile（`ctx.workspaces.insertBefore`）失败仅 console.warn。
+- 每个目录层只有一个统一子条目账户 `FolderRecord.children: FolderChild[]`
+  （`{kind:'folder'|'workspace', id}`）——目录与工作区同层自由穿插，不再有
+  「子目录在前」的固定次序。信封仍是 legacy 双账户形（`workspaceIds` +
+  `folderIds`）时**可读不可写**：两侧校验器都接受任一形状（逐记录二选一、
+  目录反查按父记录形状解析），`restoredState` 在边界迁移为 `children`
+  （子目录在前、工作区在后，等价旧渲染序）；应用层写盘永远是统一形状。
+  锚点（拖拽/移动到）一律是 `FolderChild`，指向任意 kind 的兄弟。
 - 持久化不走 localStorage（桌面端 webserver 每次启动端口随机，Chromium 按
   origin 含端口分桶，重启即丢）：信封经宿主半 `/enhanced-workspace` RPC
   通道（loopback 权威）原子写入 `~/.dsh/storages/dsh-enhanced-workspace.json`，
