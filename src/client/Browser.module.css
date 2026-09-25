@@ -432,6 +432,7 @@
   display: inline-flex;
   align-items: center;
   flex: none;
+  margin-right: 4px;
 }
 
 .sessionList {
