@@ -52,10 +52,11 @@ import { codeFinderTsdown } from '@havocrao/dsh-code-finder/tsdown'
  */
 const DEV_BUILD = process.env.DSH_ENHANCED_WORKSPACE_DEV === '1'
 const BUILD_MODE = DEV_BUILD ? 'development' : 'production'
-// dcf 注入开关与生态统一：`CODE_FINDER=1`（harness dev:web:dcf / web:dcf 全量态）
-// 强制开注入（即使生产构建），`DEV_BUILD` 保留本插件的 dev 语义，两者取并集；
-// 无任何 env 时生产构建零注入，ambient NODE_ENV=development 泄漏同样不生效。
-const codeFinderEnabled = DEV_BUILD || process.env.CODE_FINDER === '1'
+// dcf 注入跟随本插件自己的 dev 语义（DSH_ENHANCED_WORKSPACE_DEV 显式钉死，
+// 见上方注释——ambient NODE_ENV=development 泄漏曾造成 2026-09 "删除不了"
+// regression）。生态统一后 env 层只有 NODE_ENV；此处用 dcf 的 enabled 覆盖层
+// 表达本插件的显式选择，与 harness 的 NODE_ENV=development 编排正交。
+const codeFinderEnabled = DEV_BUILD
 
 /** Node builtins must never survive into the browser module-loader factory. */
 const NODE_BUILTINS = new Set([
