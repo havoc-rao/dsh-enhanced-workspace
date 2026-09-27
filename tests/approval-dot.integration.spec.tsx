@@ -31,7 +31,7 @@ import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/cli
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { PendingInteractionPublisher, SessionPendingInteractionBase } from '@deepseek-ai/dsh-client-ui-session/client'
-import type { SessionPendingInteraction, SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { SessionPendingInteraction, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import { EnhancedWorkspaceBrowser } from '../src/client/Browser.tsx'
 import type { EnhancedWorkspaceBrowserProps } from '../src/client/contract.ts'
 import { DIRECTORY_FLOW_SLOT, SEARCH_SLOT, type EnhancedDirectoryFlowOwnerProps } from '../src/client/contract.ts'
@@ -70,8 +70,8 @@ const sessionBundleSource = readFileSync(join(dirname(sessionPkgJsonPath), 'lib'
 new Function('window', sessionBundleSource)(loaderWindow)
 
 interface RealUiSession {
-  pendingInteractions: {
-    getSnapshot: () => SessionPendingInteractionSnapshot
+  sessionStatus: {
+    getSnapshot: () => SessionStatusSnapshot
     subscribe: (listener: () => void) => () => void
   }
   registerPendingInteraction<T extends SessionPendingInteractionBase>(
@@ -93,7 +93,7 @@ function session(id: string, title: string, ageMs: number, running: boolean): Se
     displayTitle: title,
     blank: false,
     running,
-    completed: !running,
+    retainedBy: {},
     updatedAt: NOW - ageMs,
   }
 }
@@ -116,12 +116,13 @@ const SESSIONS_BY_ID: Record<string, SessionSummary> = {
 }
 const SESSIONS_STATE: SessionListState = {
   ids: ['s1', 's2'].map(id => id as SessionId),
-  byId: SESSIONS_BY_ID,
-  current: 's1' as SessionId,
+  byId: {
+    ...SESSIONS_BY_ID,
+    // The viewer-open session: main-view retention is the selection fact.
+    s1: { ...SESSIONS_BY_ID['s1']!, retainedBy: { mainView: 1 } },
+  } as Record<SessionId, SessionSummary>,
   phase: 'ready',
-  subagentsByParent: {},
-  jobsBySession: {},
-  currentAddress: undefined,
+  projectionsBySession: {},
 }
 
 const t = ((key: string, params?: Record<string, string | number>): string => {
@@ -135,7 +136,7 @@ const t = ((key: string, params?: Record<string, string | number>): string => {
 
 function makeProps(
   uiSession: RealUiSession,
-  useSessionPendingInteraction: NonNullable<EnhancedWorkspaceBrowserProps['useSessionPendingInteraction']>,
+  useSessionStatus: NonNullable<EnhancedWorkspaceBrowserProps['useSessionStatus']>,
   instance: ReturnType<ReturnType<typeof createEnhancedWorkspaceStore>['create']>,
 ): EnhancedWorkspaceBrowserProps {
   return {
@@ -149,7 +150,7 @@ function makeProps(
       baselinesReady: true,
     }),
     useSessions: (selector: (snapshot: SessionListState) => unknown) => selector(SESSIONS_STATE),
-    useSessionPendingInteraction,
+    useSessionStatus,
     useStore: (selector: (snapshot: EnhancedWorkspaceState) => unknown) =>
       useSyncExternalStore(instance.store.subscribe, () => selector(instance.getSnapshot() as EnhancedWorkspaceState)),
     actions: instance.actions,
@@ -192,17 +193,17 @@ async function mount(uiSession: RealUiSession): Promise<{
   document.body.appendChild(container)
   const root = createRoot(container)
   const instance = createEnhancedWorkspaceStore().create()
-  const useLivePending: NonNullable<EnhancedWorkspaceBrowserProps['useSessionPendingInteraction']> = <S,>(
-    selector: (snapshot: SessionPendingInteractionSnapshot) => S,
+  const useLiveStatus: NonNullable<EnhancedWorkspaceBrowserProps['useSessionStatus']> = <S,>(
+    selector: (snapshot: SessionStatusSnapshot) => S,
   ) => selector(
     useSyncExternalStore(
-      (listener) => uiSession.pendingInteractions.subscribe(listener),
-      () => uiSession.pendingInteractions.getSnapshot(),
-      () => uiSession.pendingInteractions.getSnapshot(),
-    ) as SessionPendingInteractionSnapshot,
+      (listener) => uiSession.sessionStatus.subscribe(listener),
+      () => uiSession.sessionStatus.getSnapshot(),
+      () => uiSession.sessionStatus.getSnapshot(),
+    ) as SessionStatusSnapshot,
   )
   await act(async () => {
-    root.render(<EnhancedWorkspaceBrowser {...makeProps(uiSession, useLivePending, instance)} />)
+    root.render(<EnhancedWorkspaceBrowser {...makeProps(uiSession, useLiveStatus, instance)} />)
   })
   return { container, root, instance }
 }
@@ -227,11 +228,14 @@ describe('real ui-session pending seat → sidebar amber dot', () => {
   it('flips the workspace busy marker and the session row from blue to amber when an approval entry lands, and back when it settles', async () => {
     const fakeSessions = {
       list: {
-        getSnapshot: () => ({ ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {} }),
+        getSnapshot: () => ({ ids: [], byId: {}, phase: 'ready', projectionsBySession: {} }),
         subscribe: () => () => {},
       },
     }
     const ctx = new cordis.Context()
+    // The real UiSession binds the host's remote status stream; the fixture
+    // context carries a stub so the constructor's subscription registers.
+    ;(ctx as { remote?: unknown }).remote = { $on: () => () => {} }
     const uiSession = new UiSession(ctx, fakeSessions)
     const { container } = await mount(uiSession)
 
@@ -265,11 +269,12 @@ describe('real ui-session pending seat → sidebar amber dot', () => {
   it('shows the amber dot and the escalation shield on the expanded session row through the real seat', async () => {
     const fakeSessions = {
       list: {
-        getSnapshot: () => ({ ids: [], byId: {}, current: undefined, phase: 'ready', subagentsByParent: {} }),
+        getSnapshot: () => ({ ids: [], byId: {}, phase: 'ready', projectionsBySession: {} }),
         subscribe: () => () => {},
       },
     }
     const ctx = new cordis.Context()
+    ;(ctx as { remote?: unknown }).remote = { $on: () => () => {} }
     const uiSession = new UiSession(ctx, fakeSessions)
     const { container } = await mount(uiSession)
     // Expand the recency workspace row so its session rows enter the DOM.

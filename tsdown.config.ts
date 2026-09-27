@@ -52,6 +52,10 @@ import { codeFinderTsdown } from '@havocrao/dsh-code-finder/tsdown'
  */
 const DEV_BUILD = process.env.DSH_ENHANCED_WORKSPACE_DEV === '1'
 const BUILD_MODE = DEV_BUILD ? 'development' : 'production'
+// dcf 注入开关与生态统一：`CODE_FINDER=1`（harness dev:web:dcf / web:dcf 全量态）
+// 强制开注入（即使生产构建），`DEV_BUILD` 保留本插件的 dev 语义，两者取并集；
+// 无任何 env 时生产构建零注入，ambient NODE_ENV=development 泄漏同样不生效。
+const codeFinderEnabled = DEV_BUILD || process.env.CODE_FINDER === '1'
 
 /** Node builtins must never survive into the browser module-loader factory. */
 const NODE_BUILTINS = new Set([
@@ -212,7 +216,7 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
     },
     // External wins for module-table entries; every other dependency inlines.
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
-    plugins: [codeFinderTsdown({ enabled: DEV_BUILD }), purityGatePlugin(), makeCssPlugin(pluginId)],
+    plugins: [codeFinderTsdown({ enabled: codeFinderEnabled }), purityGatePlugin(), makeCssPlugin(pluginId)],
     outputOptions: {
       entryFileNames: entryFile,
       sourcemapPathTransform: browserSourcePath,

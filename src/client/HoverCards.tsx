@@ -12,7 +12,7 @@
  */
 
 import { useState } from 'react'
-import { IconCodeOutline16, IconFolderClose16, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCodeOutlineRegular, IconFolderCloseRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { EnhancedWorkspaceBrowserProps } from './contract.ts'
 import {
@@ -307,7 +307,7 @@ function RecentFilesSection({ label, files, t, selected, onSelect }: {
           const inner = (
             <>
               <span className={css.hoverFileGlyph} aria-hidden="true">
-                {row.kind === 'dir' ? <IconFolderClose16 size={14} /> : <IconCodeOutline16 size={14} />}
+                {row.kind === 'dir' ? <IconFolderCloseRegular size={14} /> : <IconCodeOutlineRegular size={14} />}
               </span>
               <span className={row.kind === 'dir' ? css.hoverFileDirName : css.hoverFileName}>
                 {row.kind === 'dir' ? `${row.name}/` : row.name}

@@ -3,10 +3,23 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {
-  SessionPendingInteraction,
   SessionPendingInteractionBase,
-  SessionPendingInteractionSnapshot,
+  SessionStatus,
+  SessionStatusSnapshot,
 } from '@deepseek-ai/dsh-client-ui-session/client'
+// The browser (model.ts) declares the approval roster member it consumes;
+// this spec's snapshots also carry question entries, standing in for the
+// kind ui-user-questions augments into the assembled roster.
+declare module '@deepseek-ai/dsh-client-ui-session/client' {
+  interface SessionPendingInteractionMap {
+    question: {
+      readonly key: string
+      readonly kind: 'question'
+      readonly sessionId: SessionId
+    }
+  }
+}
+
 import {
   ChildAnchorMissingError,
   FolderCycleError,
@@ -45,6 +58,7 @@ import {
   retainLiveKeys,
   sessionPendingInteractionsOf,
   sessionStatusDot,
+  sessionStatusTableOf,
   treeOrder,
   UNGROUPED_KEY,
   workspaceChild,
@@ -56,7 +70,7 @@ import {
   type ForestView,
   type LiveKeysSlice,
   type PersistedViewState,
-  type SessionPendingInteractions,
+  type SessionStatusView,
   type SubagentDescendantSummary,
   type WorkspaceLeaf,
 } from '../src/client/model.ts'
@@ -508,6 +522,7 @@ describe('observeSessionActivity', () => {
     displayTitle: id,
     running: false,
     blank: false,
+    retainedBy: {},
     updatedAt,
   })
 
@@ -583,6 +598,7 @@ describe('sessionStatusDot / dirActive', () => {
       displayTitle: id,
       running: false,
       blank: false,
+      retainedBy: {},
       updatedAt: 100,
       ...overrides,
     })
@@ -591,20 +607,24 @@ describe('sessionStatusDot / dirActive', () => {
     const descendants = new Map<SessionId, SubagentDescendantSummary>([
       [S('s2'), { count: 1, runningCount: 1 }],
     ])
-    const pending = new Map<SessionId, { readonly kind: string }>([
-      [S('s5'), { kind: 'approval' }],
+    // UI-status facts: the completion reminder (s3/s4) and the pending
+    // approval (s5) — built-in parity: only these render/ count, never idle.
+    const statuses = new Map<SessionId, SessionStatusView>([
+      [S('s3'), { pendingInteraction: undefined, completionUnread: true }],
+      [S('s4'), { pendingInteraction: undefined, completionUnread: true }],
+      [S('s5'), { pendingInteraction: { kind: 'approval' }, completionUnread: false }],
     ])
     expect(workspaceSessionStatus([], descendants)).toEqual({})
-    expect(workspaceSessionStatus([summary('u')], descendants, pending)).toEqual({}) // idle: no state
+    expect(workspaceSessionStatus([summary('u')], descendants, statuses)).toEqual({}) // idle: no state
     expect(workspaceSessionStatus([
       summary('u'),
       summary('s1', { running: true }), // own activity → working
       summary('s2'), // subagent running under it → working
-      summary('s3', { completed: true }), // completed → done
-      summary('s4', { completed: true, running: true }), // activity outranks completion
+      summary('s3'), // completion reminder → done
+      summary('s4', { running: true }), // activity outranks the reminder
       summary('s5'), // pending interaction → waiting (outranks idle)
       summary('s6', { blank: true, running: true }), // not a visible session
-    ], descendants, pending)).toEqual({ warning: 1, ongoing: 3, done: 1 })
+    ], descendants, statuses)).toEqual({ warning: 1, ongoing: 3, done: 1 })
   })
 })
 
@@ -629,16 +649,38 @@ describe('pendingInteractionOf / sessionPendingInteractionsOf', () => {
   it('reads the ui-session snapshot as the browser entry view (the roster seam types the escalation reason)', () => {
     // The plugin's local compile knows the approval roster member; base
     // entries stand in for the kinds other packages augment (question…).
-    const snapshot = new Map<SessionId, SessionPendingInteractionBase | SessionPendingInteraction>([
-      [S('s1'), { key: 'approval:1', kind: 'approval', sessionId: S('s1'), reason: 'escalate sandbox to workspace-write: fixture' }],
-      [S('s2'), { key: 'approval:2', kind: 'approval', sessionId: S('s2') }],
-      [S('s3'), { key: 'question:1', kind: 'question', sessionId: S('s3') }],
-    ]) as SessionPendingInteractionSnapshot
+    const snapshot: SessionStatusSnapshot = new Map<SessionId, SessionStatus>([
+      [S('s1'), { running: false, pendingInteraction: { key: 'approval:1', kind: 'approval', sessionId: S('s1'), reason: 'escalate sandbox to workspace-write: fixture' }, completionUnread: false }],
+      [S('s2'), { running: false, pendingInteraction: { key: 'approval:2', kind: 'approval', sessionId: S('s2') }, completionUnread: false }],
+      [S('s3'), { running: false, pendingInteraction: { key: 'question:1', kind: 'question', sessionId: S('s3') }, completionUnread: true }],
+    ])
     const viewed = sessionPendingInteractionsOf(snapshot)
     expect(pendingInteractionOf(viewed.get(S('s1')))).toBe('escalation')
     expect(pendingInteractionOf(viewed.get(S('s2')))).toBe('approval')
     expect(pendingInteractionOf(viewed.get(S('s3')))).toBe('question')
     expect(pendingInteractionOf(viewed.get(S('s4')))).toBeUndefined()
+    // The status table is the single projection the row dots read: pending
+    // interaction + the completion reminder; absent sessions carry nothing.
+    const table = sessionStatusTableOf(snapshot)
+    expect(table.get(S('s1'))?.completionUnread).toBe(false)
+    expect(table.get(S('s3'))?.completionUnread, 'the unread completion flows into the table').toBe(true)
+    expect(table.get(S('s4'))).toBeUndefined()
+    expect(table.get(S('s3'))?.pendingInteraction).toBeDefined()
+  })
+})
+
+describe('sessionStatusTableOf', () => {
+  it('projects pending interactions and the completion reminder 1:1 from the snapshot', () => {
+    const snapshot: SessionStatusSnapshot = new Map<SessionId, SessionStatus>([
+      [S('s1'), { running: false, pendingInteraction: undefined, completionUnread: true }],
+      [S('s2'), { running: true, pendingInteraction: { key: 'q:2', kind: 'question', sessionId: S('s2') }, completionUnread: false }],
+    ])
+    const table = sessionStatusTableOf(snapshot)
+    expect(table.get(S('s1'))).toEqual({ pendingInteraction: undefined, completionUnread: true })
+    expect(table.get(S('s2'))).toEqual({
+      pendingInteraction: { key: 'q:2', kind: 'question', sessionId: S('s2') },
+      completionUnread: false,
+    })
   })
 })
 
@@ -661,21 +703,20 @@ describe('deriveRecentWorkspaces', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
     },
   })
-  const summary = (id: string, updatedAt: number): SessionSummary => ({
+  const summary = (id: string, updatedAt: number, extra: Partial<SessionSummary> = {}): SessionSummary => ({
     id: S(id),
     displayTitle: id,
     running: false,
     blank: false,
+    retainedBy: {},
     updatedAt,
+    ...extra,
   })
   const sessionState = (items: readonly SessionSummary[]): SessionListState => ({
     ids: items.map(item => item.id),
     byId: Object.fromEntries(items.map(item => [item.id, item])),
-    current: undefined,
     phase: 'ready',
-    subagentsByParent: {},
-    jobsBySession: {},
-    currentAddress: undefined,
+    projectionsBySession: {},
   })
 
   it('scores by max(touch, derived activity) and falls back to createdAt', () => {
@@ -700,38 +741,36 @@ describe('deriveRecentWorkspaces', () => {
     expect(rows.map(row => row.workspaceId)).toEqual([W('a')])
   })
 
-  it('threads the pending-interaction map into the recency rows (amber waiting state ON the recents section)', () => {
+  it('threads the status table into the recency rows (amber waiting state ON the recents section)', () => {
     const workspaces = [workspace('w', ['s1'], '2026-01-01T00:00:00.000Z')]
     const sessions = sessionState([{
       ...summary('s1', Date.parse('2026-09-01T00:00:00.000Z')),
       running: true,
-      completed: false,
-    }])
+    }] as SessionSummary[])
     const view: ForestView = { folderExpansion: {}, groupExpansion: { [recentGroupKey(W('w'))]: true } }
-    const pending: SessionPendingInteractions = new Map([
-      [S('s1'), { key: 'approval:1', kind: 'approval', sessionId: S('s1'), reason: 'escalate sandbox to workspace-write: x' }],
+    const statuses = new Map<SessionId, SessionStatusView>([
+      [S('s1'), { pendingInteraction: { kind: 'approval', reason: 'escalate sandbox to workspace-write: x' }, completionUnread: false }],
     ])
-    const [row] = deriveRecentWorkspaces(workspaces, sessions, {}, 5, view, [], pending)
+    const [row] = deriveRecentWorkspaces(workspaces, sessions, {}, 5, view, [], statuses)
     // Running + pending → the leaf's status reports the waiting state, and
     // the expanded session row carries the escalation annotation — the
-    // recents section must NOT hard-code an empty pending map.
+    // recents section must NOT hard-code an empty status table.
     expect(row?.status.warning).toBe(1)
     expect(row?.status.ongoing).toBeUndefined()
     expect(row?.sessions[0]?.pendingInteraction).toBe('escalation')
-    // Default remains pending-free for existing callers.
-    const [withoutPending] = deriveRecentWorkspaces(workspaces, sessions, {}, 5, view)
-    expect(withoutPending?.status.warning).toBeUndefined()
-    expect(withoutPending?.status.ongoing).toBe(1)
-    expect(withoutPending?.sessions[0]?.pendingInteraction).toBeUndefined()
+    // Default remains status-free for existing callers.
+    const [withoutStatuses] = deriveRecentWorkspaces(workspaces, sessions, {}, 5, view)
+    expect(withoutStatuses?.status.warning).toBeUndefined()
+    expect(withoutStatuses?.status.ongoing).toBe(1)
+    expect(withoutStatuses?.sessions[0]?.pendingInteraction).toBeUndefined()
   })
 
   it('carries an expandable workspace leaf: sessions, expansion, containsCurrent, and archived filtering', () => {
     const workspaces = [workspace('w', ['s1', 's2'], '2026-01-01T00:00:00.000Z')]
     const sessions = sessionState([
-      summary('s1', Date.parse('2026-09-01T00:00:00.000Z')),
+      summary('s1', Date.parse('2026-09-01T00:00:00.000Z'), { retainedBy: { mainView: 1 } }),
       summary('s2', Date.parse('2026-09-02T00:00:00.000Z')),
     ])
-    sessions.current = S('s1')
     // The recency row's expansion lives under its own prefixed group key.
     const view: ForestView = { folderExpansion: {}, groupExpansion: { [recentGroupKey(W('w'))]: true } }
     const [row] = deriveRecentWorkspaces(workspaces, sessions, {}, 5, view)
@@ -775,18 +814,24 @@ describe('deriveFolderForest', () => {
     displayTitle: id,
     running: false,
     blank: false,
+    retainedBy: {},
     updatedAt,
     ...overrides,
   })
-  const sessionState = (items: readonly SessionSummary[], current?: SessionId): SessionListState => ({
-    ids: items.map(item => item.id),
-    byId: Object.fromEntries(items.map(item => [item.id, item])),
-    current,
-    phase: 'ready',
-    subagentsByParent: {},
-    jobsBySession: {},
-    currentAddress: undefined,
-  })
+  const sessionState = (items: readonly SessionSummary[], current?: SessionId): SessionListState => {
+    const byId: Record<SessionId, SessionSummary> = {}
+    for (const item of items) {
+      byId[item.id] = item.id === current
+        ? { ...item, retainedBy: { ...item.retainedBy, mainView: 1 } }
+        : item
+    }
+    return {
+      ids: items.map(item => item.id),
+      byId,
+      phase: 'ready',
+      projectionsBySession: {},
+    }
+  }
 
   it('assembles the forest from the root and skips unreachable folders', () => {
     let tree = rootTree(['w0', 'w1'])
@@ -884,37 +929,23 @@ describe('deriveFolderForest', () => {
 })
 
 describe('deriveFlat', () => {
+  const flatState = (retainedByA: boolean): SessionListState => ({
+    ids: [S('a'), S('b')],
+    byId: {
+      [S('a')]: { id: S('a'), displayTitle: 'a', running: false, blank: false, retainedBy: retainedByA ? { mainView: 1 } : {}, updatedAt: 1 },
+      [S('b')]: { id: S('b'), displayTitle: 'b', running: false, blank: false, retainedBy: {}, updatedAt: 2 },
+    },
+    phase: 'ready',
+    projectionsBySession: {},
+  })
+
   it('renders every visible session newest-first', () => {
-    const sessions: SessionListState = {
-      ids: [S('a'), S('b')],
-      byId: {
-        [S('a')]: { id: S('a'), displayTitle: 'a', running: false, blank: false, updatedAt: 1 },
-        [S('b')]: { id: S('b'), displayTitle: 'b', running: false, blank: false, updatedAt: 2 },
-      },
-      current: undefined,
-      phase: 'ready',
-      subagentsByParent: {},
-      jobsBySession: {},
-      currentAddress: undefined,
-    }
-    const rows = deriveFlat(sessions, [])
+    const rows = deriveFlat(flatState(false), [])
     expect(rows.map(row => row.id)).toEqual([S('b'), S('a')])
   })
 
   it('marks the viewer-open session row as current', () => {
-    const sessions: SessionListState = {
-      ids: [S('a'), S('b')],
-      byId: {
-        [S('a')]: { id: S('a'), displayTitle: 'a', running: false, blank: false, updatedAt: 1 },
-        [S('b')]: { id: S('b'), displayTitle: 'b', running: false, blank: false, updatedAt: 2 },
-      },
-      current: S('a'),
-      phase: 'ready',
-      subagentsByParent: {},
-      jobsBySession: {},
-      currentAddress: undefined,
-    }
-    const rows = deriveFlat(sessions, [])
+    const rows = deriveFlat(flatState(true), [])
     expect(rows.find(row => row.id === S('a'))?.current, 'the open session row is current').toBe(true)
     expect(rows.find(row => row.id === S('b'))?.current, 'every other row is not').toBe(false)
   })
@@ -928,7 +959,7 @@ describe('filterForestByQuery (in-place dirs-list filter)', () => {
       displayTitle,
       blank: false,
       running: false,
-      completed: true,
+      retainedBy: {},
       updatedAt,
       ...extra,
     }
@@ -945,11 +976,8 @@ describe('filterForestByQuery (in-place dirs-list filter)', () => {
       [S('blank')]: summary('blank', '', 400, { blank: true }),
       [S('u1')]: summary('u1', '未分组草稿', 300),
     },
-    current: undefined,
     phase: 'ready',
-    subagentsByParent: {},
-    jobsBySession: {},
-    currentAddress: undefined,
+    projectionsBySession: {},
   }
   const workspaces: WorkspaceView[] = [
     { workspaceId: W('w-art'), path: '/projects/w-art', title: '绘画收集', sessionIds: [S('s1'), S('s2'), S('s3'), S('sub')], createdAt: NOW, updatedAt: NOW },
@@ -1021,14 +1049,11 @@ describe('filterFlatByQuery', () => {
     const sessions: SessionListState = {
       ids: [S('a'), S('b')],
       byId: {
-        [S('a')]: { id: S('a'), displayTitle: 'Alpha notes', running: false, blank: false, updatedAt: 1 },
-        [S('b')]: { id: S('b'), displayTitle: 'Beta', running: false, blank: false, updatedAt: 2 },
+        [S('a')]: { id: S('a'), displayTitle: 'Alpha notes', running: false, blank: false, retainedBy: {}, updatedAt: 1 },
+        [S('b')]: { id: S('b'), displayTitle: 'Beta', running: false, blank: false, retainedBy: {}, updatedAt: 2 },
       },
-      current: undefined,
       phase: 'ready',
-      subagentsByParent: {},
-      jobsBySession: {},
-      currentAddress: undefined,
+      projectionsBySession: {},
     }
     const flat = deriveFlat(sessions, [])
     expect(filterFlatByQuery(flat, 'alpha').map(row => row.id)).toEqual([S('a')])
@@ -1040,9 +1065,8 @@ describe('filterFlatByQuery', () => {
       ids: [S('a'), S('blank')],
       byId: {
         ...sessions.byId,
-        [S('blank')]: { id: S('blank'), displayTitle: 'New Session', running: false, blank: true, updatedAt: 5 },
+        [S('blank')]: { id: S('blank'), displayTitle: 'New Session', running: false, blank: true, retainedBy: { mainView: 1 }, updatedAt: 5 },
       },
-      current: S('blank'),
     }
     const flatWithBlank = deriveFlat(withBlank, [])
     expect(flatWithBlank.map(row => row.id)).toContain(S('blank'))

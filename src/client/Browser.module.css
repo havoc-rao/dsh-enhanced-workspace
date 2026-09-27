@@ -519,15 +519,19 @@
  * add-workspace button. The right inset comes from the scroll container.
  *
  * Sticky: while the sidebar scrolls, the title band pins to the top of the
- * scrolling container and the rows pass beneath it. The band fills with
- * --dsw-specific-sidebar-fill — the exact token SidebarRoot paints the
- * column with (AppFrame does the same), so the pinned band is
- * pixel-identical to the surface behind it in every theme and skin, and
- * the passing rows hide cleanly behind an opaque surface. Blur-based glass
- * is deliberately NOT used here: the region seat (.regionArea) clips with
+ * scrolling container and the rows pass beneath it. The band is transparent —
+ * the DSH desktop sidebar paints its own blurred/glass backdrop behind the
+ * region (matching the built-in sidebar look), so any opaque fill here would
+ * paste a solid slab over the glass. The passing rows show through the band
+ * exactly as they do through the rest of the glass sidebar, and the rows'
+ * own hover/active fills stay on the row pills rather than the band. (An
+ * earlier revision filled the band with --dsw-specific-sidebar-fill, the
+ * token SidebarRoot paints the column with, to hide rows under an opaque
+ * surface — that predates the desktop glass backdrop. Blur-based glass is
+ * still deliberately NOT used here: the region seat (.regionArea) clips with
  * overflow:hidden, and in that clip context Chromium composites
  * backdrop-filter against a missing backdrop — the band renders solid
- * black. */
+ * black.) */
 .sectionHeader {
   position: sticky;
   top: 0;
@@ -535,10 +539,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--dsw-specific-sidebar-fill);
-  /* Breathing room under the title before the first row pill: the sticky
-     band carries the same fill, so extending it reads as the section's own
-     padding rather than a gap a hover fill could swallow. */
+  background: transparent;
+  /* Breathing room under the title before the first row pill; the band is
+     transparent, so this reads as the section's own padding gap. */
   padding-bottom: 4px;
 }
 

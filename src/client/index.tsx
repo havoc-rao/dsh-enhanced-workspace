@@ -261,7 +261,7 @@ export function apply(ctx: ClientContext): void {
       },
     },
     startSession: (workspaceId) => { ctx.uiWorkspace.startSession(workspaceId) },
-    open: (sessionId) => { ctx.sessions.open(sessionId) },
+    open: (sessionId) => { ctx.uiWorkspace.openSession(sessionId) },
     renameSession: async (sessionId, title) => {
       const session = ctx.sessions.binding(sessionId)?.session
       if (session === undefined) throw new Error(`unknown session "${sessionId}"`)
@@ -270,7 +270,7 @@ export function apply(ctx: ClientContext): void {
     },
     forkSession: (sessionId) => {
       ctx.sessions.fork({ sessionId, increaseTitle: true })
-        .then((childId) => { ctx.sessions.open(childId) })
+        .then((childId) => { ctx.uiWorkspace.openSession(childId) })
         .catch(() => {
           // Fork or child-rename failure keeps the current selection.
         })

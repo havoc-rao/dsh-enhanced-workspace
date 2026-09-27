@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { SessionPendingInteraction } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 // Type-only: the service fixture seat is typed against the provider's v1
 // contract (runtime fixtures are constructed from the real components below
 // in file-tree-ui.client.spec.tsx).
@@ -60,7 +60,7 @@ function session(id: string, title: string, ageMs: number): SessionSummary {
     displayTitle: title,
     blank: false,
     running: false,
-    completed: true,
+    retainedBy: {},
     updatedAt: NOW - ageMs,
   }
 }
@@ -114,6 +114,22 @@ const WORKSPACES_STATE = {
  */
 let workspacesState: typeof WORKSPACES_STATE = WORKSPACES_STATE
 let sessionsState: typeof SESSIONS_STATE = SESSIONS_STATE
+/** ui-session status seat: re-bound before each test and read by the
+ *  `useSessionStatus` closure; tests swap in a NEW status snapshot (unread
+ *  completion reminders, pending approvals) and re-render to flip the dots. */
+let statusState: SessionStatusSnapshot = new Map()
+
+/** The snapshot with one session carrying the main-view retention (the
+ *  list state no longer exposes a selection field — retention is the fact). */
+function withCurrent(state: typeof SESSIONS_STATE, currentId: string): typeof SESSIONS_STATE {
+  return {
+    ...state,
+    byId: {
+      ...state.byId,
+      [currentId]: { ...state.byId[currentId as SessionId]!, retainedBy: { mainView: 1 } },
+    },
+  } as typeof SESSIONS_STATE
+}
 
 /** Directory-flow hole fixture: occupancy of the plugin-owned slot key plus
  *  the recorded owner conversation of every `renderSlot` call. */
@@ -165,8 +181,9 @@ async function renderBrowser(
     expandSidebar: vi.fn(),
     useWorkspaces: (selector: (snapshot: typeof WORKSPACES_STATE) => unknown) => selector(workspacesState),
     useSessions: (selector: (snapshot: typeof SESSIONS_STATE) => unknown) => selector(sessionsState),
-    // No fixture session carries a pending interaction: the empty snapshot.
-    useSessionPendingInteraction: (selector: (snapshot: ReadonlyMap<string, unknown>) => unknown) => selector(new Map()),
+    // The status seat: no fixture session carries a pending interaction or an
+    // unread completion by default — the empty snapshot (all rows idle).
+    useSessionStatus: (selector: (snapshot: SessionStatusSnapshot) => unknown) => selector(statusState),
     useStore: (selector: (snapshot: EnhancedWorkspaceState) => unknown) =>
       useSyncExternalStore(instance.store.subscribe, () => selector(instance.store.getSnapshot())),
     actions: instance.actions,
@@ -332,6 +349,7 @@ beforeEach(() => {
   localStorage.clear()
   workspacesState = WORKSPACES_STATE
   sessionsState = SESSIONS_STATE
+  statusState = new Map()
   directoryFlowOccupied = false
   flowOwners = []
   searchOccupied = false
@@ -395,7 +413,7 @@ describe('enhanced workspace browser', () => {
   })
 
   it('Cmd/Ctrl+N is the plus-button effect, keyboarded: new session in the current workspace (then the recent workspace, then the plain New Session view) and the group opens', async () => {
-    sessionsState = { ...SESSIONS_STATE, current: 's2' as SessionId } as typeof SESSIONS_STATE
+    sessionsState = withCurrent(SESSIONS_STATE, 's2')
     const props = await renderBrowser()
 
     // s2 属「绘画收集」；先收起该组再按 Cmd+N —— 与行内 + 按钮完全同效：
@@ -413,7 +431,7 @@ describe('enhanced workspace browser', () => {
     // 目标是它的行，同样展开其会话组。
     vi.mocked(props.startSession).mockClear()
     act(() => {
-      sessionsState = { ...SESSIONS_STATE, current: undefined }
+      sessionsState = SESSIONS_STATE
       workspacesState = {
         ...WORKSPACES_STATE,
         items: [WORKSPACES[1]!, WORKSPACES[0]!], // 文档 排到最前
@@ -430,7 +448,7 @@ describe('enhanced workspace browser', () => {
     // 既无当前会话也无工作区：无参 startSession（内置 New Session 视图）。
     vi.mocked(props.startSession).mockClear()
     act(() => {
-      sessionsState = { ...SESSIONS_STATE, current: undefined }
+      sessionsState = SESSIONS_STATE
       workspacesState = { ...WORKSPACES_STATE, items: [] } as typeof WORKSPACES_STATE
       root.render(<EnhancedWorkspaceBrowser {...props} />)
     })
@@ -756,18 +774,22 @@ describe('enhanced workspace browser', () => {
   })
 
   it('renders the built-in status presentation: the loading dot on the running session and dir-level sync on its workspace', async () => {
-    // 本会话 = s1（绘画收集 工作区的会话）且正在运行；s2 已完成；s8 空闲。
+    // 本会话 = s1（绘画收集 工作区的会话）且正在运行；s2 完成未读；s8 空闲。
     const byId = {
       ...SESSIONS_BY_ID,
-      s1: { ...SESSIONS_BY_ID['s1']!, running: true, completed: false },
-      s8: { ...SESSIONS_BY_ID['s1']!, id: 's8' as SessionId, displayTitle: '空闲会话', running: false, completed: false },
+      s1: { ...SESSIONS_BY_ID['s1']!, running: true, retainedBy: { mainView: 1 } },
+      s8: { ...SESSIONS_BY_ID['s1']!, id: 's8' as SessionId, displayTitle: '空闲会话', running: false },
     }
     sessionsState = {
       ...SESSIONS_STATE,
-      current: 's1' as SessionId,
       ids: [...SESSIONS_STATE.ids, 's8' as SessionId],
       byId,
     } as typeof SESSIONS_STATE
+    // s2's observed stop outside the main view still needs acknowledgement:
+    // the completion reminder — the ONLY green-dot fact (idle s8 carries none).
+    statusState = new Map<SessionId, SessionStatus>([
+      ['s2' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+    ])
     // 空闲会话挂进 w-art，才能与树行一起渲染。
     workspacesState = {
       ...WORKSPACES_STATE,
@@ -807,13 +829,13 @@ describe('enhanced workspace browser', () => {
     // 审批 —— DSH 行模型对两者只给同一个 amber 等待点，提权标注是本浏览器的
     // 增强：盾牌 + 专属状态文案，落在行与 hover 卡上。
     await renderBrowser()
-    const pending = new Map<SessionId, SessionPendingInteraction>([
-      ['s1' as SessionId, { key: 'approval:1', kind: 'approval', sessionId: 's1' as SessionId, reason: 'escalate sandbox to workspace-write: 测试' }],
-      ['s2' as SessionId, { key: 'approval:2', kind: 'approval', sessionId: 's2' as SessionId }],
+    const statusSnapshot: SessionStatusSnapshot = new Map<SessionId, SessionStatus>([
+      ['s1' as SessionId, { running: false, pendingInteraction: { key: 'approval:1', kind: 'approval', sessionId: 's1' as SessionId, reason: 'escalate sandbox to workspace-write: 测试' }, completionUnread: false }],
+      ['s2' as SessionId, { running: false, pendingInteraction: { key: 'approval:2', kind: 'approval', sessionId: 's2' as SessionId }, completionUnread: false }],
     ])
     act(() => {
       root.render(
-        <EnhancedWorkspaceBrowser {...latestProps} useSessionPendingInteraction={selector => selector(pending)} />,
+        <EnhancedWorkspaceBrowser {...latestProps} useSessionStatus={selector => selector(statusSnapshot)} />,
       )
     })
     // 无当前会话时工作区行默认收起：先展开「绘画收集」，会话行才进 DOM。
@@ -865,16 +887,19 @@ describe('enhanced workspace browser', () => {
   })
 
   it('marks a collapsed workspace with its hidden sessions\' top status dot: working loading / completed green; the hover card spells every count', async () => {
-    // s1（绘画收集 的会话）正在运行；其余已完成；文档工作区 s7 已完成。
+    // s1（绘画收集 的会话）正在运行；s7 完成未读（文档）。
     // 无「当前会话」——这个标记与 current 无关，只跟「收起 && 内部有会话
-    // 状态」挂钩。
+    // 状态」挂钩；idle 会话（s2..s6）一律不出点。
     sessionsState = {
       ...SESSIONS_STATE,
       byId: {
         ...SESSIONS_BY_ID,
-        s1: { ...SESSIONS_BY_ID['s1']!, running: true, completed: false },
+        s1: { ...SESSIONS_BY_ID['s1']!, running: true },
       },
     } as typeof SESSIONS_STATE
+    statusState = new Map<SessionId, SessionStatus>([
+      ['s7' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+    ])
     await renderBrowser()
 
     // 收起（无当前会话时是默认态）即显示标记点——不依赖 hover，占操作
@@ -915,15 +940,26 @@ describe('enhanced workspace browser', () => {
     })
     expect(treeRowByText('绘画收集')!.querySelector('[class*="rowBusy"]'), 'leaving the row restores the dot').not.toBeNull()
 
-    // s1 也变为已完成：工作态的点换成绿色完成点（w-art 全体完成）。
+    // s1 也完成未读：工作态的点换成绿色完成点（w-art 全体完成）。
     act(() => {
       sessionsState = {
         ...sessionsState,
         byId: {
           ...sessionsState.byId,
-          s1: { ...SESSIONS_BY_ID['s1']!, running: false, completed: true },
+          s1: { ...SESSIONS_BY_ID['s1']!, running: false },
         },
       } as typeof SESSIONS_STATE
+      statusState = new Map<SessionId, SessionStatus>([
+        ['s7' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+        // Every w-art member stopped outside the main view unread: the folder
+        // carries the full green count (idle entries never count).
+        ['s1' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+        ['s2' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+        ['s3' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+        ['s4' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+        ['s5' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+        ['s6' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+      ])
       root.render(<EnhancedWorkspaceBrowser {...latestProps} />)
     })
     const doneBusy = treeRowByText('绘画收集')!.querySelector('[class*="rowBusy"]')
@@ -958,7 +994,7 @@ describe('enhanced workspace browser', () => {
 
   it('marks every collapsed ancestor dir on the path to the current session, level by level', async () => {
     // 本会话 = s1（绘画收集 的会话）；把工作区挪进根目录「产品组」。
-    sessionsState = { ...SESSIONS_STATE, current: 's1' as SessionId } as typeof SESSIONS_STATE
+    sessionsState = withCurrent(SESSIONS_STATE, 's1')
     await renderBrowser()
     click(buttonByAria('新建目录')!)
     const input = [...document.body.querySelectorAll<HTMLInputElement>('input')]
@@ -1877,6 +1913,10 @@ describe('hover cards (built-in ui-workspace parity)', () => {
   it('session hover card shows title, relative time, and the live status line after the dwell', async () => {
     vi.useFakeTimers()
     try {
+      // The fixture session carries an unread completion: the green done line.
+      statusState = new Map<SessionId, SessionStatus>([
+        ['s1' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+      ])
       await renderBrowser()
       click(treeRowByText('绘画收集')!)
       const row = sessionRowByText('画布草图')!

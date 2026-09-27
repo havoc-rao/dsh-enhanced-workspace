@@ -59,7 +59,7 @@ function session(id: string, title: string, cwd: string, ageMs: number): Session
     displayTitle: title,
     blank: false,
     running: false,
-    completed: true,
+    retainedBy: {},
     updatedAt: NOW - ageMs,
     cwd,
   }
@@ -147,8 +147,9 @@ async function renderBrowser(probe: GitProbeResultJSON | null = PROBE, markers: 
     expandSidebar: vi.fn(),
     useWorkspaces: (selector: (snapshot: typeof WORKSPACES_STATE) => unknown) => selector(WORKSPACES_STATE),
     useSessions: (selector: (snapshot: typeof SESSIONS_STATE) => unknown) => selector(SESSIONS_STATE),
-    // No fixture session carries a pending interaction: the empty snapshot.
-    useSessionPendingInteraction: (selector: (snapshot: ReadonlyMap<string, unknown>) => unknown) => selector(new Map()),
+    // No fixture session carries a pending interaction or an unread
+    // completion: the empty status snapshot (all rows idle).
+    useSessionStatus: (selector: (snapshot: ReadonlyMap<SessionId, unknown>) => unknown) => selector(new Map()),
     useStore: (selector: (snapshot: EnhancedWorkspaceState) => unknown) =>
       useSyncExternalStore(instance.store.subscribe, () => selector(instance.store.getSnapshot())),
     actions: instance.actions,

@@ -35,20 +35,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react'
 import {
   HoverCard,
-  IconArchiveOutline20,
-  IconBranchOutline16,
-  IconChevronUpOutline14,
-  IconEditOutline16,
-  IconEllipsisOutline16,
-  IconFolderClose16,
-  IconFolderOpen16,
-  IconFolderOpenOutline16,
-  IconPersonalizationOutline16,
-  IconPlusOutline16,
-  IconProjectAddOutline16,
-  IconSearchOutline16,
-  IconTrashOutline16,
-  IconTriangleRightFill14,
+  IconArchiveOutlineRegular,
+  IconBranchOutlineRegular,
+  IconChevronUpOutlineRegular,
+  IconEditOutlineRegular,
+  IconEllipsisOutlineRegular,
+  IconFolderCloseRegular,
+  IconFolderOpenRegular,
+  IconFolderOpenOutlineRegular,
+  IconPersonalizationOutlineRegular,
+  IconPlusOutlineRegular,
+  IconProjectAddOutlineRegular,
+  IconSearchOutlineRegular,
+  IconTrashOutlineRegular,
+  IconTriangleRightFillRegular,
   Menu,
   StateDot,
   Tooltip,
@@ -111,8 +111,9 @@ import {
   pendingInteractionOf,
   RECENT_GROUP_KEY_PREFIX,
   referenceSessionOf,
-  sessionPendingInteractionsOf,
+  currentSessionIdOf,
   sessionStatusDot,
+  sessionStatusTableOf,
   treeOrder,
   workspaceSessionStatus,
   ROOT_FOLDER_ID,
@@ -121,7 +122,7 @@ import {
   type FolderRowNode,
   type SessionGroupBy,
   type SessionNode,
-  type SessionPendingInteractions,
+  type SessionStatusTable,
   type WorkspaceLeaf,
 } from './model.ts'
 import {
@@ -401,7 +402,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   } = props
   const workspaces = props.useWorkspaces(identity)
   const sessions = props.useSessions(identity)
-  const pendingInteractions = sessionPendingInteractionsOf(props.useSessionPendingInteraction(identity))
+  const statuses = sessionStatusTableOf(props.useSessionStatus(identity))
   const state = useStore(identity)
   const [query, setQuery] = useState('')
   // The optional fileTreeUi v2 service snapshot (undefined = missing /
@@ -662,10 +663,10 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
   // selected session opens unless the user already recorded a choice, so the
   // workspace that collects the current session shows its rows right away.
   const currentGroup = useMemo(() => {
-    if (sessions.current === undefined) return undefined
-    return (workspaces.items.find(workspace => workspace.sessionIds.includes(sessions.current as SessionId))
+    if (currentSessionIdOf(sessions) === undefined) return undefined
+    return (workspaces.items.find(workspace => workspace.sessionIds.includes(currentSessionIdOf(sessions) as SessionId))
       ?.workspaceId as string | undefined) ?? UNGROUPED_KEY
-  }, [sessions.current, workspaces.items])
+  }, [currentSessionIdOf(sessions), workspaces.items])
   useEffect(() => {
     if (currentGroup === undefined || Object.hasOwn(state.groupExpansion, currentGroup)) return
     actions.setGroupExpanded(currentGroup, true)
@@ -688,9 +689,10 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     if (event.key.toLowerCase() !== 'n') return
     event.preventDefault()
     event.stopPropagation()
-    const currentWorkspaceId = sessions.current === undefined
+    const currentId = currentSessionIdOf(sessions)
+    const currentWorkspaceId = currentId === undefined
       ? undefined
-      : workspaceIdBySession.get(sessions.current)
+      : workspaceIdBySession.get(currentId)
     const workspaceId = currentWorkspaceId ?? workspaces.items[0]?.workspaceId
     if (workspaceId !== undefined) {
       actions.setGroupExpanded(workspaceId, true)
@@ -774,16 +776,16 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     [state.folderExpansion, state.groupExpansion, state.orderBy, state.sessionOrderByAccount],
   )
   const forest = useMemo(
-    () => deriveFolderForest(sessions, workspaces.items, state.folders, workspaces.archivedSessionIds, view, pendingInteractions),
-    [sessions, workspaces.items, state.folders, workspaces.archivedSessionIds, view, pendingInteractions],
+    () => deriveFolderForest(sessions, workspaces.items, state.folders, workspaces.archivedSessionIds, view, statuses),
+    [sessions, workspaces.items, state.folders, workspaces.archivedSessionIds, view, statuses],
   )
   const recents = useMemo(
-    () => deriveRecentWorkspaces(workspaces.items, sessions, state.recentTouchById, RECENTS_LIMIT, view, workspaces.archivedSessionIds, pendingInteractions),
-    [workspaces.items, sessions, state.recentTouchById, view, workspaces.archivedSessionIds, pendingInteractions],
+    () => deriveRecentWorkspaces(workspaces.items, sessions, state.recentTouchById, RECENTS_LIMIT, view, workspaces.archivedSessionIds, statuses),
+    [workspaces.items, sessions, state.recentTouchById, view, workspaces.archivedSessionIds, statuses],
   )
   const flat = useMemo(
-    () => deriveFlat(sessions, workspaces.archivedSessionIds, pendingInteractions),
-    [sessions, workspaces.archivedSessionIds, pendingInteractions],
+    () => deriveFlat(sessions, workspaces.archivedSessionIds, statuses),
+    [sessions, workspaces.archivedSessionIds, statuses],
   )
   // While searching, the SAME tree renders filtered down to the matching
   // dirs (workspace title / cwd basename / session title hits; folders keep
@@ -1044,7 +1046,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 aria-label={t('collapseEverything')}
                 onClick={collapseEverything}
               >
-                <IconChevronUpOutline14 />
+                <IconChevronUpOutlineRegular />
               </button>
             </Tooltip>
             <ViewOptionsMenu
@@ -1061,7 +1063,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 aria-label={t('addWorkspace')}
                 onClick={openAddEntry}
               >
-                <IconProjectAddOutline16 />
+                <IconProjectAddOutlineRegular />
               </button>
             </Tooltip>
           </div>
@@ -1070,7 +1072,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
       {wide
         ? (
           <div className={css.searchBar}>
-            <IconSearchOutline16 className={css.searchIcon} />
+            <IconSearchOutlineRegular className={css.searchIcon} />
             <input
               ref={searchInputRef}
               className={css.searchInput}
@@ -1104,7 +1106,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 aria-label={t('addWorkspace')}
                 onClick={openAddEntry}
               >
-                <IconProjectAddOutline16 size={18} />
+                <IconProjectAddOutlineRegular size={18} />
               </button>
             </Tooltip>
             <Tooltip label={t('searchAria')} delayMs={500}>
@@ -1118,7 +1120,7 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 data-dsh-enhanced-workspace="search-button"
                 onClick={focusSearch}
               >
-                <IconSearchOutline16 size={18} />
+                <IconSearchOutlineRegular size={18} />
               </button>
             </Tooltip>
           </div>
@@ -1258,7 +1260,7 @@ function ViewOptionsMenu({ groupBy, orderBy, onGroupPick, onOrderPick, t }: {
             aria-label={t('viewOptionsLabel')}
             onClick={() => { setOpen(value => !value) }}
           >
-            <IconPersonalizationOutline16 />
+            <IconPersonalizationOutlineRegular />
           </button>
         </Tooltip>
       )}
@@ -1395,7 +1397,7 @@ function GroupedView(props: {
   /** Source title for the continue carry-over: the current session's title
    *  when it belongs to this row, else the row's first visible session. */
   const sessionTitleFor = (workspaceId: WorkspaceId): string | undefined => {
-    const current = sessionList.current
+    const current = currentSessionIdOf(sessionList)
     if (current !== undefined) {
       const owner = workspaceList.items.find(workspace => workspace.sessionIds.includes(current))
       if (owner !== undefined && owner.workspaceId === workspaceId) {
@@ -1564,7 +1566,7 @@ function GroupedView(props: {
                   aria-label={t('collapseAll')}
                   onClick={props.onCollapseRecents}
                 >
-                  <IconChevronUpOutline14 />
+                  <IconChevronUpOutlineRegular />
                 </button>
               </Tooltip>
             </div>
@@ -1609,7 +1611,7 @@ function GroupedView(props: {
                     aria-label={t('collapseAll')}
                     onClick={props.onCollapseAll}
                   >
-                    <IconChevronUpOutline14 />
+                    <IconChevronUpOutlineRegular />
                   </button>
                 </Tooltip>
                 <Tooltip label={t('newFolder')} side="bottom" delayMs={500}>
@@ -1619,7 +1621,7 @@ function GroupedView(props: {
                     aria-label={t('newFolder')}
                     onClick={props.openers.onNewFolder}
                   >
-                    <IconPlusOutline16 />
+                    <IconPlusOutlineRegular />
                   </button>
                 </Tooltip>
               </div>
@@ -1807,11 +1809,11 @@ function FolderRow(props: {
   // The row menu (new subfolder / rename / move / delete) — one shared
   // business list + dispatch for both rendering paths.
   const folderMenuEntries = [
-    { id: 'new-subfolder', label: callbacks.t('newSubfolder'), icon: <IconPlusOutline16 /> },
-    { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
-    { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
+    { id: 'new-subfolder', label: callbacks.t('newSubfolder'), icon: <IconPlusOutlineRegular /> },
+    { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutlineRegular /> },
+    { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutlineRegular /> },
     { type: 'separator' as const, id: 'folder-actions-separator' },
-    { id: 'delete', label: callbacks.t('deleteFolderTitle'), icon: <IconTrashOutline16 />, danger: true },
+    { id: 'delete', label: callbacks.t('deleteFolderTitle'), icon: <IconTrashOutlineRegular />, danger: true },
   ] satisfies readonly MenuEntry[]
   const onFolderMenuSelect = (id: string): void => {
     setMenuOpen(false)
@@ -1873,10 +1875,10 @@ function FolderRow(props: {
       >
         {guideHitBands(node.folderId, guideColumns, props.guide.onHover)}
         <span className={css.chevron}>
-          <IconTriangleRightFill14 className={node.expanded ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+          <IconTriangleRightFillRegular className={node.expanded ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
         </span>
         <span className={`${css.rowGlyph}${active ? ` ${css.folderActive}` : ''}`}>
-          {node.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />}
+          {node.expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}
         </span>
         <span className={css.rowLabel}>{node.name}</span>
         <span className={css.rowActions}>
@@ -1895,7 +1897,7 @@ function FolderRow(props: {
                 aria-label={callbacks.t('rowMenuAria', { name: node.name })}
                 onClick={event => { event.stopPropagation(); setMenuOpen(value => !value) }}
               >
-                <IconEllipsisOutline16 />
+                <IconEllipsisOutlineRegular />
               </button>
             )}
           />
@@ -1909,7 +1911,7 @@ function FolderRow(props: {
                 callbacks.openers.onNewSubfolder(node.folderId)
               }}
             >
-              <IconPlusOutline16 />
+              <IconPlusOutlineRegular />
             </button>
           </Tooltip>
         </span>
@@ -2160,10 +2162,10 @@ function LeafRow(props: {
     >
       {guideHitBands(leaf.key, folderColumns, props.guide.onHover)}
       <span className={css.chevron}>
-        <IconTriangleRightFill14 className={leaf.expanded ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+        <IconTriangleRightFillRegular className={leaf.expanded ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
       </span>
       <span className={`${css.rowGlyph}${active ? ` ${css.folderActive}` : ''}`}>
-        {leaf.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />}
+        {leaf.expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}
       </span>
       <span className={css.rowLabel}>{leaf.label}</span>
       {gitAggregate.kind === 'multi' && (
@@ -2178,20 +2180,20 @@ function LeafRow(props: {
               open={menuOpen}
               onClose={() => { setMenuOpen(false) }}
               items={[
-                { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
-                { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
+                { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutlineRegular /> },
+                { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutlineRegular /> },
                 ...(continueTrees.length > 0
                   ? [
                     { type: 'label' as const, id: 'continue-label', text: callbacks.t('continueInTree') },
                     ...continueTrees.map(tree => ({
                       id: `tree:${tree.root}`,
                       label: tree.branch ?? tree.detached ?? basename(tree.root),
-                      icon: <IconBranchOutline16 />,
+                      icon: <IconBranchOutlineRegular />,
                     })),
                   ]
                   : []),
                 { type: 'separator' as const, id: 'workspace-actions-separator' },
-                { id: 'delete', label: callbacks.t('deleteWorkspaceTitle'), icon: <IconTrashOutline16 />, danger: true },
+                { id: 'delete', label: callbacks.t('deleteWorkspaceTitle'), icon: <IconTrashOutlineRegular />, danger: true },
               ]}
               onSelect={(id) => {
                 setMenuOpen(false)
@@ -2214,7 +2216,7 @@ function LeafRow(props: {
                   aria-label={callbacks.t('rowMenuAria', { name: leaf.label })}
                   onClick={event => { event.stopPropagation(); setMenuOpen(value => !value) }}
                 >
-                  <IconEllipsisOutline16 />
+                  <IconEllipsisOutlineRegular />
                 </button>
               )}
             />
@@ -2227,7 +2229,7 @@ function LeafRow(props: {
                 callbacks.onStartSession(leaf.workspaceId as WorkspaceId, leaf.key)
               }}
             >
-              <IconPlusOutline16 />
+              <IconPlusOutlineRegular />
             </button>
           </>
         )}
@@ -2316,7 +2318,7 @@ function LeafRow(props: {
                     >
                       {guideHitBands(subKey, sessionColumns, props.guide.onHover)}
                       <span className={css.chevron}>
-                        <IconTriangleRightFill14 className={groupOpen ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+                        <IconTriangleRightFillRegular className={groupOpen ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
                       </span>
                       <span className={css.rowLabel}>{label}</span>
                       {group.tree !== undefined && (
@@ -2446,9 +2448,9 @@ function SessionRow(props: {
   // The row menu entries (rename / fork / archive) — one shared business
   // list for both rendering paths (built-in Menu / service RowMenu).
   const menuEntries = [
-    { id: 'rename', label: seat.t('rename'), icon: <IconEditOutline16 /> },
-    { id: 'fork', label: seat.t('sessionFork'), icon: <IconBranchOutline16 /> },
-    { id: 'archive', label: seat.t('sessionArchive'), icon: <IconArchiveOutline20 size={16} /> },
+    { id: 'rename', label: seat.t('rename'), icon: <IconEditOutlineRegular /> },
+    { id: 'fork', label: seat.t('sessionFork'), icon: <IconBranchOutlineRegular /> },
+    { id: 'archive', label: seat.t('sessionArchive'), icon: <IconArchiveOutlineRegular size={16} /> },
   ] satisfies readonly MenuEntry[]
   // Item selection: RowMenu already closes the menu before the callback;
   // the built-in Menu path closes in the same handler — both end at the
@@ -2522,7 +2524,7 @@ function SessionRow(props: {
                   aria-label={seat.t('rowMenuAria', { name: session.title })}
                   onClick={event => { event.stopPropagation(); setMenuOpen(value => !value) }}
                 >
-                  <IconEllipsisOutline16 />
+                  <IconEllipsisOutlineRegular />
                 </button>
               )}
             />
@@ -2642,7 +2644,7 @@ function RepoForestView(props: {
   const state = props.props.useStore(identity)
   const workspaces = props.props.useWorkspaces(identity)
   const sessions = props.props.useSessions(identity)
-  const pendingInteractions = sessionPendingInteractionsOf(props.props.useSessionPendingInteraction(identity))
+  const statuses = sessionStatusTableOf(props.props.useSessionStatus(identity))
   const probe = props.git.probe
   const q = props.query.trim().toLowerCase()
   const callbacks = props.callbacks
@@ -2703,7 +2705,7 @@ function RepoForestView(props: {
         <>
           <div className={css.gitNote}>{t('noGitWorkspaces')}</div>
           {nogit.map(workspaceId => {
-            const leaf = sessionLeafOf(workspaceById.get(workspaceId), sessions, state, pendingInteractions)
+            const leaf = sessionLeafOf(workspaceById.get(workspaceId), sessions, state, statuses)
             if (leaf === undefined) return null
             return (
               <LeafRow
@@ -2763,10 +2765,10 @@ function RepoGroupRow(props: {
         onClick={() => { props.actions.setGroupExpanded(repoKey, !open) }}
       >
         <span className={css.chevron}>
-          <IconTriangleRightFill14 className={open ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+          <IconTriangleRightFillRegular className={open ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
         </span>
         <span className={`${css.rowGlyph}${open ? ` ${css.folderActive}` : ''}`}>
-          {open ? <IconFolderOpen16 /> : <IconFolderClose16 />}
+          {open ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}
         </span>
         <span className={css.rowLabel}>{props.repo.name}</span>
         <span className={css.gitPillMain}>{props.t('groupByRepo')}</span>
@@ -2776,8 +2778,8 @@ function RepoGroupRow(props: {
             open={menuOpen}
             onClose={() => { setMenuOpen(false) }}
             items={[
-              { id: 'refresh', label: props.t('refreshGitProbe'), icon: <IconBranchOutline16 /> },
-              { id: 'organize', label: props.t('organizeIntoFolder'), icon: <IconFolderOpenOutline16 /> },
+              { id: 'refresh', label: props.t('refreshGitProbe'), icon: <IconBranchOutlineRegular /> },
+              { id: 'organize', label: props.t('organizeIntoFolder'), icon: <IconFolderOpenOutlineRegular /> },
             ]}
             onSelect={(id) => {
               setMenuOpen(false)
@@ -2793,7 +2795,7 @@ function RepoGroupRow(props: {
                 aria-label={props.t('refreshGitProbe')}
                 onClick={event => { event.stopPropagation(); setMenuOpen(value => !value) }}
               >
-                <IconEllipsisOutline16 />
+                <IconEllipsisOutlineRegular />
               </button>
             )}
           />
@@ -2838,7 +2840,7 @@ function sessionLeafOf(
   workspace: WorkspaceView | undefined,
   sessions: SessionListState,
   state: { groupExpansion: Record<string, boolean>; folderExpansion: Record<string, boolean> },
-  pending: SessionPendingInteractions = new Map(),
+  statuses: SessionStatusTable = new Map(),
 ): WorkspaceLeaf | undefined {
   if (workspace === undefined) return undefined
   const expanded = state.groupExpansion[workspace.workspaceId] === true
@@ -2848,7 +2850,7 @@ function sessionLeafOf(
     .map(id => sessions.byId[id as SessionId])
     .filter((summary): summary is SessionSummary => summary !== undefined)
     .filter(summary => !summary.blank && summary.origin !== 'subagent')
-  const primarySession = referenceSessionOf(members, sessions.current)
+  const primarySession = referenceSessionOf(members, currentSessionIdOf(sessions))
   return {
     key: workspace.workspaceId,
     workspaceId: workspace.workspaceId,
@@ -2857,22 +2859,24 @@ function sessionLeafOf(
     label: workspace.title,
     sessionCount: workspace.sessionIds.length,
     expanded,
-    containsCurrent: sessions.current !== undefined && workspace.sessionIds.includes(sessions.current as SessionId),
+    containsCurrent: currentSessionIdOf(sessions) !== undefined && workspace.sessionIds.includes(currentSessionIdOf(sessions) as SessionId),
     ...(primarySession === undefined ? {} : { primarySession }),
     // Repo-group leaves carry no subagent descendant index (their session
     // rows render runningSubagentCount: 0 too) — own activity only.
-    status: workspaceSessionStatus(members, undefined, pending),
+    status: workspaceSessionStatus(members, undefined, statuses),
     sessions: expanded
       ? members.map((summary): SessionNode => {
-        const pendingInteraction = pendingInteractionOf(pending.get(summary.id))
+        const status = statuses.get(summary.id)
+        const pendingInteraction = pendingInteractionOf(status?.pendingInteraction)
         return {
           id: summary.id,
-          current: summary.id === sessions.current,
+          current: summary.id === currentSessionIdOf(sessions),
           title: summary.blank ? '' : summary.displayTitle,
           blank: summary.blank,
           running: summary.running,
           runningSubagentCount: 0,
-          completed: summary.completed === true,
+          // Built-in parity: only the completion reminder renders green.
+          completed: status?.completionUnread === true,
           updatedAt: summary.updatedAt,
           recentInputs: [],
           recentOutputs: [],
@@ -2924,10 +2928,10 @@ function UnregGroup(props: {
         onClick={() => { actions.setGroupExpanded(key, !open) }}
       >
         <span className={css.chevron}>
-          <IconTriangleRightFill14 className={open ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
+          <IconTriangleRightFillRegular className={open ? `${css.arrow} ${css.arrowOpen}` : css.arrow} />
         </span>
         <span className={css.rowGlyph}>
-          <IconFolderClose16 />
+          <IconFolderCloseRegular />
         </span>
         <span className={css.rowLabel}>{t('unregTreeGroup')}</span>
         <span className={css.sessionCount}>{unreg.length}</span>
@@ -2942,7 +2946,7 @@ function UnregGroup(props: {
             <div key={tree.root}>
               <div className={css.unregRow} onClick={() => { register(tree.root) }}>
                 <span className={css.rowGlyph}>
-                  <IconFolderClose16 />
+                  <IconFolderCloseRegular />
                 </span>
                 <span className={css.rowLabel}>{basename(tree.root)}</span>
                 <span className={css.gitPill}>{tree.detached ?? tree.branch}</span>
@@ -3059,9 +3063,9 @@ function sessionRowModel(props: {
   // The row menu entries (rename / fork / archive) — the same business list
   // the built-in path renders through its own Menu.
   const menuEntries = [
-    { id: 'rename', label: seat.t('rename'), icon: <IconEditOutline16 /> },
-    { id: 'fork', label: seat.t('sessionFork'), icon: <IconBranchOutline16 /> },
-    { id: 'archive', label: seat.t('sessionArchive'), icon: <IconArchiveOutline20 size={16} /> },
+    { id: 'rename', label: seat.t('rename'), icon: <IconEditOutlineRegular /> },
+    { id: 'fork', label: seat.t('sessionFork'), icon: <IconBranchOutlineRegular /> },
+    { id: 'archive', label: seat.t('sessionArchive'), icon: <IconArchiveOutlineRegular size={16} /> },
   ] satisfies readonly MenuEntry[]
   const onMenuSelect = (id: string): void => {
     props.menu.onOpenChange(menuKey, false)
@@ -3220,20 +3224,20 @@ function leafRowModel(props: {
     { id: leaf.key, onToggle: () => callbacks.onWorkspaceClick(leaf.key) },
   ]
   const workspaceMenuEntries: readonly MenuEntry[] = [
-    { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
-    { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
+    { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutlineRegular /> },
+    { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutlineRegular /> },
     ...(continueTrees.length > 0
       ? [
         { type: 'label' as const, id: 'continue-label', text: callbacks.t('continueInTree') },
         ...continueTrees.map(tree => ({
           id: `tree:${tree.root}`,
           label: tree.branch ?? tree.detached ?? basename(tree.root),
-          icon: <IconBranchOutline16 />,
+          icon: <IconBranchOutlineRegular />,
         })),
       ]
       : []),
     { type: 'separator' as const, id: 'workspace-actions-separator' },
-    { id: 'delete', label: callbacks.t('deleteWorkspaceTitle'), icon: <IconTrashOutline16 />, danger: true },
+    { id: 'delete', label: callbacks.t('deleteWorkspaceTitle'), icon: <IconTrashOutlineRegular />, danger: true },
   ]
   const onWorkspaceMenuSelect = (id: string): void => {
     props.menu.onOpenChange(leaf.key, false)
@@ -3372,7 +3376,7 @@ function leafRowModel(props: {
         />
       )
       : leaf.label,
-    leading: leaf.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />,
+    leading: leaf.expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />,
     expanded: leaf.expanded,
     onToggle: workspaceRowClick,
     guideColumns: folderColumns,
@@ -3402,7 +3406,7 @@ function leafRowModel(props: {
                 callbacks.onStartSession(leaf.workspaceId as WorkspaceId, leaf.key)
               }}
             >
-              <IconPlusOutline16 />
+              <IconPlusOutlineRegular />
             </button>
           </>
         ),
@@ -3546,11 +3550,11 @@ function folderRowModel(props: {
   const active = dirActive(node.containsCurrent)
   const guideColumns = folderGuideColumns(props.ancestors, callbacks.onToggleFolder)
   const folderMenuEntries = [
-    { id: 'new-subfolder', label: callbacks.t('newSubfolder'), icon: <IconPlusOutline16 /> },
-    { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutline16 /> },
-    { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutline16 /> },
+    { id: 'new-subfolder', label: callbacks.t('newSubfolder'), icon: <IconPlusOutlineRegular /> },
+    { id: 'rename', label: callbacks.t('rename'), icon: <IconEditOutlineRegular /> },
+    { id: 'move', label: callbacks.t('move'), icon: <IconFolderOpenOutlineRegular /> },
     { type: 'separator' as const, id: 'folder-actions-separator' },
-    { id: 'delete', label: callbacks.t('deleteFolderTitle'), icon: <IconTrashOutline16 />, danger: true },
+    { id: 'delete', label: callbacks.t('deleteFolderTitle'), icon: <IconTrashOutlineRegular />, danger: true },
   ] satisfies readonly MenuEntry[]
   const onFolderMenuSelect = (id: string): void => {
     props.menu.onOpenChange(menuKey, false)
@@ -3635,7 +3639,7 @@ function folderRowModel(props: {
   return {
     key: node.folderId,
     label: node.name,
-    leading: node.expanded ? <IconFolderOpen16 /> : <IconFolderClose16 />,
+    leading: node.expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />,
     expanded: node.expanded,
     onToggle: () => callbacks.onToggleFolder(node.folderId),
     guideColumns,
@@ -3662,7 +3666,7 @@ function folderRowModel(props: {
               callbacks.openers.onNewSubfolder(node.folderId)
             }}
           >
-            <IconPlusOutline16 />
+            <IconPlusOutlineRegular />
           </button>
         </Tooltip>
       </>
@@ -3706,7 +3710,7 @@ function repoGroupRowModel(props: {
   const open = props.state.groupExpansion[repoKey] === true
   const repoGlyph = (
     <span className={open ? css.folderActive : undefined}>
-      {open ? <IconFolderOpen16 /> : <IconFolderClose16 />}
+      {open ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}
     </span>
   )
   const children: FileTreeNode[] = []
@@ -3746,8 +3750,8 @@ function repoGroupRowModel(props: {
       open: props.menu.open(repoKey),
       onOpenChange: open => props.menu.onOpenChange(repoKey, open),
       items: [
-        { id: 'refresh', label: props.t('refreshGitProbe'), icon: <IconBranchOutline16 /> },
-        { id: 'organize', label: props.t('organizeIntoFolder'), icon: <IconFolderOpenOutline16 /> },
+        { id: 'refresh', label: props.t('refreshGitProbe'), icon: <IconBranchOutlineRegular /> },
+        { id: 'organize', label: props.t('organizeIntoFolder'), icon: <IconFolderOpenOutlineRegular /> },
       ],
       onSelect: (id) => {
         // RowMenu closes before the callback; 'organize' is declared but
@@ -3794,7 +3798,7 @@ function unregGroupNodes(props: {
     {
       key,
       label: props.t('unregTreeGroup'),
-      leading: <IconFolderClose16 />,
+      leading: <IconFolderCloseRegular />,
       expanded: props.open,
       onToggle: props.onToggle,
       trailing: <span className={css.sessionCount}>{unreg.length}</span>,
@@ -3808,7 +3812,7 @@ function unregGroupNodes(props: {
       children: unreg.map(tree => ({
         key: tree.root,
         label: basename(tree.root),
-        leading: <IconFolderClose16 />,
+        leading: <IconFolderCloseRegular />,
         trailing: <span className={css.gitPill}>{tree.detached ?? tree.branch}</span>,
         // The always-visible register pill sits in the actions slot
         // (actionsVisible — this is not a hover-revealed action).
@@ -3860,7 +3864,7 @@ function ServiceGroupedView(props: {
   // git-gated rendering varies but the hook order never may).
   const workspaces = props.props.useWorkspaces(identity)
   const sessions = props.props.useSessions(identity)
-  const pendingInteractions = sessionPendingInteractionsOf(props.props.useSessionPendingInteraction(identity))
+  const statuses = sessionStatusTableOf(props.props.useSessionStatus(identity))
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({})
   const menu: MenuSeat = {
     open: key => openMenus[key] === true,
@@ -3961,7 +3965,7 @@ function ServiceGroupedView(props: {
       if (nogit.length > 0) {
         allRows.push(<div key="git-note" className={css.gitNote}>{t('noGitWorkspaces')}</div>)
         for (const workspaceId of nogit) {
-          const leaf = sessionLeafOf(workspaceById.get(workspaceId), sessions, props.state, pendingInteractions)
+          const leaf = sessionLeafOf(workspaceById.get(workspaceId), sessions, props.state, statuses)
           if (leaf === undefined) continue
           allRows.push(leafRowModel({
             leaf,
@@ -4062,7 +4066,7 @@ function ServiceGroupedView(props: {
                 aria-label={t('collapseAll')}
                 onClick={props.onCollapseRecents}
               >
-                <IconChevronUpOutline14 />
+                <IconChevronUpOutlineRegular />
               </button>
             </Tooltip>
           </div>
@@ -4081,7 +4085,7 @@ function ServiceGroupedView(props: {
                   aria-label={t('collapseAll')}
                   onClick={props.onCollapseAll}
                 >
-                  <IconChevronUpOutline14 />
+                  <IconChevronUpOutlineRegular />
                 </button>
               </Tooltip>
               <Tooltip label={t('newFolder')} side="bottom" delayMs={500}>
@@ -4091,7 +4095,7 @@ function ServiceGroupedView(props: {
                   aria-label={t('newFolder')}
                   onClick={props.openers.onNewFolder}
                 >
-                  <IconPlusOutline16 />
+                  <IconPlusOutlineRegular />
                 </button>
               </Tooltip>
             </div>

@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import { FileTree } from 'dsh-file-tree-ui/src/client/FileTree.tsx'
 import { RowMenu } from 'dsh-file-tree-ui/src/client/RowMenu.tsx'
 import type {
@@ -63,7 +64,7 @@ function session(id: string, title: string, ageMs: number, blank = false, cwd?: 
     displayTitle: title,
     blank,
     running: false,
-    completed: true,
+    retainedBy: {},
     updatedAt: NOW - ageMs,
     ...(cwd === undefined ? {} : { cwd }),
   }
@@ -109,6 +110,10 @@ const WORKSPACES_STATE = {
  *  `useWorkspaces` / `useSessions` / `useFileTreeUi` closures. */
 let workspacesState: typeof WORKSPACES_STATE = WORKSPACES_STATE
 let sessionsState: typeof SESSIONS_STATE = SESSIONS_STATE
+/** ui-session status seat: re-bound before each test; tests swap in unread
+ *  completion reminders to flip the row dots (built-in parity: only the
+ *  completion reminder renders green — idle sessions never dot). */
+let statusState: SessionStatusSnapshot = new Map()
 
 /**
  * The fileTreeUi v2 service seat: undefined by default (missing provider →
@@ -184,7 +189,7 @@ async function renderBrowser(probe: GitProbeResultJSON | null = null): Promise<E
     expandSidebar: vi.fn(),
     useWorkspaces: (selector: (snapshot: typeof WORKSPACES_STATE) => unknown) => selector(workspacesState),
     useSessions: (selector: (snapshot: typeof SESSIONS_STATE) => unknown) => selector(sessionsState),
-    useSessionPendingInteraction: (selector: (snapshot: ReadonlyMap<string, unknown>) => unknown) => selector(new Map()),
+    useSessionStatus: (selector: (snapshot: SessionStatusSnapshot) => unknown) => selector(statusState),
     useStore: (selector: (snapshot: EnhancedWorkspaceState) => unknown) =>
       useSyncExternalStore(instance.store.subscribe, () => selector(instance.store.getSnapshot())),
     actions: instance.actions,
@@ -367,6 +372,7 @@ beforeEach(() => {
   localStorage.clear()
   workspacesState = WORKSPACES_STATE
   sessionsState = SESSIONS_STATE
+  statusState = new Map()
   fileTreeUiSeat = undefined
   ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 })
@@ -439,6 +445,10 @@ describe('fileTreeUi v2 service seat (index.tsx resolver)', () => {
 
 describe('fileTreeUi service path (tree session rows)', () => {
   it('replaces the row skeleton: status-dot slot (16px), title, menu button, active wash; click opens, drag source unchanged', async () => {
+    // s1 carries the unread completion reminder: the green done dot's caption.
+    statusState = new Map<SessionId, SessionStatus>([
+      ['s1' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+    ])
     const props = await renderBrowser()
     fileTreeUiSeat = makeFileTreeUiService()
     await rerender()
@@ -500,7 +510,10 @@ describe('fileTreeUi service path (tree session rows)', () => {
     // Make s1 the current session: its row carries the wash. The store's
     // baseline hydration auto-expands the current session's workspace group,
     // so the session rows are visible without clicking.
-    sessionsState = { ...SESSIONS_STATE, current: 's1' as SessionId }
+    sessionsState = {
+      ...SESSIONS_STATE,
+      byId: { ...SESSIONS_BY_ID, s1: { ...SESSIONS_BY_ID['s1']!, retainedBy: { mainView: 1 } } },
+    }
     fileTreeUiSeat = makeFileTreeUiService()
     await rerender()
     const currentRow = sessionRowByText('画布草图')!
@@ -511,9 +524,11 @@ describe('fileTreeUi service path (tree session rows)', () => {
     // Blank current session: "新会话" row, no menu, not draggable.
     sessionsState = {
       ...SESSIONS_STATE,
-      current: 'blank1' as SessionId,
       ids: [...SESSIONS_STATE.ids, 'blank1'],
-      byId: { ...SESSIONS_BY_ID, blank1: session('blank1', 'New Session', 0, true) },
+      byId: {
+        ...SESSIONS_BY_ID,
+        blank1: { ...session('blank1', 'New Session', 0, true), retainedBy: { mainView: 1 } },
+      },
     }
     await rerender()
     const blankRow = sessionRowByText(zh.newSession)!
@@ -823,11 +838,15 @@ describe('fileTreeUi service path (FolderRow)', () => {
 
 describe('fileTreeUi service path (LeafRow)', () => {
   it('seats the collapsed busy marker in the restingIndicator slot, hidden on hover by the provider rule', async () => {
+    // '绘画收集' is collapsed with two unread completions → the top-priority
+    // done dot sits in the actions slot at rest.
+    statusState = new Map<SessionId, SessionStatus>([
+      ['s1' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+      ['s2' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+    ])
     await renderBrowser()
     fileTreeUiSeat = makeFileTreeUiService()
     await rerender()
-    // '绘画收集' is collapsed with two completed sessions → the top-priority
-    // done dot sits in the actions slot at rest.
     const row = treeRowByText('绘画收集')!
     expect(row.className, 'workspace row rides the service skeleton').not.toContain('workspaceRow')
     const resting = row.querySelector<HTMLElement>('[class*="restingIndicator"]')

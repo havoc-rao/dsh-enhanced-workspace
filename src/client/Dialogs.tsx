@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Button, IconCheckOutline16, IconFolderClose16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCheckOutlineRegular, IconFolderCloseRegular, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   ChildAnchorMissingError,
   FolderDepthExceededError,
@@ -282,9 +282,9 @@ export function MoveToDialog({ state, folders, onCancel, t }: {
               style={{ paddingLeft: `${8 + option.depth * 14}px` }}
               onClick={() => { setSelected(option.folderId) }}
             >
-              <span className={css.rowGlyph}><IconFolderClose16 /></span>
+              <span className={css.rowGlyph}><IconFolderCloseRegular /></span>
               <span className={css.rowLabel}>{option.name}</span>
-              {active && <IconCheckOutline16 className={css.moveCheck} />}
+              {active && <IconCheckOutlineRegular className={css.moveCheck} />}
             </button>
           )
         })}

@@ -11,7 +11,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
+import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 
 /**
  * Pending interaction kinds a session row surfaces. The framework removed its
@@ -52,6 +52,17 @@ export interface SessionPendingInteractionEntry {
 export type SessionPendingInteractions = ReadonlyMap<SessionId, SessionPendingInteractionEntry>
 
 /**
+ * The current session id: the row the main view retains. The list state no
+ * longer carries a selection field; retention by the main view is the
+ * selection fact.
+ * @param list - session list snapshot.
+ * @returns the current session id, or undefined when nothing is retained.
+ */
+export function currentSessionIdOf(list: SessionListState): SessionId | undefined {
+  return Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id
+}
+
+/**
  * The assembled client's pending-interaction roster (the declaration-merged
  * `SessionPendingInteractionMap` other DSH packages augment): this browser
  * declares the entry member IT consumes — ui-approval's `PendingApproval`,
@@ -81,20 +92,59 @@ declare module '@deepseek-ai/dsh-client-ui-session/client' {
 }
 
 /**
- * The browser's view of the ui-session pending-interaction snapshot. The
- * assembly publishes domain instances — ui-approval's `PendingApproval`, the
- * roster member declared above — so the escalation `reason` is part of the
- * typed contract and the mapping is purely structural. One boundary keeps
- * every derivation on the plugin's own entry shape.
+ * The browser's view of the ui-session status snapshot. The assembly
+ * publishes domain instances — ui-approval's `PendingApproval`, the roster
+ * member declared above — so the escalation `reason` is part of the typed
+ * contract and the mapping is purely structural. One boundary keeps every
+ * derivation on the plugin's own entry shape.
  */
 export function sessionPendingInteractionsOf(
-  snapshot: SessionPendingInteractionSnapshot,
+  snapshot: SessionStatusSnapshot,
 ): SessionPendingInteractions {
-  return snapshot
+  const result = new Map<SessionId, SessionPendingInteractionEntry>()
+  for (const [id, status] of snapshot) {
+    if (status.pendingInteraction !== undefined) result.set(id, status.pendingInteraction)
+  }
+  return result
+}
+
+/** One session's UI-status facts as the browser consumes them: the pending
+ *  interaction (if any) and whether an observed stop outside the main view
+ *  still needs acknowledgement. The completion reminder is the ONLY
+ *  green-dot fact — a session that neither runs, waits, nor carries one is
+ *  idle and renders no dot (the built-in tree's own status derivation). */
+export interface SessionStatusView {
+  pendingInteraction: SessionPendingInteractionEntry | undefined
+  completionUnread: boolean
+}
+
+/** Session UI-status facts by id, projected 1:1 from the ui-session status
+ *  snapshot; a session absent from the snapshot carries no facts (idle). */
+export type SessionStatusTable = ReadonlyMap<SessionId, SessionStatusView>
+
+/**
+ * Project the ui-session status snapshot onto the browser's per-session
+ * status table. One boundary keeps the wire shape out of the derivations:
+ * every row-dot fact (amber waiting, completion reminder) reads from here.
+ * @param snapshot - the ui-session status snapshot (`useSessionStatus`).
+ * @returns the browser's status table.
+ */
+export function sessionStatusTableOf(snapshot: SessionStatusSnapshot): SessionStatusTable {
+  const result = new Map<SessionId, SessionStatusView>()
+  for (const [id, status] of snapshot) {
+    result.set(id, {
+      pendingInteraction: status.pendingInteraction,
+      completionUnread: status.completionUnread === true,
+    })
+  }
+  return result
 }
 
 /** No pending interactions: the default for derivations that render no indicator. */
 const EMPTY_PENDING: SessionPendingInteractions = new Map()
+
+/** No status facts: the default for derivations that render no indicator. */
+const EMPTY_STATUS_TABLE: SessionStatusTable = new Map()
 
 /**
  * Map one domain-owned pending-interaction entry onto the row presentation
@@ -1215,10 +1265,11 @@ function sessionNode(
   session: SessionSummary,
   descendants: ReadonlyMap<SessionId, { runningCount: number }>,
   current: SessionId | undefined,
-  pending: SessionPendingInteractions = EMPTY_PENDING,
+  statuses: SessionStatusTable = EMPTY_STATUS_TABLE,
 ): SessionNode {
   const stats = projectionSessionStats(session.projectionValues)
-  const pendingInteraction = pendingInteractionOf(pending.get(session.id))
+  const status = statuses.get(session.id)
+  const pendingInteraction = pendingInteractionOf(status?.pendingInteraction)
   return {
     id: session.id,
     current: session.id === current,
@@ -1226,7 +1277,10 @@ function sessionNode(
     blank: session.blank,
     running: session.running,
     runningSubagentCount: descendants.get(session.id)?.runningCount ?? 0,
-    completed: session.completed === true,
+    // Built-in parity: ONLY the completion reminder (an observed stop outside
+    // the main view that still needs acknowledgement) renders green — never
+    // every non-running session, which would mark idle rows as done.
+    completed: status?.completionUnread === true,
     updatedAt: session.updatedAt,
     recentInputs: stats?.recentInputs ?? [],
     recentOutputs: stats?.recentOutputs ?? [],
@@ -1254,20 +1308,23 @@ export type WorkspaceSessionStatus = Partial<Record<SessionStatusDot, number>>
  * @param members - the workspace's visible session summaries.
  * @param descendants - subagent descendant index
  *   ({@link indexSubagentDescendants}); absent keeps own activity only.
- * @param pending - pending-interaction map (defaults to none).
+ * @param statuses - per-session UI-status facts (pending interaction +
+ *   completion reminder; defaults to none — every row idle).
  */
 export function workspaceSessionStatus(
   members: readonly SessionSummary[],
   descendants: ReadonlyMap<SessionId, SubagentDescendantSummary> = new Map(),
-  pending: SessionPendingInteractions = EMPTY_PENDING,
+  statuses: SessionStatusTable = EMPTY_STATUS_TABLE,
 ): WorkspaceSessionStatus {
   const counts: WorkspaceSessionStatus = {}
   for (const member of members) {
+    const status = statuses.get(member.id)
     const dot = sessionStatusDot({
-      pendingInteraction: pendingInteractionOf(pending.get(member.id)),
+      pendingInteraction: pendingInteractionOf(status?.pendingInteraction),
       running: member.running,
       runningSubagentCount: descendants.get(member.id)?.runningCount ?? 0,
-      completed: member.completed === true,
+      // Built-in parity: only the completion reminder counts as done.
+      completed: status?.completionUnread === true,
       blank: member.blank,
     })
     if (dot === undefined) continue
@@ -1287,6 +1344,8 @@ export function workspaceSessionStatus(
  * @param expandedGroups - group keys the user expanded.
  * @param view - expansion state and per-account session orders.
  * @param descendants - subagent descendant index ({@link indexSubagentDescendants}).
+ * @param statuses - per-session UI-status facts (pending interaction +
+ *   completion reminder; defaults to none).
  * @param rowKey - the group key this row's expansion reads/writes; defaults to
  *   the workspace id (the tree rows), the recency module passes its prefixed
  *   key ({@link recentGroupKey}) so its rows expand independently.
@@ -1298,14 +1357,14 @@ function buildLeaf(
   expandedGroups: ReadonlySet<string>,
   view: ForestView,
   descendants: ReadonlyMap<SessionId, SubagentDescendantSummary>,
-  pending: SessionPendingInteractions = EMPTY_PENDING,
+  statuses: SessionStatusTable = EMPTY_STATUS_TABLE,
   rowKey: string = workspace.workspaceId,
 ): WorkspaceLeaf {
   const members: SessionSummary[] = []
   for (const id of workspace.sessionIds) {
     const summary = list.byId[id]
     if (summary === undefined) continue // account may lead the list pull; the row appears when the summary lands
-    if (!sessionVisible(summary, list.current, archived)) continue
+    if (!sessionVisible(summary, currentSessionIdOf(list), archived)) continue
     members.push(summary)
   }
   const key = rowKey
@@ -1313,7 +1372,7 @@ function buildLeaf(
   // The stored session order belongs to the workspace, not to the row's
   // expansion key: tree rows and recency rows share one account order.
   const ordered = orderedMembers(members, view.sessionOrderBy?.[workspace.workspaceId], view.orderBy ?? 'updated')
-  const primarySession = referenceSessionOf(members, list.current)
+  const primarySession = referenceSessionOf(members, currentSessionIdOf(list))
   return {
     key,
     workspaceId: workspace.workspaceId,
@@ -1322,10 +1381,10 @@ function buildLeaf(
     label: workspace.title,
     sessionCount: members.length,
     expanded,
-    containsCurrent: list.current !== undefined && workspace.sessionIds.includes(list.current as SessionId),
-    status: workspaceSessionStatus(members, descendants, pending),
+    containsCurrent: currentSessionIdOf(list) !== undefined && workspace.sessionIds.includes(currentSessionIdOf(list) as SessionId),
+    status: workspaceSessionStatus(members, descendants, statuses),
     ...(primarySession === undefined ? {} : { primarySession }),
-    sessions: expanded ? ordered.map(member => sessionNode(member, descendants, list.current, pending)) : [],
+    sessions: expanded ? ordered.map(member => sessionNode(member, descendants, currentSessionIdOf(list), statuses)) : [],
   }
 }
 
@@ -1380,9 +1439,9 @@ export function deriveWorkspaceLeaf(
   workspace: WorkspaceView,
   archivedSessionIds: readonly SessionId[],
   view: ForestView,
-  pending: SessionPendingInteractions = EMPTY_PENDING,
+  statuses: SessionStatusTable = EMPTY_STATUS_TABLE,
 ): WorkspaceLeaf {
-  return buildLeaf(workspace, list, new Set(archivedSessionIds), expandedGroupKeys(view), view, indexSubagentDescendants(list.byId), pending)
+  return buildLeaf(workspace, list, new Set(archivedSessionIds), expandedGroupKeys(view), view, indexSubagentDescendants(list.byId), statuses)
 }
 
 /**
@@ -1396,6 +1455,7 @@ export function deriveWorkspaceLeaf(
  * @param folders - the plugin's folder tree.
  * @param archivedSessionIds - registry-global archive set.
  * @param view - expansion state and the browser-local ungrouped order.
+ * @param statuses - per-session UI-status facts (defaults to none).
  * @returns top-level rows in render order plus the ungrouped bucket.
  */
 export function deriveFolderForest(
@@ -1404,16 +1464,16 @@ export function deriveFolderForest(
   folders: FolderTree,
   archivedSessionIds: readonly SessionId[],
   view: ForestView,
-  pending: SessionPendingInteractions = EMPTY_PENDING,
+  statuses: SessionStatusTable = EMPTY_STATUS_TABLE,
 ): ForestResult {
   const archived = new Set(archivedSessionIds)
   const expandedGroups = expandedGroupKeys(view)
   const ungroupedOrder = view.ungroupedOrder
   const descendants = indexSubagentDescendants(list.byId)
   const workspaceById = new Map(workspaces.map(workspace => [workspace.workspaceId, workspace]))
-  const currentGroup: string | undefined = list.current === undefined
+  const currentGroup: string | undefined = currentSessionIdOf(list) === undefined
     ? undefined
-    : (workspaces.find(workspace => workspace.sessionIds.includes(list.current as SessionId))?.workspaceId as string | undefined)
+    : (workspaces.find(workspace => workspace.sessionIds.includes(currentSessionIdOf(list) as SessionId))?.workspaceId as string | undefined)
       ?? UNGROUPED_KEY
 
   const buildFolder = (record: FolderRecord, depth: number, visited: Set<FolderId>): FolderNode => {
@@ -1434,7 +1494,7 @@ export function deriveFolderForest(
         } else {
           const workspace = workspaceById.get(child.id)
           if (workspace === undefined) continue
-          const leaf = buildLeaf(workspace, list, archived, expandedGroups, view, descendants, pending)
+          const leaf = buildLeaf(workspace, list, archived, expandedGroups, view, descendants, statuses)
           rows.push({ kind: 'workspace', leaf })
           sessionCount += leaf.sessionCount
           containsCurrent ||= leaf.containsCurrent
@@ -1465,7 +1525,7 @@ export function deriveFolderForest(
   const stray = list.ids
     .map(id => list.byId[id])
     .filter((session): session is SessionSummary =>
-      session !== undefined && !accounted.has(session.id) && sessionVisible(session, list.current, archived))
+      session !== undefined && !accounted.has(session.id) && sessionVisible(session, currentSessionIdOf(list), archived))
   let ungrouped: WorkspaceLeaf | undefined
   if (stray.length > 0) {
     const ordered = ungroupedOrder === undefined
@@ -1495,9 +1555,9 @@ export function deriveFolderForest(
       sessionCount: ordered.length,
       expanded: expandedGroups.has(UNGROUPED_KEY),
       containsCurrent: currentGroup === UNGROUPED_KEY,
-      status: workspaceSessionStatus(ordered, descendants),
+      status: workspaceSessionStatus(ordered, descendants, statuses),
       sessions: expandedGroups.has(UNGROUPED_KEY)
-        ? ordered.map(session => sessionNode(session, descendants, list.current))
+        ? ordered.map(session => sessionNode(session, descendants, currentSessionIdOf(list), statuses))
         : [],
     }
   }
@@ -1514,18 +1574,18 @@ export function deriveFolderForest(
 export function deriveFlat(
   list: SessionListState,
   archivedSessionIds: readonly SessionId[],
-  pending: SessionPendingInteractions = EMPTY_PENDING,
+  statuses: SessionStatusTable = EMPTY_STATUS_TABLE,
 ): SessionNode[] {
   const archived = new Set(archivedSessionIds)
   const descendants = indexSubagentDescendants(list.byId)
   const rows: SessionSummary[] = []
   for (const id of list.ids) {
     const session = list.byId[id]
-    if (session === undefined || !sessionVisible(session, list.current, archived)) continue
+    if (session === undefined || !sessionVisible(session, currentSessionIdOf(list), archived)) continue
     rows.push(session)
   }
   rows.sort(byRecency)
-  return rows.map(session => sessionNode(session, descendants, list.current, pending))
+  return rows.map(session => sessionNode(session, descendants, currentSessionIdOf(list), statuses))
 }
 
 /**
@@ -1585,7 +1645,7 @@ export function filterForestByQuery(
     const titles: string[] = []
     for (const id of sessionIds) {
       const summary = sessions.byId[id]
-      if (summary === undefined || summary.blank || !sessionVisible(summary, sessions.current, archived)) continue
+      if (summary === undefined || summary.blank || !sessionVisible(summary, currentSessionIdOf(sessions), archived)) continue
       titles.push(sessionTitle(summary))
     }
     return titles
@@ -1693,6 +1753,7 @@ export interface RecentsNode extends WorkspaceLeaf {
  * @param limit - maximum rows.
  * @param view - expansion state and per-account session orders.
  * @param archivedSessionIds - registry-global archive set.
+ * @param statuses - per-session UI-status facts (defaults to none).
  * @returns recency rows in display order.
  */
 export function deriveRecentWorkspaces(
@@ -1702,7 +1763,7 @@ export function deriveRecentWorkspaces(
   limit: number,
   view: ForestView,
   archivedSessionIds: readonly SessionId[] = [],
-  pending: SessionPendingInteractions = EMPTY_PENDING,
+  statuses: SessionStatusTable = EMPTY_STATUS_TABLE,
 ): RecentsNode[] {
   const archived = new Set(archivedSessionIds)
   const expandedGroups = expandedGroupKeys(view)
@@ -1718,7 +1779,7 @@ export function deriveRecentWorkspaces(
       node: {
         // The prefixed row key keeps the recency module's expand/collapse
         // independent from the workspace list's rows (no linkage).
-        ...buildLeaf(workspace, sessions, archived, expandedGroups, view, descendants, pending, recentGroupKey(workspace.workspaceId)),
+        ...buildLeaf(workspace, sessions, archived, expandedGroups, view, descendants, statuses, recentGroupKey(workspace.workspaceId)),
         updatedAt: score,
       },
       score,
