@@ -247,7 +247,10 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   复制时把内容换成写死 `#FFFFFF` 的标签，亮色床面上原来不可见）。行内
   样式压过原语类声明；var() 间接引用在主题切换时实时重解析，无需监听
   `theme/change`；卡随出口卸载，无清理。无 alias token 的宿主回退原语
-  固定色。
+  固定色。**跟进（2026-09-23）**：用户反馈「left padding 有些太远」——
+  卡内左内边距 16px 收紧到 12px（与上下一致；行内 `paddingLeft` 覆盖原语
+  类声明，React 不 diff 持久；卡在行右缘时 16px 读起来像多余空隙），
+  spec 断言同步，typecheck 0 错误 / 333 全绿 / 双形态几何 lane 通过。
 - **验证**：`pnpm typecheck` 0 错误；`pnpm test` **330/330**（新增 2 例：
   床面覆盖断言——模拟原语卡片（写死暗色 + position:fixed），断言行内
   token 生效、内容透传；非卡片父元素不误伤——spec 直接挂载内容时无覆盖）；

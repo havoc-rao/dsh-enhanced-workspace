@@ -1015,6 +1015,10 @@ describe('enhanced workspace browser', () => {
     })
     expect(bed.style.getPropertyValue('--dsw-hovercard-bg')).toBe('var(--dsw-alias-bg-layer-2, #2C2C2E)')
     expect(bed.style.color).toBe('var(--dsw-alias-label-primary, #FFFFFF)')
+    // The card's left padding is tightened from the primitive's 16px to the
+    // vertical 12px — the card sits at the row's right edge, so the wider
+    // outset would read as a stray gap.
+    expect(bed.style.paddingLeft).toBe('12px')
     expect(bed.querySelector('[data-testid="bed-content"]')?.textContent, 'the body renders through the sync').toBe('床面内容')
     expect(holder.textContent).toContain('床面内容')
     await act(async () => { hoverRoot.unmount() })

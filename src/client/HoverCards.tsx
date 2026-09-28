@@ -122,11 +122,13 @@ export function HoverRowAnchorSync({ children }: { children: ReactNode }): React
  * record #2C2C2E, so dark mode is pixel-unchanged and light mode gets a
  * proper light card — and the card color to `--dsw-alias-label-primary`,
  * which also keeps the primitive's copy-feedback state (the primitive swaps
- * the content for a fixed-#FFFFFF label while copying) readable. Inline
- * styles beat the primitive's class declarations, the var() indirection
- * re-resolves live on a theme switch (no re-render needed), and the card
- * element dies with the outlet — no cleanup. Hosts without alias tokens
- * fall back to the primitive's own colors; rendered off a card (spec
+ * the content for a fixed-#FFFFFF label while copying) readable. The card's
+ * left inset is also tightened to 12px (the primitive's 16px feels too far
+ * from the row at the sidebar's right edge; the vertical 12px stays as-is).
+ * Inline styles beat the primitive's class declarations, the var()
+ * indirection re-resolves live on a theme switch (no re-render needed), and
+ * the card element dies with the outlet — no cleanup. Hosts without alias
+ * tokens fall back to the primitive's own colors; rendered off a card (spec
  * harnesses mount the bodies directly) the sync is a strict no-op.
  */
 export function HoverCardSurfaceSync({ children }: { children: ReactNode }): ReactNode {
@@ -140,6 +142,10 @@ export function HoverCardSurfaceSync({ children }: { children: ReactNode }): Rea
     if (getComputedStyle(card).position !== 'fixed') return
     card.style.setProperty('--dsw-hovercard-bg', 'var(--dsw-alias-bg-layer-2, #2C2C2E)')
     card.style.color = 'var(--dsw-alias-label-primary, #FFFFFF)'
+    // Tighten the primitive's 16px left padding to match the vertical 12px:
+    // the card is at the row's right edge, so a wider outset reads as a
+    // stray gap. The right/vertical padding stays at the primitive's values.
+    card.style.paddingLeft = '12px'
   }, [])
   // `display:contents` keeps the wrapper out of layout — the card still
   // measures the body's own box, and the wrapper is pure addressable seam.

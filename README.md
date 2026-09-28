@@ -96,8 +96,9 @@ pnpm build && pnpm pack && pnpm test:mount
   `#2C2C2E`、不随主题模块：插件用 `HoverCardSurfaceSync`（挂在卡片
   `content` 内，同步原语床面元素本身）把床面改读 `--dsw-alias-bg-layer-2`
   —— 其暗色值恰为原色，暗色观感不变，亮色自动获得浅色床面；复制反馈态
-  （原语把内容换成写死 `#FFFFFF` 的标签）随卡片 `color` 一并自适应。宿主
-  无 alias token 时回退原语固定色。
+  （原语把内容换成写死 `#FFFFFF` 的标签）随卡片 `color` 一并自适应；卡内
+  左内边距从原语 16px 收紧到 12px（与上下一致，卡在行右缘时 16px 读起来
+  像多余空隙）。宿主无 alias token 时回退原语固定色。
 - Hover 卡片锚点：fileTreeUi 行（label 槽是消费方唯一渲染面）里 `HoverCard`
   原版锚在框架的 `rowLabel` 片段上（实测首层缩进时卡片比行顶低 7px、left
   比行右缘缩进 ~48px，即「没 top 对齐、没 right 对齐」）。插件用
