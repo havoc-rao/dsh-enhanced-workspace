@@ -11,7 +11,8 @@
  * @module dsh-enhanced-workspace/client/HoverCards
  */
 
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { IconCodeOutlineRegular, IconFolderCloseRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { EnhancedWorkspaceBrowserProps } from './contract.ts'
@@ -32,6 +33,47 @@ import css from './Browser.module.css'
 
 /** The browser root's locale seat, prop-passed from the row seats. */
 type HoverTranslate = EnhancedWorkspaceBrowserProps['t']
+
+/**
+ * Adapt the shared `HoverCard` primitive's compact "bed" (the portaled card
+ * surface) to the current DSH theme module. The primitive's `.card` is NOT
+ * a component this plugin registers — it hard-codes
+ * `--dsw-hovercard-bg: #2C2C2E`, a fixed dark surface in BOTH themes —
+ * while this plugin's card bodies ride the host's `--dsw-alias-*` tokens:
+ * in the light theme that pairing is a dark bed under light-theme (dark)
+ * copy, unreadable. Mounted inside a card's `content` (the content is the
+ * card's direct child), this component syncs the card element itself: the
+ * bed token flips to `--dsw-alias-bg-layer-2` — its dark value IS the
+ * record #2C2C2E, so dark mode is pixel-unchanged and light mode gets a
+ * proper light card — and the card color to `--dsw-alias-label-primary`,
+ * which also keeps the primitive's copy-feedback state (the primitive swaps
+ * the content for a fixed-#FFFFFF label while copying) readable. Inline
+ * styles beat the primitive's class declarations, the var() indirection
+ * re-resolves live on a theme switch (no re-render needed), and the card
+ * element dies with the outlet — no cleanup. Hosts without alias tokens
+ * fall back to the primitive's own colors; rendered off a card (spec
+ * harnesses mount the bodies directly) the sync is a strict no-op.
+ */
+export function HoverCardSurfaceSync({ children }: { children: ReactNode }): ReactNode {
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const card = surfaceRef.current?.parentElement
+    if (card === null || card === undefined) return
+    // Only actual HoverCard beds get synced: the primitive's compact `.card`
+    // is `position: fixed`. Inert parents (spec harnesses, content mounted
+    // outside the primitive) are left untouched.
+    if (getComputedStyle(card).position !== 'fixed') return
+    card.style.setProperty('--dsw-hovercard-bg', 'var(--dsw-alias-bg-layer-2, #2C2C2E)')
+    card.style.color = 'var(--dsw-alias-label-primary, #FFFFFF)'
+  }, [])
+  // `display:contents` keeps the wrapper out of layout — the card still
+  // measures the body's own box, and the wrapper is pure addressable seam.
+  return (
+    <div ref={surfaceRef} style={{ display: 'contents' }}>
+      {children}
+    </div>
+  )
+}
 
 /** Compact `dir`/`file` rows shown per section until the clickable remainder expands the full list. */
 const RECENT_FILE_ROWS = 8

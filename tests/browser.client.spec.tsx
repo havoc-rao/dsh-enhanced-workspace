@@ -19,7 +19,7 @@ import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-clie
 // in file-tree-ui.client.spec.tsx).
 import type { FileTreeUiServiceV2 } from 'dsh-file-tree-ui/client-contract'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
-import { SessionHoverContent, WorkspaceHoverContent } from '../src/client/HoverCards.tsx'
+import { SessionHoverContent, WorkspaceHoverContent, HoverCardSurfaceSync } from '../src/client/HoverCards.tsx'
 import {
   DIRECTORY_FLOW_SLOT,
   SEARCH_GLOBAL_KEY,
@@ -988,6 +988,52 @@ describe('enhanced workspace browser', () => {
     })
     expect(holder.textContent).toContain('2 个会话已完成')
     expect(holder.querySelector('[data-state="done"]'), 'the card status line carries the green done dot').not.toBeNull()
+    await act(async () => { hoverRoot.unmount() })
+    holder.remove()
+  })
+
+  it('syncs the HoverCard primitive bed to the alias surface token (light theme gets a light card)', async () => {
+    // Stand-in for the primitive's portaled `.card`: the bed declares a
+    // FIXED dark surface that the sync's inline overrides must win over —
+    // the two inline assertions are the whole behavior (var() indirection
+    // keeps the bed live-adaptive to theme switches, the element-scoped
+    // record color #2C2C2E equals dark `--dsw-alias-bg-layer-2`).
+    const bed = document.createElement('div')
+    bed.style.setProperty('--dsw-hovercard-bg', '#2C2C2E')
+    bed.style.color = '#FFFFFF'
+    bed.style.position = 'fixed'
+    const holder = document.createElement('div')
+    document.body.appendChild(holder)
+    holder.appendChild(bed)
+    const hoverRoot = createRoot(bed)
+    await act(async () => {
+      hoverRoot.render(
+        <HoverCardSurfaceSync>
+          <div data-testid="bed-content">床面内容</div>
+        </HoverCardSurfaceSync>,
+      )
+    })
+    expect(bed.style.getPropertyValue('--dsw-hovercard-bg')).toBe('var(--dsw-alias-bg-layer-2, #2C2C2E)')
+    expect(bed.style.color).toBe('var(--dsw-alias-label-primary, #FFFFFF)')
+    expect(bed.querySelector('[data-testid="bed-content"]')?.textContent, 'the body renders through the sync').toBe('床面内容')
+    expect(holder.textContent).toContain('床面内容')
+    await act(async () => { hoverRoot.unmount() })
+    holder.remove()
+  })
+
+  it('leaves a non-card parent alone (spec harnesses mount the bodies directly)', async () => {
+    const holder = document.createElement('div')
+    document.body.appendChild(holder)
+    const hoverRoot = createRoot(holder)
+    await act(async () => {
+      hoverRoot.render(
+        <HoverCardSurfaceSync>
+          <WorkspaceHoverContent label="绘画收集" cwd="/projects/w-art" createdAt={0} t={t} status={{ ongoing: 1 }} />,
+        </HoverCardSurfaceSync>,
+      )
+    })
+    expect(holder.textContent).toContain('1 个会话正在工作')
+    expect(holder.style.getPropertyValue('--dsw-hovercard-bg'), 'no card: no bed override').toBe('')
     await act(async () => { hoverRoot.unmount() })
     holder.remove()
   })

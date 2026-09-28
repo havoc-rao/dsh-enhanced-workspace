@@ -92,6 +92,12 @@ pnpm build && pnpm pack && pnpm test:mount
   会话卡片 300px 的 `width` 彩蛋要 ui-primitives 0.1.2 才发布，0.1.1-rc.1
   无此 prop）；路径不做 `~` 缩写（插件没有 host-description 注入钩子，
   未知 $HOME）。文件域若有长路径，卡片内文件盒横向滚动可达。
+- Hover 卡片床面（`HoverCard` 原语 compact `.card`）原版两主题都写死暗色
+  `#2C2C2E`、不随主题模块：插件用 `HoverCardSurfaceSync`（挂在卡片
+  `content` 内，同步原语床面元素本身）把床面改读 `--dsw-alias-bg-layer-2`
+  —— 其暗色值恰为原色，暗色观感不变，亮色自动获得浅色床面；复制反馈态
+  （原语把内容换成写死 `#FFFFFF` 的标签）随卡片 `color` 一并自适应。宿主
+  无 alias token 时回退原语固定色。
 - 目录树为插件本地权威：跨标签页并发编辑 last-writer-wins，不做冲突合并；
   reconcile 失败仅 `console.warn`（插件树仍是显示权威）。
 - 目录与工作区的**拖拽已实现**（目录行正中 = 移入末尾；行上/下边、工作区

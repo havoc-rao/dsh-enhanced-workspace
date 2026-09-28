@@ -228,6 +228,32 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   `pnpm build` 双通道 + 纯度门通过。行为变更：目录行下边（原「移入」）与
   上边（原「父级末尾」）现在都是同层穿插。
 
+### Hover 卡片床面跟随主题模块（2026-09-23）
+
+- **问题**：hover 工作区/会话条目时的详情悬浮床使用的是 ui-primitives
+  共享 `HoverCard` 原语（非本插件注册的组件），其 compact `.card` 床面
+  两主题**都写死暗色** `--dsw-hovercard-bg: #2C2C2E`；而 95707ba 把卡片
+  内容改成了宿主 `--dsw-alias-*` token —— 暗色主题恰好同色无感，亮色
+  主题即「暗床 + 亮色文字」不可读（内置 ui-workspace 的卡片内容是写死
+  亮色、与固定暗床配套，没有此问题）。
+- **实装（零 DSH 改动）**：`HoverCards.tsx` 新增 `HoverCardSurfaceSync`
+  组件，挂在四个 `HoverCard` 挂点的 `content` 内（工作区行 / 会话行 /
+  fileTreeUi v2 label 槽 / folderRowModel label 槽）；内容即卡片直接子
+  元素，sync 在 layout effect 里定位 parentElement（真正床面 = 原语
+  `position:fixed` 的 `.card`，保守守卫防误伤），行内覆盖
+  `--dsw-hovercard-bg` → `var(--dsw-alias-bg-layer-2, #2C2C2E)`（暗色值
+  恰为原记录色 → 暗色观感逐像素不变，亮色自动浅色床面）+ 卡片 `color` →
+  `var(--dsw-alias-label-primary, #FFFFFF)`（顺带修好复制反馈态：原语
+  复制时把内容换成写死 `#FFFFFF` 的标签，亮色床面上原来不可见）。行内
+  样式压过原语类声明；var() 间接引用在主题切换时实时重解析，无需监听
+  `theme/change`；卡随出口卸载，无清理。无 alias token 的宿主回退原语
+  固定色。
+- **验证**：`pnpm typecheck` 0 错误；`pnpm test` **330/330**（新增 2 例：
+  床面覆盖断言——模拟原语卡片（写死暗色 + position:fixed），断言行内
+  token 生效、内容透传；非卡片父元素不误伤——spec 直接挂载内容时无覆盖）；
+  `pnpm build` 双通道 + 纯度门通过。README Known Limitations 同步床面
+  差异说明。
+
 ## 关键约束备忘
 
 - 不修改 DSH 本体（fork 零写入）；client bundle 不 value-import

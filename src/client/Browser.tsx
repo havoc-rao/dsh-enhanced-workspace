@@ -96,7 +96,7 @@ import {
   type InputDialogState,
   type MoveToDialogState,
 } from './Dialogs.tsx'
-import { SessionHoverContent, WorkspaceHoverContent, workspaceStatusLabel } from './HoverCards.tsx'
+import { SessionHoverContent, WorkspaceHoverContent, workspaceStatusLabel, HoverCardSurfaceSync } from './HoverCards.tsx'
 import {
   deriveFlat,
   deriveFolderForest,
@@ -2257,15 +2257,19 @@ function LeafRow(props: {
       <HoverCard
         anchor={ownRow}
         content={(
-          <WorkspaceHoverContent
-            label={leaf.label}
-            cwd={leaf.cwd}
-            createdAt={leaf.createdAt ?? 0}
-            t={callbacks.t}
-            status={leaf.status}
-            {...(hoverGit === undefined ? {} : { git: hoverGit })}
-            {...(remoteMarker === undefined ? {} : { remote: remoteMarker })}
-          />
+          // The primitive's compact bed is fixed dark in both themes; the
+          // sync flips it to the alias surface token (HoverCards.tsx).
+          <HoverCardSurfaceSync>
+            <WorkspaceHoverContent
+              label={leaf.label}
+              cwd={leaf.cwd}
+              createdAt={leaf.createdAt ?? 0}
+              t={callbacks.t}
+              status={leaf.status}
+              {...(hoverGit === undefined ? {} : { git: hoverGit })}
+              {...(remoteMarker === undefined ? {} : { remote: remoteMarker })}
+            />
+          </HoverCardSurfaceSync>
         )}
         disabled={menuOpen}
         copyText={leaf.cwd}
@@ -2538,7 +2542,11 @@ function SessionRow(props: {
   return (
     <HoverCard
       anchor={ownRow}
-      content={<SessionHoverContent node={session} now={props.now} t={seat.t} />}
+      content={(
+        <HoverCardSurfaceSync>
+          <SessionHoverContent node={session} now={props.now} t={seat.t} />
+        </HoverCardSurfaceSync>
+      )}
       disabled={menuOpen}
       copyLabel={seat.t('copy')}
       copiedLabel={seat.t('copied')}
@@ -3107,7 +3115,11 @@ function sessionRowModel(props: {
     label: (
       <HoverCard
         anchor={session.blank ? seat.t('newSession') : session.title}
-        content={<SessionHoverContent node={session} now={props.now} t={seat.t} />}
+        content={(
+          <HoverCardSurfaceSync>
+            <SessionHoverContent node={session} now={props.now} t={seat.t} />
+          </HoverCardSurfaceSync>
+        )}
         disabled={menuOpen}
         copyLabel={seat.t('copy')}
         copiedLabel={seat.t('copied')}
@@ -3359,15 +3371,17 @@ function leafRowModel(props: {
         <HoverCard
           anchor={leaf.label}
           content={(
-            <WorkspaceHoverContent
-              label={leaf.label}
-              cwd={leaf.cwd}
-              createdAt={leaf.createdAt ?? 0}
-              t={callbacks.t}
-              status={leaf.status}
-              {...(hoverGit === undefined ? {} : { git: hoverGit })}
-              {...(remoteMarker === undefined ? {} : { remote: remoteMarker })}
-            />
+            <HoverCardSurfaceSync>
+              <WorkspaceHoverContent
+                label={leaf.label}
+                cwd={leaf.cwd}
+                createdAt={leaf.createdAt ?? 0}
+                t={callbacks.t}
+                status={leaf.status}
+                {...(hoverGit === undefined ? {} : { git: hoverGit })}
+                {...(remoteMarker === undefined ? {} : { remote: remoteMarker })}
+              />
+            </HoverCardSurfaceSync>
           )}
           disabled={menuOpen}
           copyText={leaf.cwd}

@@ -670,13 +670,17 @@
 }
 
 /* ---- Hover cards (replicated from the built-in ui-workspace rows) ----
- * The card surface itself comes from the shared HoverCard primitive
- * (theme-adaptive: --dsw-alias-bg-layer-2 — its dark value is the record
- * #2C2C2E); these classes shape the card body content only. Colors ride
- * the host's --dsw-alias-* theme tokens like the built-in cards: their
- * dark values equal the former fixed light-on-dark hexes, so dark mode is
- * unchanged, light mode gets a proper light card. Falls back to the old
- * dark-hex values when a host ships no tokens. */
+ * The card BED (the compact `.card` surface of the shared HoverCard
+ * primitive) is NOT theme-adaptive on its own: the primitive hard-codes
+ * `--dsw-hovercard-bg: #2C2C2E`, a fixed dark surface in both themes.
+ * `HoverCardSurfaceSync` (HoverCards.tsx) syncs the portaled card element
+ * to `--dsw-alias-bg-layer-2` (its dark value IS the record #2C2C2E, so
+ * dark mode is unchanged; light mode gets a proper light card) and to the
+ * alias label color. These classes shape the card body content only.
+ * Content colors ride the host's --dsw-alias-* theme tokens like the
+ * built-in cards: their dark values equal the former fixed light-on-dark
+ * hexes, so dark mode is unchanged, light mode gets a proper light card.
+ * Falls back to the old dark-hex values when a host ships no tokens. */
 
 .hoverContent {
   display: flex;
