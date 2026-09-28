@@ -98,6 +98,13 @@ pnpm build && pnpm pack && pnpm test:mount
   —— 其暗色值恰为原色，暗色观感不变，亮色自动获得浅色床面；复制反馈态
   （原语把内容换成写死 `#FFFFFF` 的标签）随卡片 `color` 一并自适应。宿主
   无 alias token 时回退原语固定色。
+- Hover 卡片锚点：fileTreeUi 行（label 槽是消费方唯一渲染面）里 `HoverCard`
+  原版锚在框架的 `rowLabel` 片段上（实测首层缩进时卡片比行顶低 7px、left
+  比行右缘缩进 ~48px，即「没 top 对齐、没 right 对齐」）。插件用
+  `HoverRowAnchorSync`（包在 anchor prop 外）把原语根 span 按实测负外边距
+  扩展到整行盒子（文字用等值 padding 钉回原视觉位置），根 span 转
+  hit-test 透明（标签内容重新可命中）——卡片与内置 ui-workspace 一致：
+  top 对齐行顶、距行右缘 8px；本地回退行（锚点即整行）不受影响。
 - 目录树为插件本地权威：跨标签页并发编辑 last-writer-wins，不做冲突合并；
   reconcile 失败仅 `console.warn`（插件树仍是显示权威）。
 - 目录与工作区的**拖拽已实现**（目录行正中 = 移入末尾；行上/下边、工作区

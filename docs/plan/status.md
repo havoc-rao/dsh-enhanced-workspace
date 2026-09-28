@@ -254,6 +254,35 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   `pnpm build` 双通道 + 纯度门通过。README Known Limitations 同步床面
   差异说明。
 
+### Hover 卡片锚点对齐行盒子（2026-09-23）
+
+- **问题**：用户反馈「hover box 没 top 对齐 row、没 right 对齐」。真机
+  （provider+consumer 组合挂载）量得：fileTreeUi 行的 `HoverCard` 锚在
+  框架 `rowLabel` 片段（flex:1 项，首层缩进实测 x=60..212、y=300），而
+  非整行（x=12..268、y=293）：卡片 top 比行顶低 7px、left 比行右缘缩进
+  48px。内置 ui-workspace 锚整行，所以无此问题；本地回退行（anchor 即
+  行）几何本来正确。
+- **实装（零 DSH / 零 provider 改动，纯消费方）**：`HoverCards.tsx` 新增
+  `HoverRowAnchorSync`，包在四个 `HoverCard` 挂点的 anchor prop 外：
+  - 守卫：root 的父链 `rowLabel → [role="treeitem"]` 才生效（本地回退行
+    的父是普通容器，直接 no-op）；
+  - 挂载时量 rowLabel 与行盒（getBoundingClientRect，天然适配任意缩进
+    深度/行宽），给原语根 span 行内负外边距把锚点扩展到整行（卡片只读
+    top/right：top=行顶、right=行右缘），等值 padding 把文字钉回原位；
+  - 根 span 转 `pointer-events:none`，wrapper（真实 block 盒，
+    `display:contents` 无命中面会让字符串锚点在文字外完全失效——工作区行
+    因标题够宽侥幸可开）重新可命中：chevron/leading/trailing/actions 交互
+    不受影响，卡片从行内任意位置悬停打开（事件冒泡到根 span 的
+    pointer 处理）；
+  - resize 时重测（侧边栏展开/收起）；行内样式 React 从不 diff，持久。
+- **验证**：`pnpm typecheck` 0 错误；`pnpm test` **333/333**（新增 3 例：
+  负外边距/padding/PE 断言、回退行守卫 no-op、resize 重测；1 例既有
+  sessionList 父链断言改 closest 适配新 DOM 层）；真机几何 lane
+  `tests/e2e/hover-geometry.e2e.ts`（消费方 lane + provider+consumer 组合
+  双形态都跑）：workspace/session 卡片 bed top == 行顶、left == 行右缘+8
+  （±1px，内置 parity）。`pnpm build` 双通道 + 纯度门通过；mount lane
+  4/4。README Known Limitations 同步锚点说明。
+
 ## 关键约束备忘
 
 - 不修改 DSH 本体（fork 零写入）；client bundle 不 value-import

@@ -19,7 +19,7 @@ import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-clie
 // in file-tree-ui.client.spec.tsx).
 import type { FileTreeUiServiceV2 } from 'dsh-file-tree-ui/client-contract'
 import { EnhancedWorkspaceBrowser, GUIDE_STROKE_HOVER, guideBackground } from '../src/client/Browser.tsx'
-import { SessionHoverContent, WorkspaceHoverContent, HoverCardSurfaceSync } from '../src/client/HoverCards.tsx'
+import { SessionHoverContent, WorkspaceHoverContent, HoverCardSurfaceSync, HoverRowAnchorSync } from '../src/client/HoverCards.tsx'
 import {
   DIRECTORY_FLOW_SLOT,
   SEARCH_GLOBAL_KEY,
@@ -1038,6 +1038,107 @@ describe('enhanced workspace browser', () => {
     holder.remove()
   })
 
+  it('re-anchors the hover card to the row box in fileTreeUi rows (negative margins + pinned label + hit-test hole)', async () => {
+    // The framework's row DOM: row (treeitem) > rowLabel fragment > the
+    // primitive's root span (the card anchor) > our sync wrapper (the
+    // HoverCard's anchor content lives inside it).
+    const row = document.createElement('div')
+    row.setAttribute('role', 'treeitem')
+    const bed = document.createElement('span')
+    const root = document.createElement('span')
+    row.appendChild(bed)
+    bed.appendChild(root)
+    const holder = document.createElement('div')
+    document.body.appendChild(holder)
+    holder.appendChild(row)
+    // jsdom has no layout: stub the measured boxes — the values recorded by
+    // e2e measurement of a real fileTreeUi row (first indent).
+    const rowRect = { left: 12, top: 293, right: 268, bottom: 323, width: 256, height: 30 } as DOMRect
+    const bedRect = { left: 60, top: 300, right: 212, bottom: 316, width: 152, height: 16 } as DOMRect
+    vi.spyOn(row, 'getBoundingClientRect').mockReturnValue(rowRect)
+    vi.spyOn(bed, 'getBoundingClientRect').mockReturnValue(bedRect)
+    const hoverRoot = createRoot(root)
+    await act(async () => {
+      hoverRoot.render(
+        <HoverRowAnchorSync><span>标签</span></HoverRowAnchorSync>,
+      )
+    })
+    // The primitive's compact card math reads only anchor.top / anchor.right:
+    expect(root.style.marginTop, 'anchor top extends to the row top').toBe('-7px')
+    expect(root.style.marginLeft).toBe('-48px')
+    expect(root.style.marginRight).toBe('-56px')
+    // The label text stays at its visual spot (content box pinned back).
+    expect(root.style.paddingLeft).toBe('48px')
+    expect(root.style.paddingTop).toBe('7px')
+    // The extension covers the row's chevron/actions: hit-test hole, with
+    // pointer events re-enabled on the label content (the wrapper).
+    expect(root.style.pointerEvents).toBe('none')
+    await act(async () => { hoverRoot.unmount() })
+    holder.remove()
+  })
+
+  it('leaves fallback rows untouched (the anchor is the row itself, no nested treeitem)', async () => {
+    // Fallback shape: the primitive's root span's parent IS the treeitem
+    // (the anchored row); its parent is a plain container — the guard finds
+    // no nested treeitem and must not touch the anchor even with nonzero
+    // measured boxes.
+    const treeitem = document.createElement('div')
+    treeitem.setAttribute('role', 'treeitem')
+    const root = document.createElement('span')
+    treeitem.appendChild(root)
+    const holder = document.createElement('div')
+    document.body.appendChild(holder)
+    holder.appendChild(treeitem)
+    vi.spyOn(treeitem, 'getBoundingClientRect').mockReturnValue({ left: 12, top: 293, right: 268, bottom: 323, width: 256, height: 30 } as DOMRect)
+    const hoverRoot = createRoot(root)
+    await act(async () => {
+      hoverRoot.render(
+        <HoverRowAnchorSync><span>回退行</span></HoverRowAnchorSync>,
+      )
+    })
+    expect(root.style.marginLeft, 'no margin extension').toBe('')
+    expect(root.style.paddingLeft).toBe('')
+    expect(root.style.pointerEvents, 'pointer surface unchanged').toBe('')
+    await act(async () => { hoverRoot.unmount() })
+    holder.remove()
+  })
+
+  it('re-syncs the row anchor extension on window resize', async () => {
+    const row = document.createElement('div')
+    row.setAttribute('role', 'treeitem')
+    const bed = document.createElement('span')
+    const root = document.createElement('span')
+    row.appendChild(bed)
+    bed.appendChild(root)
+    const holder = document.createElement('div')
+    document.body.appendChild(holder)
+    holder.appendChild(row)
+    const rowRect = { left: 12, top: 293, right: 268, bottom: 323, width: 256, height: 30 } as DOMRect
+    // Plain object (not a DOMRect): the test mutates the measured box to
+    // simulate the sidebar widening between mounts.
+    const bedRect: { left: number; top: number; right: number; bottom: number; width: number; height: number } = { left: 60, top: 300, right: 212, bottom: 316, width: 152, height: 16 }
+    vi.spyOn(row, 'getBoundingClientRect').mockReturnValue(rowRect)
+    const bedSpy = vi.spyOn(bed, 'getBoundingClientRect').mockReturnValue(bedRect as DOMRect)
+    const hoverRoot = createRoot(root)
+    await act(async () => {
+      hoverRoot.render(
+        <HoverRowAnchorSync><span>标签</span></HoverRowAnchorSync>,
+      )
+    })
+    expect(root.style.marginLeft).toBe('-48px')
+    // Sidebar widens: the label fragment shifts right inside the row.
+    bedRect.left = 90
+    bedRect.right = 242
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    expect(bedSpy).toHaveBeenCalledTimes(2)
+    expect(root.style.marginLeft, 'extension re-measured on resize').toBe('-78px')
+    expect(root.style.marginRight).toBe('-26px')
+    await act(async () => { hoverRoot.unmount() })
+    holder.remove()
+  })
+
   it('marks every collapsed ancestor dir on the path to the current session, level by level', async () => {
     // 本会话 = s1（绘画收集 的会话）；把工作区挪进根目录「产品组」。
     sessionsState = withCurrent(SESSIONS_STATE, 's1')
@@ -1690,9 +1791,9 @@ describe('indent guides (better-sidebar FileTree parity)', () => {
     // The session-LIST container paints the full stroke set on its box, so
     // the lines read continuous across the 1px hairline row gaps (and any
     // in-list separator rows); each row's own layer keeps the highlight.
-    // (The session row's immediate parent is the HoverCard anchor span —
-    // the list box is one level up.)
-    const sessionList = sessionRow.parentElement!.parentElement!
+    // (The session row's immediate parents are the HoverCard anchor span
+    // plus the HoverRowAnchorSync wrapper — the list box is above them.)
+    const sessionList = sessionRow.closest('[class*="sessionList"]') as HTMLElement
     expect(sessionList.className).toContain('sessionList')
     expect(sessionList.style.backgroundImage).toContain('transparent 8px')
     expect(sessionList.style.backgroundImage).toContain('transparent 16px')

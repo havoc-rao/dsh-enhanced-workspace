@@ -35,6 +35,81 @@ import css from './Browser.module.css'
 type HoverTranslate = EnhancedWorkspaceBrowserProps['t']
 
 /**
+ * Re-anchor a hover card to its row's full box in fileTreeUi rows. The
+ * framework (dsh-file-tree-ui) owns the row chrome: the label slot — the
+ * consumer's only render surface, where the `HoverCard` rides — is a
+ * `flex: 1` item that measures the LABEL FRAGMENT, not the row (measured:
+ * +7px below the row top, ~48px inside the row's right edge at first
+ * indent), so the compact card pops beside the label instead of
+ * top/right-aligned with the row like the built-in ui-workspace cards.
+ * This component wraps the `anchor` prop: at mount it measures the label
+ * box against the row's (`[role="treeitem"]`, set on every model), then
+ * extends the primitive's root span (its parent) to the row box with
+ * negative margins, pins the label text back to its visual spot with
+ * matching padding, and makes the extended span hit-test transparent
+ * (pointer events re-enabled on the label content) so the
+ * chevron/leading/trailing/actions keep receiving interactions while the
+ * card still opens from the label — the primitive's pointer handlers sit
+ * on the root span and fire via bubbling from its descendants. Local
+ * fallback rows anchor the row itself: the guard finds no nested
+ * `[role="treeitem"]` and leaves them untouched. Re-measures on window
+ * resize (sidebar expand/collapse); the inline styles are applied to an
+ * element whose `style` React never diffs, so they survive re-renders.
+ */
+export function HoverRowAnchorSync({ children }: { children: ReactNode }): ReactNode {
+  const anchorRef = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => {
+    const sync = (): void => {
+      const root = anchorRef.current?.parentElement
+      if (root === null || root === undefined) return
+      const bed = root.parentElement
+      const row = bed?.parentElement
+      if (bed === null || bed === undefined || row === null || row === undefined) return
+      // fileTreeUi rows only: the label slot sits inside the framework's
+      // row (the single `[role="treeitem"]`); the fallback rows anchor the
+      // row itself (bed IS the treeitem and its parent is a plain
+      // container, not another treeitem).
+      if (!row.matches('[role="treeitem"]')) return
+      const bedRect = bed.getBoundingClientRect()
+      const rowRect = row.getBoundingClientRect()
+      if (bedRect.width === 0 && bedRect.height === 0) return
+      const dl = bedRect.left - rowRect.left
+      const dr = rowRect.right - bedRect.right
+      const dt = bedRect.top - rowRect.top
+      root.style.marginLeft = `${-dl}px`
+      root.style.marginRight = `${-dr}px`
+      root.style.marginTop = `${-dt}px`
+      // Pin the label text back to its visual spot: the extended block
+      // would otherwise start at the row's content corner. (The compact
+      // card reads only the anchor's top/right, so the extension's bottom
+      // is moot.)
+      root.style.paddingLeft = `${dl}px`
+      root.style.paddingTop = `${dt}px`
+      // The extension covers the chevron/leading/trailing/actions; make
+      // the span hit-test transparent and re-enable pointer events on the
+      // label content (a REAL block box — `display: contents` would have no
+      // hit-testable surface, leaving string anchors dead outside the
+      // literal glyphs), so those controls keep working while the card
+      // opens from anywhere over the row.
+      root.style.pointerEvents = 'none'
+    }
+    sync()
+    // The row box changes when the sidebar expands/collapses; keep the
+    // extension current while the row is mounted.
+    window.addEventListener('resize', sync)
+    return () => { window.removeEventListener('resize', sync) }
+  }, [])
+  // A real block box over the anchor's padded content area: the card opens
+  // from anywhere on the row (not just the label glyphs), and the box is
+  // hit-testable again after the root turns `pointer-events: none`.
+  return (
+    <span ref={anchorRef} data-dsw-enh-hover-anchor="" style={{ display: 'block', pointerEvents: 'auto' }}>
+      {children}
+    </span>
+  )
+}
+
+/**
  * Adapt the shared `HoverCard` primitive's compact "bed" (the portaled card
  * surface) to the current DSH theme module. The primitive's `.card` is NOT
  * a component this plugin registers — it hard-codes

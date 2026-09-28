@@ -96,7 +96,7 @@ import {
   type InputDialogState,
   type MoveToDialogState,
 } from './Dialogs.tsx'
-import { SessionHoverContent, WorkspaceHoverContent, workspaceStatusLabel, HoverCardSurfaceSync } from './HoverCards.tsx'
+import { SessionHoverContent, WorkspaceHoverContent, workspaceStatusLabel, HoverCardSurfaceSync, HoverRowAnchorSync } from './HoverCards.tsx'
 import {
   deriveFlat,
   deriveFolderForest,
@@ -2255,7 +2255,7 @@ function LeafRow(props: {
   const rowElement = hasAccount
     ? (
       <HoverCard
-        anchor={ownRow}
+        anchor={<HoverRowAnchorSync>{ownRow}</HoverRowAnchorSync>}
         content={(
           // The primitive's compact bed is fixed dark in both themes; the
           // sync flips it to the alias surface token (HoverCards.tsx).
@@ -2541,7 +2541,7 @@ function SessionRow(props: {
   // the same hover.
   return (
     <HoverCard
-      anchor={ownRow}
+      anchor={<HoverRowAnchorSync>{ownRow}</HoverRowAnchorSync>}
       content={(
         <HoverCardSurfaceSync>
           <SessionHoverContent node={session} now={props.now} t={seat.t} />
@@ -3114,7 +3114,9 @@ function sessionRowModel(props: {
     // chrome; the label is the row's only consumer-rendered surface).
     label: (
       <HoverCard
-        anchor={session.blank ? seat.t('newSession') : session.title}
+        anchor={(
+          <HoverRowAnchorSync>{session.blank ? seat.t('newSession') : session.title}</HoverRowAnchorSync>
+        )}
         content={(
           <HoverCardSurfaceSync>
             <SessionHoverContent node={session} now={props.now} t={seat.t} />
@@ -3369,7 +3371,7 @@ function leafRowModel(props: {
     label: hasAccount
       ? (
         <HoverCard
-          anchor={leaf.label}
+          anchor={<HoverRowAnchorSync>{leaf.label}</HoverRowAnchorSync>}
           content={(
             <HoverCardSurfaceSync>
               <WorkspaceHoverContent
