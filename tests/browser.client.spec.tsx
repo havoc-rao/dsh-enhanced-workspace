@@ -992,6 +992,86 @@ describe('enhanced workspace browser', () => {
     holder.remove()
   })
 
+  it('marks each collapsed folder with its descendant workspaces\' aggregate top status dot, level by level', async () => {
+    // 树：根 → 产品组 → [绘画收集(w-art, s1 正在运行), 子组 → 文档(w-docs,
+    // s7 完成未读)]。收起的产品组行必须带「子树聚合点」（ongoing 优先于
+    // done），子组行带自己的子树点——father dir 链逐层同步，与工作区行的
+    // 折叠标记同一套 either/or 语义。
+    sessionsState = {
+      ...SESSIONS_STATE,
+      byId: {
+        ...SESSIONS_BY_ID,
+        s1: { ...SESSIONS_BY_ID['s1']!, running: true },
+      },
+    } as typeof SESSIONS_STATE
+    statusState = new Map<SessionId, SessionStatus>([
+      ['s7' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+    ])
+    await renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '产品组') })
+    const team = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-art'), team) })
+    act(() => { instance.actions.createFolder(team, '子组') })
+    const sub = folderIdsOf(instance.getSnapshot().folders[team])[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-docs'), sub) })
+
+    // 收起的产品组：唯一可见的父级行携带子树聚合点（working 优先 done）。
+    let teamRow = treeRowByText('产品组')!
+    expect(teamRow.getAttribute('aria-expanded')).toBe('false')
+    let busy = teamRow.querySelector('[class*="rowBusy"]')
+    expect(busy, 'the collapsed father dir carries the aggregate working dot').not.toBeNull()
+    expect(busy!.querySelector('[data-state="ongoing"]'), 'working outranks the done count below').not.toBeNull()
+    expect(busy!.getAttribute('title')).toBe('1 个会话正在工作')
+    expect(busy!.textContent, 'screen-reader copy matches the title').toContain('1 个会话正在工作')
+
+    // 展开产品组：父行点退场，暴露出的子行各自带点（工作区行 + 孙目录行）。
+    click(teamRow)
+    teamRow = treeRowByText('产品组')!
+    expect(teamRow.getAttribute('aria-expanded')).toBe('true')
+    expect(teamRow.querySelector('[class*="rowBusy"]'), 'an expanded father dir carries no aggregate dot').toBeNull()
+    const artRow = treeRowByText('绘画收集')!
+    expect(artRow.getAttribute('aria-expanded')).toBe('false')
+    expect(artRow.querySelector('[class*="rowBusy"]'), 'the collapsed workspace row keeps its own dot').not.toBeNull()
+    const subRow = treeRowByText('子组')!
+    expect(subRow.getAttribute('aria-expanded')).toBe('false')
+    const subBusy = subRow.querySelector('[class*="rowBusy"]')
+    expect(subBusy, 'the collapsed subfolder carries its own subtree dot').not.toBeNull()
+    expect(subBusy!.querySelector('[data-state="done"]'), 'the subfolder\'s only count is the completed session').not.toBeNull()
+    expect(subBusy!.getAttribute('title')).toBe('1 个会话已完成')
+
+    // 收起产品组后 hover：either/or——点让位给操作按钮，离开后回来。
+    click(teamRow)
+    teamRow = treeRowByText('产品组')!
+    expect(teamRow.querySelector('[class*="rowBusy"]'), 'recollapsed father dir regains the dot').not.toBeNull()
+    hover(teamRow)
+    teamRow = treeRowByText('产品组')!
+    expect(teamRow.querySelector('[class*="rowBusy"]'), 'hover swaps the aggregate dot out for the action buttons').toBeNull()
+    act(() => {
+      teamRow.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+    })
+    expect(treeRowByText('产品组')!.querySelector('[class*="rowBusy"]'), 'leaving the row restores the aggregate dot').not.toBeNull()
+
+    // 状态翻转：s1 停止且完成未读——整个子树全绿，父行聚合为 done 计数。
+    act(() => {
+      sessionsState = {
+        ...sessionsState,
+        byId: {
+          ...sessionsState.byId,
+          s1: { ...SESSIONS_BY_ID['s1']!, running: false },
+        },
+      } as typeof SESSIONS_STATE
+      statusState = new Map<SessionId, SessionStatus>([
+        ['s7' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+        ['s1' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+      ])
+      root.render(<EnhancedWorkspaceBrowser {...latestProps} />)
+    })
+    const doneBusy = treeRowByText('产品组')!.querySelector('[class*="rowBusy"]')
+    expect(doneBusy, 'an all-completed subtree keeps the done dot').not.toBeNull()
+    expect(doneBusy!.querySelector('[data-state="done"]'), 'the green done dot takes over').not.toBeNull()
+    expect(doneBusy!.getAttribute('title'), 'the aggregate counts every descendant session').toBe('2 个会话已完成')
+  })
+
   it('syncs the HoverCard primitive bed to the alias surface token (light theme gets a light card)', async () => {
     // Stand-in for the primitive's portaled `.card`: the bed declares a
     // FIXED dark surface that the sync's inline overrides must win over —

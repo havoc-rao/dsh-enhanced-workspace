@@ -1793,12 +1793,30 @@ function FolderRow(props: {
 }): ReactNode {
   const { node, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
+  const [rowHovered, setRowHovered] = useState(false)
   const dropZone = props.drag.dropZoneOf('folder', node.folderId)
   // Dir-level activity sync: a folder holding the current session — expanded
   // or not — lights its glyph and carries the current-session wash. A
   // collapsed trail still marks every ancestor dir on the path, so the open
   // session stays locatable level by level.
   const active = dirActive(node.containsCurrent)
+  // The collapsed-dir status marker (folder-level): the subtree's top-
+  // priority session-status dot — pending interaction (amber) > working
+  // (the pixel-chase loading dot) > completed (green) — summed across every
+  // descendant workspace's visible sessions, mirroring the workspace rows'
+  // own collapsed markers so each level of the father-dir chain carries the
+  // work below it. Same either/or as the leaves: at rest the dot sits in
+  // place of the action buttons; on row hover it gives way entirely.
+  const busyState: StateDotState | undefined = (node.status.warning ?? 0) > 0
+    ? 'warning'
+    : (node.status.ongoing ?? 0) > 0
+      ? 'ongoing'
+      : (node.status.done ?? 0) > 0
+        ? 'done'
+        : undefined
+  const busyLabel = !node.expanded && busyState !== undefined && !rowHovered
+    ? workspaceStatusLabel(busyState, node.status[busyState] ?? 1, callbacks.t)
+    : undefined
   // While a guide band is hovered, the ancestor's whole line lights up:
   // every row whose stroke at the hovered column belongs to the same
   // ancestor renders that stroke highlighted — the hovered row included
@@ -1871,6 +1889,8 @@ function FolderRow(props: {
         onDragLeave={folderDragLeave}
         onDrop={folderDrop}
         onDragEnd={() => props.drag.onDragEnd()}
+        onMouseEnter={() => setRowHovered(true)}
+        onMouseLeave={() => setRowHovered(false)}
         onClick={() => callbacks.onToggleFolder(node.folderId)}
       >
         {guideHitBands(node.folderId, guideColumns, props.guide.onHover)}
@@ -1915,6 +1935,16 @@ function FolderRow(props: {
             </button>
           </Tooltip>
         </span>
+        {/* The collapsed-dir aggregate status marker: the subtree's top
+            priority dot — amber waiting / loading working / green completed —
+            at rest; on row hover it yields the slot to the action buttons
+            (either/or, never both — the workspace leaves' own marker). */}
+        {busyLabel !== undefined && busyState !== undefined && (
+          <span className={css.rowBusy} title={busyLabel}>
+            <StateDot state={busyState} />
+            <span className={css.visuallyHidden}>{busyLabel}</span>
+          </span>
+        )}
       </div>
     )
   return (
@@ -3564,6 +3594,22 @@ function folderRowModel(props: {
   const menuKey = node.folderId
   const dropZone = props.drag.dropZoneOf('folder', node.folderId)
   const active = dirActive(node.containsCurrent)
+  // The collapsed-dir aggregate status marker: the subtree's top-priority
+  // status dot (amber waiting / loading working / green completed), summed
+  // across every descendant workspace's visible sessions — the workspace
+  // leaves' own markers rerun at each father-dir level, seated in the
+  // restingIndicator slot (the framework CSS hides it on hover while the
+  // actions reveal — the v1 posture).
+  const busyState: StateDotState | undefined = (node.status.warning ?? 0) > 0
+    ? 'warning'
+    : (node.status.ongoing ?? 0) > 0
+      ? 'ongoing'
+      : (node.status.done ?? 0) > 0
+        ? 'done'
+        : undefined
+  const busyLabel = !node.expanded && busyState !== undefined
+    ? workspaceStatusLabel(busyState, node.status[busyState] ?? 1, callbacks.t)
+    : undefined
   const guideColumns = folderGuideColumns(props.ancestors, callbacks.onToggleFolder)
   const folderMenuEntries = [
     { id: 'new-subfolder', label: callbacks.t('newSubfolder'), icon: <IconPlusOutlineRegular /> },
@@ -3663,6 +3709,16 @@ function folderRowModel(props: {
     indentPx: rowIndent(props.ancestors.length),
     active,
     ...(dropZone === undefined ? {} : { dropState: dropZone }),
+    ...(busyLabel === undefined || busyState === undefined
+      ? {}
+      : {
+        restingIndicator: (
+          <span className={css.rowBusy} title={busyLabel}>
+            <StateDot state={busyState} />
+            <span className={css.visuallyHidden}>{busyLabel}</span>
+          </span>
+        ),
+      }),
     actions: (
       <>
         {props.fileTreeUi.renderRowMenu({

@@ -46,6 +46,7 @@ import {
   folderOfWorkspace,
   moveFolderIn,
   moveWorkspaceIn,
+  mergeWorkspaceStatus,
   observeSessionActivity,
   orderDeltas,
   pendingInteractionOf,
@@ -800,6 +801,20 @@ describe('deriveRecentWorkspaces', () => {
   })
 })
 
+describe('mergeWorkspaceStatus', () => {
+  it('sums two count maps key-wise, keeping absent keys as zeros', () => {
+    expect(mergeWorkspaceStatus({}, {})).toEqual({})
+    expect(mergeWorkspaceStatus({ ongoing: 1 }, {})).toEqual({ ongoing: 1 })
+    expect(mergeWorkspaceStatus({}, { done: 2 })).toEqual({ done: 2 })
+    expect(mergeWorkspaceStatus({ warning: 1, ongoing: 2 }, { ongoing: 3, done: 4 }))
+      .toEqual({ warning: 1, ongoing: 5, done: 4 })
+    // Never mutates the inputs.
+    const base = { ongoing: 1 }
+    mergeWorkspaceStatus(base, { ongoing: 3 })
+    expect(base).toEqual({ ongoing: 1 })
+  })
+})
+
 describe('deriveFolderForest', () => {
   const workspace = (id: string, sessionIds: readonly string[], title = id): WorkspaceView => ({
     workspaceId: W(id),
@@ -925,6 +940,57 @@ describe('deriveFolderForest', () => {
     const w0 = topWorkspacesOf(result)[0]
     expect(w0?.sessionCount).toBe(1)
     expect(w0?.sessions.map(session => session.id)).toEqual([S('ok')])
+  })
+
+  it('aggregates every descendant workspace\'s status counts into each folder level (the father-dir chain)', () => {
+    // w0's s1 runs (ongoing); w1's s2 carries the unread completion reminder
+    // (done). The folder rows must carry the SUMS subtree-wide — level by
+    // level, exactly like the workspace rows do for their hidden sessions —
+    // so a COLLAPSED folder still marks the way to the work below it.
+    // Tree: root → a → (w0, b → w1).
+    let tree = rootTree(['w0', 'w1'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    tree = moveWorkspaceIn(tree, W('w0'), F('a'), undefined, NOW)
+    tree = createFolderIn(tree, F('a'), 'b', F('b'), NOW).folders
+    tree = moveWorkspaceIn(tree, W('w1'), F('b'), undefined, NOW)
+    const statuses = sessionStatusTableOf(new Map<SessionId, SessionStatus>([
+      [S('s2'), { running: false, pendingInteraction: undefined, completionUnread: true }],
+    ]))
+    const sessions = sessionState([
+      summary('s1', 100, { running: true }),
+      summary('s2'),
+    ])
+    const result = deriveFolderForest(
+      sessions,
+      [workspace('w0', ['s1']), workspace('w1', ['s2'])],
+      tree,
+      [],
+      { folderExpansion: {}, groupExpansion: {} },
+      statuses,
+    )
+    const a = topFoldersOf(result)[0]!
+    // The leaves carry their own counts (the workspace-row markers).
+    const w0 = a.rows.find(row => row.kind === 'workspace')!.leaf
+    expect(w0.status).toEqual({ ongoing: 1 })
+    const b = a.rows.find(row => row.kind === 'folder')!.node
+    expect(b.rows.find(row => row.kind === 'workspace')!.leaf.status).toEqual({ done: 1 })
+    // Each ancestor level sums its whole subtree: b = w1 only; a = w0 + b.
+    expect(b.status).toEqual({ done: 1 })
+    expect(a.status).toEqual({ ongoing: 1, done: 1 })
+  })
+
+  it('leaves a fully idle subtree with no folder-level status counts', () => {
+    let tree = rootTree(['w0'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
+    tree = moveWorkspaceIn(tree, W('w0'), F('a'), undefined, NOW)
+    const result = deriveFolderForest(
+      sessionState([summary('s0')]),
+      [workspace('w0', ['s0'])],
+      tree,
+      [],
+      { folderExpansion: {}, groupExpansion: {} },
+    )
+    expect(topFoldersOf(result)[0]?.status).toEqual({})
   })
 })
 

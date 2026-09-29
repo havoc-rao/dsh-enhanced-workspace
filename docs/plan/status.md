@@ -286,6 +286,33 @@ purity gate、挂载冒烟、jsdom 组件 spec）。
   （±1px，内置 parity）。`pnpm build` 双通道 + 纯度门通过；mount lane
   4/4。README Known Limitations 同步锚点说明。
 
+### 目录行子工作区状态聚合标记（2026-09-29）
+
+- **问题**：用户反馈「子 workspace 的工作状态没有同步到 father dir」。
+  排查结论：**不是回归**——查遍全部历史（含分支/stash/旧备份），目录行的
+  状态标记从未实现过：`FolderNode` 历来只有 `containsCurrent`（当前会话
+  蓝色图标点亮，两条渲染路径完好且有 spec 锁定）与 `sessionCount`；
+  折叠状态点（等待/工作中/完成）只挂在**工作区行**上（`b5d31aa` /
+  `fc0f3cc` 的 collapsed-dir marker），目录行收起时其下任何工作状态都
+  不可见。
+- **实装（设计 = 目录行复刻工作区行的折叠标记，逐层聚合）**：
+  - `model.ts`：新增 `mergeWorkspaceStatus`（逐键求和、不改输入）；
+    `FolderNode` 增 `status: WorkspaceSessionStatus`；`buildFolder` 递归
+    聚合**整棵子树**（子目录节点 + 工作区叶子的计数逐层上卷），collapsed
+    目录在每一层 father dir 链都携带下面所有工作状态——与
+    `containsCurrent` 链同构；
+  - `Browser.tsx` 两条路径同款接线：回退 `FolderRow`（actions 槽位
+    either/or：静止显示点、行 hover 让位给操作按钮，`!node.expanded`
+    才显示）与服务路径 `folderRowModel`（`restingIndicator` 槽位，框架
+    CSS 处理 hover 隐藏）；tooltip/sr-only 复用 `workspaceStatusLabel`
+    （「n 个会话正在工作/等待处理/已完成」）；
+  - `filterForestByQuery` 的 `...node` 展开自动透传 status，零改动。
+- **验证**：`pnpm typecheck` 0 错误；`pnpm test` **338/338**（新增 5 例：
+  `mergeWorkspaceStatus` 单测、`deriveFolderForest` 子树逐层聚合 +
+  空闲子树无计数、回退路径目录行标记全流程（聚合点/hover 二选一/状态
+  翻转全绿计数）、服务路径 restingIndicator 聚合点）；`pnpm build`
+  双通道 + 纯度门通过。README 状态复刻条目同步。
+
 ## 关键约束备忘
 
 - 不修改 DSH 本体（fork 零写入）；client bundle 不 value-import

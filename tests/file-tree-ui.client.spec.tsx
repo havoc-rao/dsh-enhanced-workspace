@@ -864,6 +864,50 @@ describe('fileTreeUi service path (LeafRow)', () => {
     expect(expandedRow.querySelector('[class*="restingIndicator"]'), 'expanded rows carry no dot').toBeNull()
   })
 
+  it('seats the collapsed FOLDER aggregate marker in the restingIndicator slot, summed across every descendant workspace', async () => {
+    // Tree: root → 产品组 → [绘画收集 (s1 running), 子组 → 文档 (s7 done)].
+    // The collapsed 产品组 row rides the aggregate top-priority dot (ongoing
+    // outranks done) in the restingIndicator slot; the nested 子组 row
+    // carries its own subtree dot — the father-dir chain on the service path.
+    sessionsState = {
+      ...SESSIONS_STATE,
+      byId: {
+        ...SESSIONS_BY_ID,
+        s1: { ...SESSIONS_BY_ID['s1']!, running: true },
+      },
+    } as typeof SESSIONS_STATE
+    statusState = new Map<SessionId, SessionStatus>([
+      ['s7' as SessionId, { running: false, pendingInteraction: undefined, completionUnread: true }],
+    ])
+    await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '产品组') })
+    const team = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-art'), team) })
+    act(() => { instance.actions.createFolder(team, '子组') })
+    const sub = folderIdsOf(instance.getSnapshot().folders[team])[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-docs'), sub) })
+    await rerender()
+
+    const teamRow = folderRowByText('产品组')!
+    expect(teamRow.getAttribute('aria-expanded')).toBe('false')
+    const resting = teamRow.querySelector<HTMLElement>('[class*="restingIndicator"]')
+    expect(resting, 'the aggregate busy marker rides the restingIndicator slot').not.toBeNull()
+    expect(resting!.querySelector('[class*="rowBusy"]'), 'the built-in marker markup rides inside').not.toBeNull()
+    expect(resting!.querySelector('[data-state="ongoing"]'), 'working outranks the done count below').not.toBeNull()
+    expect(resting!.querySelector('[class*="visuallyHidden"]')?.textContent, 'the sr-only caption spells the working count').toContain('1 个会话正在工作')
+
+    // Expanded → no aggregate marker; the nested collapsed subfolder carries
+    // its own subtree dot.
+    click(teamRow)
+    const expandedTeamRow = folderRowByText('产品组')!
+    expect(expandedTeamRow.querySelector('[class*="restingIndicator"]'), 'an expanded folder carries no aggregate dot').toBeNull()
+    const subRow = folderRowByText('子组')!
+    const subResting = subRow.querySelector<HTMLElement>('[class*="restingIndicator"]')
+    expect(subResting, 'the collapsed subfolder carries its own subtree dot').not.toBeNull()
+    expect(subResting!.querySelector('[data-state="done"]'), 'the subfolder\'s only count is the completed session').not.toBeNull()
+  })
+
   it('keeps the git cross-tree pill as the trailing slot and the plus button as its own action', async () => {
     const props = await renderBrowser(PROBE)
     fileTreeUiSeat = makeFileTreeUiService()

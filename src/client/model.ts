@@ -1185,6 +1185,13 @@ export interface FolderNode {
   sessionCount: number
   /** The subtree contains the selected session. */
   containsCurrent: boolean
+  /** Aggregated session-status counts of the WHOLE subtree — every descendant
+   *  workspace leaf's visible sessions — the folder row's collapsed-dir
+   *  marker data ({@link mergeWorkspaceStatus}). Computed from the leaves, so
+   *  a COLLAPSED folder (whose rows list is still populated but hidden)
+   *  carries the marker at every level of the father-dir chain, exactly like
+   *  the workspace rows do for their hidden sessions. */
+  status: WorkspaceSessionStatus
 }
 
 /** The derived forest: the root's interleaved child rows plus the trailing ungrouped bucket. */
@@ -1295,6 +1302,22 @@ function sessionNode(
  * each row-dot state. Absent keys read 0.
  */
 export type WorkspaceSessionStatus = Partial<Record<SessionStatusDot, number>>
+
+/** Sum two status-count maps key-wise (absent keys read 0) — the folder-level
+ *  aggregation: a folder's collapsed-dir marker adds up every descendant
+ *  workspace leaf's counts, so each ancestor level of the father-dir chain
+ *  carries the work below it. */
+export function mergeWorkspaceStatus(
+  base: WorkspaceSessionStatus,
+  add: WorkspaceSessionStatus,
+): WorkspaceSessionStatus {
+  const merged: WorkspaceSessionStatus = { ...base }
+  for (const entry of Object.entries(add) as Array<[SessionStatusDot, number]>) {
+    const [state, count] = entry
+    merged[state] = (merged[state] ?? 0) + count
+  }
+  return merged
+}
 
 /**
  * Aggregate a workspace group's visible sessions into the collapsed-dir
@@ -1480,6 +1503,7 @@ export function deriveFolderForest(
     const rows: FolderRowNode[] = []
     let sessionCount = 0
     let containsCurrent = false
+    let status: WorkspaceSessionStatus = {}
     if (!visited.has(record.folderId)) {
       const nextVisited = new Set(visited)
       nextVisited.add(record.folderId)
@@ -1491,6 +1515,7 @@ export function deriveFolderForest(
           rows.push({ kind: 'folder', node })
           sessionCount += node.sessionCount
           containsCurrent ||= node.containsCurrent
+          status = mergeWorkspaceStatus(status, node.status)
         } else {
           const workspace = workspaceById.get(child.id)
           if (workspace === undefined) continue
@@ -1498,6 +1523,7 @@ export function deriveFolderForest(
           rows.push({ kind: 'workspace', leaf })
           sessionCount += leaf.sessionCount
           containsCurrent ||= leaf.containsCurrent
+          status = mergeWorkspaceStatus(status, leaf.status)
         }
       }
     }
@@ -1509,6 +1535,7 @@ export function deriveFolderForest(
       rows,
       sessionCount,
       containsCurrent,
+      status,
     }
   }
 
