@@ -85,6 +85,14 @@ pnpm test:mount          # 挂载冒烟：真实 DSH 无头渲染（需 PATH 上
   `docs/plan/2026-09-04-plugin-mode-design.md` §7。
 - 目录树为插件本地权威，跨标签页并发编辑 last-writer-wins；Host 平铺顺序
   reconcile（`ctx.workspaces.insertBefore`）失败仅 console.warn。
+- 多选（⌘/Ctrl+点击）+ 整组拖拽：选中态是瞬态视图状态（不持久化），
+  目录收起时自动修剪不可见行；组解析在 `drag.ts` 纯函数层
+  （`resolveGroupDrop` 逐源解析 + 自锚/环/深度预跳过，组内违规成员单独
+  跳过不整组作废）。内置行（FolderRow/LeafRow 自绘选中态）与 fileTreeUi
+  组合 profile 的框架行（走 provider 一等契约 `selected` +
+  `onSelectToggle`，⌘/Ctrl+点击由框架路由、选中 wash/aria-selected 由
+  框架渲染；契约自 dsh-file-tree-ui `9cace1e` 起，两者需同版本装载）
+  双双支持；repo 组头行与未注册工作树分组行仍是单行拖拽。
 - 每个目录层只有一个统一子条目账户 `FolderRecord.children: FolderChild[]`
   （`{kind:'folder'|'workspace', id}`）——目录与工作区同层自由穿插，不再有
   「子目录在前」的固定次序。信封仍是 legacy 双账户形（`workspaceIds` +

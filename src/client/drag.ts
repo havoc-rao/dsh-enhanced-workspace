@@ -24,14 +24,19 @@
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import {
   FolderId,
+  MAX_FOLDER_DEPTH,
   ROOT_FOLDER_ID,
+  depthOf,
   folderChild,
   folderOfWorkspace,
   isChildOf,
+  isDescendantOf,
   workspaceChild,
   type FolderChild,
   type FolderId as FolderIdBrand,
+  type FolderRowNode,
   type FolderTree,
+  type WorkspaceLeaf,
 } from './model.ts'
 
 /** What is being dragged. */
@@ -41,6 +46,59 @@ export type DragKind = 'workspace' | 'folder'
 export interface DragSource {
   kind: DragKind
   id: string
+}
+
+/**
+ * Selection key of one tree row: `kind:id` (the same spelled identity the
+ * drag group uses). Row kinds without an id (the ungrouped bucket) have no
+ * key and can never be selected.
+ */
+export function selectionKeyOf(kind: DragKind, id: string): string {
+  return `${kind}:${id}`
+}
+
+/**
+ * The rows a group drag carries, in display order: recency rows first (in
+ * their recency order), then the folder forest depth-first (expanded folders
+ * only — their hidden children are never visible, and the selection is
+ * pruned to the visible rows on every fold change), mixing folders and
+ * workspaces as they interleave on screen. Duplicate ids (a recency row
+ * whose workspace also appears in the tree) collapse to the first
+ * occurrence. Only rows the caller selected participate.
+ * @param recents - the recency module's rows, top first.
+ * @param topRows - the "all" section's top-level rows (folder forest +
+ *   root-level leaves) in display order.
+ * @param selectedKeys - the current selection's `selectionKeyOf` set.
+ * @returns the ordered drag group (empty when nothing selected).
+ */
+export function orderedDragSources(
+  recents: readonly WorkspaceLeaf[],
+  topRows: readonly FolderRowNode[],
+  selectedKeys: ReadonlySet<string>,
+): readonly DragSource[] {
+  const sources: DragSource[] = []
+  const seen = new Set<string>()
+  const push = (kind: DragKind, id: string): void => {
+    const key = selectionKeyOf(kind, id)
+    if (!selectedKeys.has(key) || seen.has(key)) return
+    seen.add(key)
+    sources.push({ kind, id })
+  }
+  for (const recent of recents) {
+    if (recent.workspaceId !== undefined) push('workspace', recent.workspaceId)
+  }
+  const walk = (rows: readonly FolderRowNode[]): void => {
+    for (const row of rows) {
+      if (row.kind === 'folder') {
+        push('folder', row.node.folderId)
+        if (row.node.expanded) walk(row.node.rows)
+      } else if (row.leaf.workspaceId !== undefined) {
+        push('workspace', row.leaf.workspaceId)
+      }
+    }
+  }
+  walk(topRows)
+  return sources
 }
 
 /** Drop position relative to the target row. */
@@ -193,4 +251,70 @@ export function resolveFolderDrop(
   // self-anchor; the model treats "before itself" as a no-op.
   if (next !== undefined) return { kind: 'move-folder', parentFolderId: parentId, beforeChild: next }
   return { kind: 'move-folder', parentFolderId: parentId }
+}
+
+/** One group-drop member: the dragged row plus its resolved outcome. */
+export interface GroupDropItem {
+  source: DragSource
+  resolution: DropResolution
+}
+
+/**
+ * Resolve a GROUP drop (⌘/Ctrl+click multi-select dragged together): every
+ * source resolves independently against the ORIGINAL tree with the same
+ * per-kind rules as a single drag, so the group keeps its display order when
+ * the moves apply sequentially (insert-before anchors compose: each next
+ * source lands behind the previous one at the same anchor; an 'after' anchor
+ * already resolves to its next sibling / append). Group-aware pre-skips turn
+ * the moves a single drag would surrender to the store guards into clean
+ * no-ops:
+ * - a workspace dropped onto its own row is a no-op (single-drag rule);
+ * - a folder source dropped 'on' a folder row that IS the folder itself or
+ *   lies inside its own subtree is a no-op (the cycle guard would reject);
+ * - a folder source dropped 'on' a folder row already at
+ *   {@link MAX_FOLDER_DEPTH} is a no-op (the depth guard would reject).
+ * The remaining per-item guard failures (reorder anchors whose owning folder
+ * sits inside the dragged folder's subtree, depth on reorders) stay with the
+ * store actions — the browser skips those items non-fatally, so one bad
+ * member never cancels the whole group move.
+ * @param folders - the plugin's folder tree (display authority).
+ * @param sources - the dragged rows in display order (see
+ *   {@link orderedDragSources}); one entry = an ordinary single drag.
+ * @param target - the drop-target row + pointer zone, shared by every source.
+ * @returns one item per source, in the same order (no-op resolutions
+ *   included); the browser dispatches each move with the item's source id.
+ */
+export function resolveGroupDrop(
+  folders: FolderTree,
+  sources: readonly DragSource[],
+  target: DropTarget,
+): readonly GroupDropItem[] {
+  return sources.map(source => {
+    const folderId = source.id as FolderIdBrand
+    const resolution = source.kind === 'workspace'
+      ? resolveWorkspaceDrop(folders, source.id as WorkspaceId, target.kind, target.id, target.zone)
+      : resolveGroupFolderDrop(folders, folderId, target)
+    return { source, resolution }
+  })
+}
+
+/** The folder-source half of {@link resolveGroupDrop}: the single-drag
+ *  resolver plus the group-aware pre-skips ('on' a folder that is itself or
+ *  sits inside one's own subtree, or is already at max depth). */
+function resolveGroupFolderDrop(
+  folders: FolderTree,
+  folderId: FolderIdBrand,
+  target: DropTarget,
+): DropResolution {
+  if (target.kind === 'workspace') {
+    return resolveFolderDrop(folders, folderId, 'workspace', target.id, target.zone)
+  }
+  // Folder source onto a folder row.
+  if (target.id === folderId) return { kind: 'noop' }
+  if (target.zone === 'on') {
+    const targetFolderId = FolderId(target.id)
+    if (targetFolderId === folderId || isDescendantOf(folders, targetFolderId, folderId)) return { kind: 'noop' }
+    if (depthOf(folders, targetFolderId) >= MAX_FOLDER_DEPTH) return { kind: 'noop' }
+  }
+  return resolveFolderDrop(folders, folderId, 'folder', target.id, target.zone)
 }

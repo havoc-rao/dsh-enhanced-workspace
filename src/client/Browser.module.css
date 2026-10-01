@@ -272,6 +272,35 @@
   background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4c8dff) 24%, transparent);
 }
 
+/* Multi-selection (⌘/Ctrl+click) tint on workspace and folder rows — the
+   BUILT-IN fallback path only (the fileTreeUi framework rows render their
+   own `.rowSelected` wash from the provider contract's `selected` data
+   state). Painted with the background-color longhand only, so the inline
+   indent-guide gradients (guideBackground) keep composing. Declared after
+   the generic :hover fill, so the tint holds through hover (equal
+   specificity — source order wins); the :hover pair deepens it the way the
+   current-wash does. */
+.folderRow.rowSelected,
+.workspaceRow.rowSelected {
+  border-radius: var(--dsw-row-radius);
+  background-color: color-mix(in srgb, var(--dsw-alias-interactive-bg-active, rgba(128, 128, 128, 0.22)) 55%, transparent);
+}
+
+.folderRow.rowSelected:hover,
+.workspaceRow.rowSelected:hover {
+  background-color: var(--dsw-alias-interactive-bg-active, rgba(128, 128, 128, 0.22));
+}
+
+/* A selected row that is also the current-session row: the wash wins (a
+   selected, active row must still read as the open session's trail), but
+   a 2px indigo accent bar at the row's left edge keeps the selection
+   visible on the active row. */
+.folderRow.rowSelected.folderRowCurrent,
+.workspaceRow.rowSelected.workspaceRowCurrent {
+  background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4c8dff) 14%, transparent);
+  box-shadow: inset 2px 0 0 var(--dsw-alias-state-business-primary, #4c8dff);
+}
+
 /* The clickable indent-guide band: one absolutely-positioned pill per
  * ancestor-folder column on a row (left edge set inline from the same
  * geometry constants as the guide painter), centered on the 1px stroke.

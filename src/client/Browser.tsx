@@ -32,7 +32,7 @@
  * @module dsh-enhanced-workspace/client/Browser
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import {
   HoverCard,
   IconArchiveOutlineRegular,
@@ -80,9 +80,13 @@ import {
 import type { FileTreeRowModel, FileTreeNode, FileTreeUiServiceV2 } from 'dsh-file-tree-ui/client-contract'
 import {
   folderDropZone,
+  orderedDragSources,
+  resolveGroupDrop,
   resolveFolderDrop,
   resolveWorkspaceDrop,
   rowDropZone,
+  selectionKeyOf,
+  type DragKind,
   type DragSource,
   type DropTarget,
   type DropZone,
@@ -1305,6 +1309,9 @@ interface RowCallbacks {
 /** Drag & drop seat shared by every workspace and folder row. */
 interface DragSeat {
   dragSource: DragSource | null
+  /** The whole dragged set when the grab row was part of a multi-selection
+   *  (display-ordered, see `orderedDragSources`); a single entry otherwise. */
+  dragSources: readonly DragSource[]
   appendWorkspaceFolderId: FolderId | null
   onDragStart: (source: DragSource) => void
   onDragOver: (target: DropTarget) => void
@@ -1313,6 +1320,21 @@ interface DragSeat {
   onDrop: (source: DragSource, target: DropTarget) => void
   /** Visual drop zone for a row during an active drag, or undefined. */
   dropZoneOf: (kind: DropTarget['kind'], id: string) => DropZone | undefined
+}
+
+/**
+ * Multi-selection seat shared by every draggable workspace and folder row:
+ * ⌘/Ctrl+click toggles a row's membership (never its expand state), plain
+ * clicks clear the set before their normal toggle. The selection is
+ * ephemeral view state (not persisted): it lives and dies with the browser
+ * mount. The ungrouped bucket row (no workspace id) has no seat entry. */
+interface SelectSeat {
+  /** Whether the row is part of the current multi-selection. */
+  isSelected: (kind: DragKind, id: string) => boolean
+  /** ⌘/Ctrl+click: toggle the row's membership. */
+  toggle: (kind: DragKind, id: string) => void
+  /** Clear the whole selection (plain click on an unselected row). */
+  clear: () => void
 }
 
 /** Session-row verbs (grouped leaf rows and the flat list share this seat). */
@@ -1469,32 +1491,79 @@ function GroupedView(props: {
   // hover card (the same posture as the built-in tree).
   const now = Date.now()
 
+  // ── Multi-selection (⌘/Ctrl+click) + group drag ─────────────────────────
+  // Ephemeral view state: a set of row selection keys (`workspace:<id>` /
+  // `folder:<id>`, see selectionKeyOf), pruned to the VISIBLE rows whenever
+  // the tree folds so a hidden selection can never ride along. Dragging a
+  // selected row carries the whole selection (display-ordered); dragging an
+  // unselected row makes it the selection and drags it alone.
   // Drag & drop seat: source + highlighted target live here; drops resolve
   // against the tree through the pure drag module and dispatch store actions
   // (guards fail non-fatally, see handleRowDrop).
   const [dragSource, setDragSource] = useState<DragSource | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const select: SelectSeat = {
+    isSelected: (kind, id) => selected.has(selectionKeyOf(kind, id)),
+    toggle: (kind, id) => {
+      const key = selectionKeyOf(kind, id)
+      setSelected(prev => {
+        const next = new Set(prev)
+        if (next.has(key)) next.delete(key)
+        else next.add(key)
+        return next
+      })
+    },
+    clear: () => setSelected(new Set()),
+  }
+  // Prune to the currently visible rows: fold changes (folder toggle,
+  // collapse-all, mode switches) re-derive props.recents/topRows with a new
+  // identity, so this effect runs exactly when the visible set may have
+  // shrunk. The walker only ever returns rows the selection (prev) holds.
+  useEffect(() => {
+    setSelected(prev => {
+      if (prev.size === 0) return prev
+      const visible = new Set(
+        orderedDragSources(props.recents, props.topRows, prev).map(source => selectionKeyOf(source.kind, source.id)),
+      )
+      return visible.size === prev.size ? prev : visible
+    })
+  }, [props.recents, props.topRows])
+  const [dragSources, setDragSources] = useState<readonly DragSource[]>([])
+  const clearDrag = (): void => {
+    setDragSource(null)
+    setDropTarget(null)
+    setDragSources([])
+  }
   const handleRowDrop = (source: DragSource, target: DropTarget): void => {
+    // Store the group at grab time; drop resolves every member against the
+    // same target. Per-item guard failures (cycle / depth / root) skip only
+    // the offending member — one bad row never cancels the group.
+    const sources = dragSources.length > 0 ? dragSources : [source]
     try {
-      const resolution = source.kind === 'folder'
-        ? resolveFolderDrop(state.folders, source.id as FolderId, target.kind, target.id, target.zone)
-        : resolveWorkspaceDrop(state.folders, source.id as WorkspaceId, target.kind, target.id, target.zone)
-      if (resolution.kind === 'move-workspace') {
-        actions.moveWorkspaceIn(source.id as WorkspaceId, resolution.folderId, resolution.beforeChild)
-      } else if (resolution.kind === 'move-folder') {
-        actions.moveFolder(source.id as FolderId, resolution.beforeChild, resolution.parentFolderId)
+      for (const item of resolveGroupDrop(state.folders, sources, target)) {
+        const { source: itemSource, resolution } = item
+        try {
+          if (resolution.kind === 'move-workspace') {
+            actions.moveWorkspaceIn(itemSource.id as WorkspaceId, resolution.folderId, resolution.beforeChild)
+          } else if (resolution.kind === 'move-folder') {
+            actions.moveFolder(itemSource.id as FolderId, resolution.beforeChild, resolution.parentFolderId)
+          }
+        } catch (error) {
+          console.warn('dsh-enhanced-workspace: drop item rejected', item, error)
+        }
       }
     } catch (error) {
-      // Tree guards (cycle / depth / root) and corrupt trees fail non-fatally;
-      // the drag simply cancels and the tree stays the display authority.
-      console.warn('dsh-enhanced-workspace: drop rejected', source, target, error)
+      // The group resolution itself failed (corrupt tree): cancel the drag,
+      // the tree stays the display authority.
+      console.warn('dsh-enhanced-workspace: drop rejected', sources, target, error)
     } finally {
-      setDragSource(null)
-      setDropTarget(null)
+      clearDrag()
     }
   }
   const drag: DragSeat = {
     dragSource,
+    dragSources,
     // A workspace dropped on a folder row's MIDDLE band moves INTO that
     // folder (appended): preview the append destination at the folder's row
     // end. Edge zones ('before'/'after') interleave the parent level instead
@@ -1502,7 +1571,18 @@ function GroupedView(props: {
     appendWorkspaceFolderId: dragSource?.kind === 'workspace' && dropTarget?.kind === 'folder' && dropTarget.zone === 'on'
       ? FolderId(dropTarget.id)
       : null,
-    onDragStart: source => setDragSource(source),
+    onDragStart: source => {
+      const key = selectionKeyOf(source.kind, source.id)
+      if (!selected.has(key)) {
+        // Grabbing an unselected row: it takes the selection and drags alone
+        // (explorer convention — the old selection does not ride along).
+        setSelected(new Set([key]))
+        setDragSources([source])
+      } else {
+        setDragSources(orderedDragSources(props.recents, props.topRows, selected))
+      }
+      setDragSource(source)
+    },
     onDragOver: target => setDropTarget(current =>
       current !== null && current.kind === target.kind && current.id === target.id && current.zone === target.zone
         ? current
@@ -1510,8 +1590,7 @@ function GroupedView(props: {
     onDragLeave: (kind, id) => setDropTarget(current =>
       current !== null && current.kind === kind && current.id === id ? null : current),
     onDragEnd: () => {
-      setDragSource(null)
-      setDropTarget(null)
+      clearDrag()
     },
     onDrop: handleRowDrop,
     dropZoneOf: (kind, id) => {
@@ -1541,8 +1620,7 @@ function GroupedView(props: {
       onDrop={event => {
         if (dragSource === null) return
         event.preventDefault()
-        setDragSource(null)
-        setDropTarget(null)
+        clearDrag()
         stashActiveReference(null)
       }}
     >
@@ -1582,6 +1660,7 @@ function GroupedView(props: {
                 sessionsOverflow={props.sessionsOverflow}
                 onToggleOverflow={props.onToggleOverflow}
                 drag={drag}
+                select={select}
                 guide={guide}
                 now={now}
                 git={props.git.probe}
@@ -1637,6 +1716,7 @@ function GroupedView(props: {
                     sessionsOverflow={props.sessionsOverflow}
                     onToggleOverflow={props.onToggleOverflow}
                     drag={drag}
+                    select={select}
                     guide={guide}
                     now={now}
                     sessionsForGit={sessionCwdsByWorkspace}
@@ -1658,6 +1738,7 @@ function GroupedView(props: {
                         sessionsOverflow={props.sessionsOverflow}
                         onToggleOverflow={props.onToggleOverflow}
                         drag={drag}
+                        select={select}
                         ancestors={[]}
                         guide={guide}
                         now={now}
@@ -1677,6 +1758,7 @@ function GroupedView(props: {
                         sessionsOverflow={props.sessionsOverflow}
                         onToggleOverflow={props.onToggleOverflow}
                         drag={drag}
+                        select={select}
                         guide={guide}
                         now={now}
                         git={props.git.probe}
@@ -1699,6 +1781,7 @@ function GroupedView(props: {
                       sessionsOverflow={props.sessionsOverflow}
                       onToggleOverflow={props.onToggleOverflow}
                       drag={drag}
+                      select={select}
                       guide={guide}
                       now={now}
                       git={null}
@@ -1736,6 +1819,7 @@ function GroupedView(props: {
             callbacks={callbacks}
             sessionSeat={sessionSeat}
             drag={drag}
+            select={select}
             sessionsForGit={sessionCwdsByWorkspace}
             expandedKeys={expandedKeys}
             now={now}
@@ -1776,6 +1860,8 @@ function FolderRow(props: {
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
+  /** Multi-selection seat (⌘/Ctrl+click toggle; plain click clears). */
+  select: SelectSeat
   /** Root-side-first folder chain above this row; column k of the indent
    *  guides belongs to `ancestors[k]`. Empty for top-level folders. */
   ancestors: readonly FolderId[]
@@ -1794,6 +1880,7 @@ function FolderRow(props: {
   const { node, callbacks } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [rowHovered, setRowHovered] = useState(false)
+  const selected = props.select.isSelected('folder', node.folderId)
   const dropZone = props.drag.dropZoneOf('folder', node.folderId)
   // Dir-level activity sync: a folder holding the current session — expanded
   // or not — lights its glyph and carries the current-session wash. A
@@ -1874,11 +1961,23 @@ function FolderRow(props: {
       zone: folderDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
     })
   }
+  /** The folder row's click: ⌘/Ctrl+click toggles multi-selection only;
+   *  a plain click clears the selection (unless this row is part of it)
+   *  and folds/unfolds the folder as before. */
+  const folderRowClick = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    if (event.metaKey || event.ctrlKey) {
+      props.select.toggle('folder', node.folderId)
+      return
+    }
+    if (!selected) props.select.clear()
+    callbacks.onToggleFolder(node.folderId)
+  }
   const folderRow = (
       <div
-        className={`${css.folderRow}${active ? ` ${css.folderRowCurrent}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
+        className={`${css.folderRow}${active ? ` ${css.folderRowCurrent}` : ''}${selected ? ` ${css.rowSelected}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
         role="treeitem"
         aria-expanded={node.expanded}
+        aria-selected={selected}
         style={{
           paddingLeft: `${rowIndent(props.ancestors.length)}px`,
           ...guideBackground(props.ancestors.length, node.expanded, highlightCol),
@@ -1891,7 +1990,7 @@ function FolderRow(props: {
         onDragEnd={() => props.drag.onDragEnd()}
         onMouseEnter={() => setRowHovered(true)}
         onMouseLeave={() => setRowHovered(false)}
-        onClick={() => callbacks.onToggleFolder(node.folderId)}
+        onClick={folderRowClick}
       >
         {guideHitBands(node.folderId, guideColumns, props.guide.onHover)}
         <span className={css.chevron}>
@@ -1964,6 +2063,7 @@ function FolderRow(props: {
                   sessionsOverflow={props.sessionsOverflow}
                   onToggleOverflow={props.onToggleOverflow}
                   drag={props.drag}
+                  select={props.select}
                   ancestors={[...props.ancestors, node.folderId]}
                   guide={props.guide}
                   now={props.now}
@@ -1979,6 +2079,7 @@ function FolderRow(props: {
                   sessionsOverflow={props.sessionsOverflow}
                   onToggleOverflow={props.onToggleOverflow}
                   drag={props.drag}
+                  select={props.select}
                   guide={props.guide}
                   now={props.now}
                   {...(props.git === undefined || props.git === null ? {} : { git: props.git })}
@@ -2011,6 +2112,10 @@ function LeafRow(props: {
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
+  /** Multi-selection seat (⌘/Ctrl+click toggle; plain click clears). Rows
+   *  without a workspace account (the ungrouped bucket) are never
+   *  selectable and ignore the toggle. */
+  select: SelectSeat
   guide: GuideSeat
   /** Current epoch ms, injected from the tree render for the session rows'
    *  hover-card relative times (one stamp per render pass). */
@@ -2032,6 +2137,7 @@ function LeafRow(props: {
   // (loading dot, at rest) and the action buttons (on hover) — either/or.
   const [rowHovered, setRowHovered] = useState(false)
   const hasAccount = leaf.workspaceId !== undefined
+  const selected = hasAccount && props.select.isSelected('workspace', leaf.workspaceId as string)
   const overflowExpanded = props.sessionsOverflow.includes(leaf.key)
   const shownSessions = overflowExpanded
     ? leaf.sessions
@@ -2167,15 +2273,28 @@ function LeafRow(props: {
       zone: rowDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
     })
   }
-  const workspaceRowClick = (): void => {
-    if (hasAccount) callbacks.onWorkspaceClick(leaf.key)
-    else callbacks.onToggleGroup(leaf.key)
+  /** The row's click: ⌘/Ctrl+click toggles multi-selection only (never the
+   *  expand state); a plain click clears the selection (unless this row is
+   *  part of it) and expands/collapses the session list as before. The
+   *  ungrouped bucket row has no account and falls through unchanged. */
+  const workspaceRowClick = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    if (hasAccount) {
+      if (event.metaKey || event.ctrlKey) {
+        props.select.toggle('workspace', leaf.workspaceId as string)
+        return
+      }
+      if (!selected) props.select.clear()
+      callbacks.onWorkspaceClick(leaf.key)
+      return
+    }
+    callbacks.onToggleGroup(leaf.key)
   }
   const ownRow = (
     <div
-      className={`${css.workspaceRow}${active ? ` ${css.workspaceRowCurrent}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
+      className={`${css.workspaceRow}${active ? ` ${css.workspaceRowCurrent}` : ''}${selected ? ` ${css.rowSelected}` : ''}${dropZone === 'before' ? ` ${css.dropBefore}` : ''}${dropZone === 'after' ? ` ${css.dropAfter}` : ''}${dropZone === 'on' ? ` ${css.dropOn}` : ''}`}
       role="treeitem"
       aria-expanded={leaf.expanded}
+      aria-selected={selected}
       style={{
         paddingLeft: `${indentPx}px`,
         ...guideBackground(depth, leaf.expanded, highlightCol),
@@ -2673,6 +2792,8 @@ function RepoForestView(props: {
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
+  /** Multi-selection seat forwarded to the no-git workspace leaf rows. */
+  select: SelectSeat
   guide: GuideSeat
   now: number
   query: string
@@ -2730,6 +2851,7 @@ function RepoForestView(props: {
           sessionsOverflow={props.sessionsOverflow}
           onToggleOverflow={props.onToggleOverflow}
           drag={props.drag}
+          select={props.select}
           guide={props.guide}
           now={props.now}
           sessionsForGit={props.sessionsForGit}
@@ -2755,6 +2877,7 @@ function RepoForestView(props: {
                 sessionsOverflow={props.sessionsOverflow}
                 onToggleOverflow={props.onToggleOverflow}
                 drag={props.drag}
+                select={props.select}
                 guide={props.guide}
                 now={props.now}
                 git={null}
@@ -2784,6 +2907,8 @@ function RepoGroupRow(props: {
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
+  /** Multi-selection seat forwarded to the member workspace rows. */
+  select: SelectSeat
   guide: GuideSeat
   now: number
   sessionsForGit: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
@@ -2858,6 +2983,7 @@ function RepoGroupRow(props: {
                 sessionsOverflow={props.sessionsOverflow}
                 onToggleOverflow={props.onToggleOverflow}
                 drag={props.drag}
+                select={props.select}
                 guide={props.guide}
                 now={props.now}
                 git={props.probe}
@@ -3199,6 +3325,8 @@ function leafRowModel(props: {
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
+  /** Multi-selection seat (⌘/Ctrl+click toggle; plain click clears). */
+  select: SelectSeat
   now: number
   /** Git probe seat: subworkspace grouping + the cross-tree count row pill. */
   git?: GitProbeResultJSON | null
@@ -3213,6 +3341,7 @@ function leafRowModel(props: {
 }): FileTreeRowModel {
   const { leaf, callbacks } = props
   const hasAccount = leaf.workspaceId !== undefined
+  const selected = hasAccount && props.select.isSelected('workspace', leaf.workspaceId as string)
   const overflowExpanded = props.sessionsOverflow.includes(leaf.key)
   const shownSessions = overflowExpanded
     ? leaf.sessions
@@ -3332,9 +3461,17 @@ function leafRowModel(props: {
       zone: rowDropZone(event.currentTarget.getBoundingClientRect(), event.clientY),
     })
   }
+  /** The row click (v2 framework routes ⌘/Ctrl+click to onSelectToggle and
+   *  never sends it here): a plain click clears the selection (unless this
+   *  row is part of it) and expands as before. The ungrouped bucket row has
+   *  no account and falls through. */
   const workspaceRowClick = (): void => {
-    if (hasAccount) callbacks.onWorkspaceClick(leaf.key)
-    else callbacks.onToggleGroup(leaf.key)
+    if (hasAccount) {
+      if (!selected) props.select.clear()
+      callbacks.onWorkspaceClick(leaf.key)
+      return
+    }
+    callbacks.onToggleGroup(leaf.key)
   }
   const gitPillMulti = gitAggregate.kind === 'multi'
     ? (
@@ -3424,11 +3561,26 @@ function leafRowModel(props: {
       : leaf.label,
     leading: leaf.expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />,
     expanded: leaf.expanded,
-    onToggle: workspaceRowClick,
+    // The framework chevron toggles through this (no event, stopPropagation
+    // inside): plain expand/collapse, selection untouched — cmd+click on the
+    // HEAD of the row (the onClick below) is the select gesture.
+    onToggle: () => {
+      if (hasAccount) callbacks.onWorkspaceClick(leaf.key)
+      else callbacks.onToggleGroup(leaf.key)
+    },
     guideColumns: folderColumns,
     junction: leaf.expanded,
     indentPx,
     active,
+    ...(hasAccount
+      ? {
+        // 框架级多选契约（dsh-file-tree-ui selected/onSelectToggle）:选中
+        // 数据态由本座位持有,修饰键点击由框架分发,选中 wash/aria-selected
+        // 为框架渲染。
+        selected,
+        onSelectToggle: () => props.select.toggle('workspace', leaf.workspaceId as string),
+      }
+      : {}),
     ...(gitPillMulti === undefined ? {} : { trailing: gitPillMulti }),
     ...(dropZone === undefined ? {} : { dropState: dropZone }),
     ...(!hasAccount
@@ -3576,6 +3728,8 @@ function folderRowModel(props: {
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
+  /** Multi-selection seat (⌘/Ctrl+click toggle; plain click clears). */
+  select: SelectSeat
   /** Root-side-first folder chain above this row. */
   ancestors: readonly FolderId[]
   now: number
@@ -3592,6 +3746,7 @@ function folderRowModel(props: {
 }): FileTreeRowModel {
   const { node, callbacks } = props
   const menuKey = node.folderId
+  const selected = props.select.isSelected('folder', node.folderId)
   const dropZone = props.drag.dropZoneOf('folder', node.folderId)
   const active = dirActive(node.containsCurrent)
   // The collapsed-dir aggregate status marker: the subtree's top-priority
@@ -3667,6 +3822,7 @@ function folderRowModel(props: {
         sessionsOverflow: props.sessionsOverflow,
         onToggleOverflow: props.onToggleOverflow,
         drag: props.drag,
+        select: props.select,
         ancestors: [...props.ancestors, node.folderId],
         now: props.now,
         menu: props.menu,
@@ -3681,6 +3837,7 @@ function folderRowModel(props: {
         sessionsOverflow: props.sessionsOverflow,
         onToggleOverflow: props.onToggleOverflow,
         drag: props.drag,
+        select: props.select,
         now: props.now,
         ...(props.git === undefined || props.git === null ? {} : { git: props.git }),
         ...(props.gitMarkers === undefined ? {} : { gitMarkers: props.gitMarkers }),
@@ -3708,6 +3865,8 @@ function folderRowModel(props: {
     junction: node.expanded,
     indentPx: rowIndent(props.ancestors.length),
     active,
+    selected,
+    onSelectToggle: () => props.select.toggle('folder', node.folderId),
     ...(dropZone === undefined ? {} : { dropState: dropZone }),
     ...(busyLabel === undefined || busyState === undefined
       ? {}
@@ -3750,7 +3909,13 @@ function folderRowModel(props: {
     onDragLeave: folderDragLeave,
     onDrop: folderDrop,
     onDragEnd: () => props.drag.onDragEnd(),
-    onClick: () => callbacks.onToggleFolder(node.folderId),
+    /** The row click (v2 framework routes ⌘/Ctrl+click to onSelectToggle):
+     *  a plain click clears the selection (unless this row is part of it)
+     *  and folds as before. */
+    onClick: () => {
+      if (!selected) props.select.clear()
+      callbacks.onToggleFolder(node.folderId)
+    },
     children,
     childrenList: 'plain',
   }
@@ -3769,6 +3934,8 @@ function repoGroupRowModel(props: {
   sessionsOverflow: readonly string[]
   onToggleOverflow: (key: string) => void
   drag: DragSeat
+  /** Multi-selection seat forwarded to the member workspace rows. */
+  select: SelectSeat
   now: number
   sessionsForGit: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
   expandedKeys: ReadonlySet<string>
@@ -3797,6 +3964,7 @@ function repoGroupRowModel(props: {
       sessionsOverflow: props.sessionsOverflow,
       onToggleOverflow: props.onToggleOverflow,
       drag: props.drag,
+      select: props.select,
       now: props.now,
       git: props.probe,
       gitMarkers: props.gitMarkers,
@@ -3926,6 +4094,8 @@ function ServiceGroupedView(props: {
   callbacks: RowCallbacks
   sessionSeat: SessionRowSeat
   drag: DragSeat
+  /** Multi-selection seat (⌘/Ctrl+click toggle; plain click clears). */
+  select: SelectSeat
   sessionsForGit: (workspaceId: WorkspaceId | undefined) => readonly { id: SessionId; cwd?: string }[]
   expandedKeys: ReadonlySet<string>
   now: number
@@ -3971,6 +4141,7 @@ function ServiceGroupedView(props: {
     sessionsOverflow: props.sessionsOverflow,
     onToggleOverflow: props.onToggleOverflow,
     drag: props.drag,
+    select: props.select,
     now: props.now,
     git: props.git.probe,
     gitMarkers: props.git.markers,
@@ -4024,6 +4195,7 @@ function ServiceGroupedView(props: {
           sessionsOverflow: props.sessionsOverflow,
           onToggleOverflow: props.onToggleOverflow,
           drag: props.drag,
+          select: props.select,
           now: props.now,
           sessionsForGit: props.sessionsForGit,
           expandedKeys: props.expandedKeys,
@@ -4047,6 +4219,7 @@ function ServiceGroupedView(props: {
             sessionsOverflow: props.sessionsOverflow,
             onToggleOverflow: props.onToggleOverflow,
             drag: props.drag,
+            select: props.select,
             now: props.now,
             git: null,
             gitMarkers: props.git.markers,
@@ -4070,6 +4243,7 @@ function ServiceGroupedView(props: {
           sessionsOverflow: props.sessionsOverflow,
           onToggleOverflow: props.onToggleOverflow,
           drag: props.drag,
+          select: props.select,
           ancestors: [],
           now: props.now,
           git: props.git.probe,
@@ -4088,6 +4262,7 @@ function ServiceGroupedView(props: {
           sessionsOverflow: props.sessionsOverflow,
           onToggleOverflow: props.onToggleOverflow,
           drag: props.drag,
+          select: props.select,
           now: props.now,
           git: props.git.probe,
           gitMarkers: props.git.markers,
@@ -4114,6 +4289,7 @@ function ServiceGroupedView(props: {
         sessionsOverflow: props.sessionsOverflow,
         onToggleOverflow: props.onToggleOverflow,
         drag: props.drag,
+        select: props.select,
         now: props.now,
         git: null,
         gitMarkers: props.git.markers,

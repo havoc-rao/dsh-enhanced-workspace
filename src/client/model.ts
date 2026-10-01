@@ -323,8 +323,13 @@ export function folderOfWorkspace(folders: FolderTree, workspaceId: WorkspaceId)
   return undefined
 }
 
-/** Whether `candidate`'s parent chain reaches `ancestor` (cycle-guarded walk). */
-function isDescendantOf(folders: FolderTree, candidate: FolderId, ancestor: FolderId): boolean {
+/**
+ * Whether `candidate`'s parent chain reaches `ancestor` (cycle-guarded walk).
+ * Shared by the folder-move guard (cycle rejection) and the group-drop
+ * resolver (`resolveGroupDrop` pre-skips a folder source whose own subtree
+ * contains the drop target — the guard would reject it anyway).
+ */
+export function isDescendantOf(folders: FolderTree, candidate: FolderId, ancestor: FolderId): boolean {
   const visited = new Set<FolderId>()
   let cursor: FolderId | undefined = candidate
   while (cursor !== undefined) {

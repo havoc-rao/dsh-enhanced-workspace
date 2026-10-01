@@ -54,6 +54,10 @@ const W = (id: string): WorkspaceId => id as WorkspaceId
 const folderIdsOf = (record: FolderRecord | undefined): FolderId[] =>
   (record?.children ?? []).filter(child => child.kind === 'folder').map(child => child.id as FolderId)
 
+/** A record's workspace-kind children, in account order. */
+const workspaceIdsOf = (record: FolderRecord | undefined): WorkspaceId[] =>
+  (record?.children ?? []).filter(child => child.kind === 'workspace').map(child => child.id as WorkspaceId)
+
 /** Fixed "now" for deterministic relative-time labels. */
 const NOW = Date.now()
 
@@ -1205,5 +1209,117 @@ describe('fileTreeUi v2 model building (renderFileTree props)', () => {
         .dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
     })
     expect(sessionRow.style.backgroundImage, 'seat cleared → descendant line rests').toBe('')
+  })
+})
+describe('fileTreeUi service path (multi-select + group drag)', () => {
+  /** A ⌘/Ctrl+click on a row (the multi-select gesture). */
+  const cmdClick = (row: HTMLElement): void => {
+    act(() => { row.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true })) })
+  }
+
+  it('cmd+click toggles selection on the framework rows without expanding the session list', async () => {
+    await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    await rerender()
+    const art = treeRowByText('绘画收集')!
+    const docs = treeRowByText('文档')!
+    expect(art.className, 'the row rides the service skeleton, not the built-in row class').not.toContain('workspaceRow')
+    expect(art.getAttribute('aria-selected')).toBe('false')
+    cmdClick(art)
+    expect(art.getAttribute('aria-selected'), 'cmd+click marks the row selected').toBe('true')
+    expect(art.className, 'the selection tint class lands on the service row root').toContain('rowSelected')
+    expect(art.getAttribute('aria-expanded'), 'the select gesture never expands').toBe('false')
+    expect(sessionRowByText('画布草图')).toBeUndefined()
+    cmdClick(docs)
+    expect(docs.getAttribute('aria-selected')).toBe('true')
+    cmdClick(art) // toggle off
+    expect(art.getAttribute('aria-selected')).toBe('false')
+    expect(docs.getAttribute('aria-selected')).toBe('true')
+    click(art) // plain click on an unselected row
+    expect(art.getAttribute('aria-selected')).toBe('false')
+    expect(docs.getAttribute('aria-selected'), 'plain click clears the whole selection').toBe('false')
+  })
+
+  it('cmd+click on a folder row toggles selection without folding; plain click keeps it and folds', async () => {
+    await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    await rerender()
+    const alphaRow = folderRowByText('alpha')!
+    expect(alphaRow.className, 'folder row rides the service skeleton').not.toContain('folderRow')
+    cmdClick(alphaRow)
+    expect(alphaRow.getAttribute('aria-selected')).toBe('true')
+    expect(alphaRow.className, 'the tint lands on the framework folder row').toContain('rowSelected')
+    expect(instance.getSnapshot().folderExpansion[alpha], 'cmd+click never folds').toBeUndefined()
+    click(alphaRow) // plain click on the SELECTED row: keeps selection + folds
+    expect(alphaRow.getAttribute('aria-selected'), 'the selected row stays selected').toBe('true')
+    expect(instance.getSnapshot().folderExpansion[alpha]).toBe(true)
+  })
+
+  it('dragging a selected row carries the whole group: both workspaces land in the folder in display order', async () => {
+    await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    await rerender()
+    const art = treeRowByText('绘画收集')!
+    const docs = treeRowByText('文档')!
+    const alphaRow = folderRowByText('alpha')!
+    stubRect(alphaRow, 0, 48)
+    cmdClick(art)
+    cmdClick(docs)
+    dragStart(art) // the grab row is part of the selection
+    dragOver(alphaRow, 24) // mid band → 'on' → into the folder, appended
+    expect(alphaRow.className, 'the group drop previews the append destination').toMatch(/rowDrop.*On/)
+    dropOn(alphaRow, 24)
+    expect(workspaceIdsOf(instance.getSnapshot().folders[alpha])).toEqual([W('w-art'), W('w-docs')])
+    expect(workspaceIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])).toEqual([])
+  })
+
+  it('dragging an UNSELECTED row while a selection exists drags it alone', async () => {
+    await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    await rerender()
+    const art = treeRowByText('绘画收集')!
+    const docs = treeRowByText('文档')!
+    const alphaRow = folderRowByText('alpha')!
+    stubRect(alphaRow, 0, 48)
+    cmdClick(art)
+    dragStart(docs) // unselected grab → drag carries only this row
+    expect(art.getAttribute('aria-selected'), 'the old selection is replaced by the grab row').toBe('false')
+    expect(docs.getAttribute('aria-selected')).toBe('true')
+    dragOver(alphaRow, 24)
+    dropOn(alphaRow, 24)
+    expect(workspaceIdsOf(instance.getSnapshot().folders[alpha])).toEqual([W('w-docs')])
+    expect(workspaceIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])).toEqual([W('w-art')])
+  })
+
+  it('a group [folder, workspace] dropped "on" a folder inside the dragged folder moves only the workspace', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    act(() => { instance.actions.createFolder(alpha, 'beta') })
+    const beta = folderIdsOf(instance.getSnapshot().folders[alpha])[0]!
+    act(() => { instance.actions.setFolderExpanded(alpha, true) })
+    await rerender()
+    const alphaRow = folderRowByText('alpha')!
+    const betaRow = folderRowByText('beta')!
+    stubRect(betaRow, 0, 48)
+    cmdClick(alphaRow)
+    cmdClick(treeRowByText('绘画收集')!)
+    dragStart(alphaRow)
+    dragOver(betaRow, 24)
+    dropOn(betaRow, 24)
+    const after = instance.getSnapshot().folders
+    expect(folderIdsOf(after[alpha]), 'alpha could not move into its own subtree').toEqual([beta])
+    expect(workspaceIdsOf(after[beta]), 'the workspace member moves in').toEqual([W('w-art')])
+    expect(workspaceIdsOf(after[ROOT_FOLDER_ID])).toEqual([W('w-docs')])
+    expect(warn, 'the cycle member pre-skips without warnings').not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 })

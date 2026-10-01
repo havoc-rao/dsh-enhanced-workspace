@@ -1404,7 +1404,7 @@ describe('enhanced workspace browser', () => {
     expect(props.startSession).not.toHaveBeenCalled()
   })
 
-  it('guards folder drops: a cycle into its own descendant fails non-fatally and the tree stays', async () => {
+  it('guards folder drops: a cycle into its own descendant is a clean no-op and the tree stays', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     await renderBrowser()
     act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
@@ -1416,14 +1416,128 @@ describe('enhanced workspace browser', () => {
     stubRect(betaRow, 0, 48)
 
     dragStart(alphaRow)
-    dragOver(betaRow, 24) // 'on' → moving alpha under its own descendant
+    dragOver(betaRow, 24) // 'on' → alpha into its own descendant: pre-skipped
     dropOn(betaRow, 24)
 
     const after = instance.getSnapshot().folders
     expect(folderIdsOf(after[alpha])).toHaveLength(1) // beta still under alpha
     expect(folderIdsOf(after[ROOT_FOLDER_ID])).toEqual([alpha])
-    expect(warn, 'the cycle guard warns non-fatally').toHaveBeenCalled()
+    expect(warn, 'the group resolver pre-skips instead of warning').not.toHaveBeenCalled()
     warn.mockRestore()
+  })
+})
+
+describe('multi-select (⌘/Ctrl+click) and group drag', () => {
+  /** A ⌘/Ctrl+click on a row (the multi-select gesture). */
+  const cmdClick = (row: HTMLElement): void => {
+    act(() => { row.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true })) })
+  }
+
+  it('cmd+click toggles selection without toggling expansion; plain clicks keep or clear it', async () => {
+    await renderBrowser()
+    const art = treeRowByText('绘画收集')!
+    const docs = treeRowByText('文档')!
+    expect(art.getAttribute('aria-selected')).toBe('false')
+    cmdClick(art)
+    expect(art.getAttribute('aria-selected')).toBe('true')
+    expect(art.matches('[class*="rowSelected"]'), 'the selection tint class lands on the row').toBe(true)
+    expect(art.getAttribute('aria-expanded'), 'the select gesture never expands the session list').toBe('false')
+    expect(sessionRowByText('画布草图')).toBeUndefined()
+    cmdClick(docs)
+    expect(docs.getAttribute('aria-selected')).toBe('true')
+    cmdClick(art) // toggle off
+    expect(art.getAttribute('aria-selected')).toBe('false')
+    expect(docs.getAttribute('aria-selected')).toBe('true')
+    // A plain click on an UNSELECTED row clears the whole selection.
+    click(art)
+    expect(art.getAttribute('aria-selected')).toBe('false')
+    expect(docs.getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('a plain click on a selected row keeps the selection and still toggles the row', async () => {
+    await renderBrowser()
+    const art = treeRowByText('绘画收集')!
+    cmdClick(art)
+    click(art)
+    expect(art.getAttribute('aria-selected'), 'the selected row stays selected').toBe('true')
+    expect(sessionRowByText('画布草图'), 'the plain click still expands').toBeDefined()
+  })
+
+  it('dragging a selected row carries the whole group: drop "on" a folder moves every member in display order', async () => {
+    await renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '团队') })
+    const teamId = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    const art = treeRowByText('绘画收集')!
+    const docs = treeRowByText('文档')!
+    const team = treeRowByText('团队')!
+    stubRect(team, 0, 48)
+    cmdClick(art)
+    cmdClick(docs)
+    dragStart(art) // the grab row is part of the selection
+    dragOver(team, 24) // mid band → 'on' → into the folder, appended
+    dropOn(team, 24)
+    expect(workspaceIdsOf(instance.getSnapshot().folders[teamId])).toEqual([W('w-art'), W('w-docs')])
+    expect(workspaceIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])).toEqual([])
+  })
+
+  it('dragging an UNSELECTED row while a selection exists drags it alone and retargets the selection', async () => {
+    await renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '团队') })
+    const teamId = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    const art = treeRowByText('绘画收集')!
+    const docs = treeRowByText('文档')!
+    const team = treeRowByText('团队')!
+    stubRect(team, 0, 48)
+    cmdClick(art)
+    dragStart(docs) // unselected grab → the drag carries only this row
+    expect(art.getAttribute('aria-selected'), 'the old selection is replaced by the grab row').toBe('false')
+    expect(docs.getAttribute('aria-selected')).toBe('true')
+    dragOver(team, 24)
+    dropOn(team, 24)
+    expect(workspaceIdsOf(instance.getSnapshot().folders[teamId])).toEqual([W('w-docs')])
+    expect(workspaceIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])).toEqual([W('w-art')])
+  })
+
+  it('a group [folder, workspace] dropped "on" a folder inside the dragged folder moves only the workspace', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, 'alpha') })
+    const alpha = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    act(() => { instance.actions.createFolder(alpha, 'beta') })
+    const beta = folderIdsOf(instance.getSnapshot().folders[alpha])[0]!
+    click(treeRowByText('alpha')!) // expand so beta renders
+    const alphaRow = treeRowByText('alpha')!
+    const betaRow = treeRowByText('beta')!
+    stubRect(betaRow, 0, 48)
+    cmdClick(alphaRow)
+    cmdClick(treeRowByText('绘画收集')!)
+    dragStart(alphaRow)
+    dragOver(betaRow, 24)
+    dropOn(betaRow, 24)
+    const after = instance.getSnapshot().folders
+    // alpha could not move into its own subtree: its member no-ops cleanly…
+    expect(folderIdsOf(after[alpha])).toEqual([beta])
+    expect(workspaceIdsOf(after[beta]), '…while the workspace member moves in').toEqual([W('w-art')])
+    expect(workspaceIdsOf(after[ROOT_FOLDER_ID])).toEqual([W('w-docs')])
+    expect(warn, 'the cycle member pre-skips without warnings').not.toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('prunes the selection when its rows fold away (and nothing returns on re-expand)', async () => {
+    await renderBrowser()
+    act(() => { instance.actions.createFolder(ROOT_FOLDER_ID, '团队') })
+    const teamId = folderIdsOf(instance.getSnapshot().folders[ROOT_FOLDER_ID])[0]!
+    act(() => { instance.actions.moveWorkspaceIn(W('w-art'), teamId, undefined) })
+    const team = treeRowByText('团队')!
+    click(team) // expand: w-art renders inside
+    const art = treeRowByText('绘画收集')!
+    cmdClick(art)
+    expect(art.getAttribute('aria-selected')).toBe('true')
+    click(team) // collapse → the w-art row unmounts
+    expect(treeRowByText('绘画收集')).toBeUndefined()
+    click(team) // re-expand
+    const artAgain = treeRowByText('绘画收集')!
+    expect(artAgain.getAttribute('aria-selected'), 'the hidden selection was pruned').toBe('false')
   })
 })
 

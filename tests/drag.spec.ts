@@ -8,8 +8,21 @@ import {
   moveWorkspaceIn,
   workspaceChild,
   FolderId as folderIdOf,
+  type FolderNode,
+  type FolderRowNode,
+  type WorkspaceLeaf,
 } from '../src/client/model.ts'
-import { folderDropZone, resolveFolderDrop, resolveWorkspaceDrop, rowDropZone } from '../src/client/drag.ts'
+import {
+  folderDropZone,
+  orderedDragSources,
+  resolveFolderDrop,
+  resolveGroupDrop,
+  resolveWorkspaceDrop,
+  rowDropZone,
+  selectionKeyOf,
+  type DragSource,
+  type DropTarget,
+} from '../src/client/drag.ts'
 
 const W = (id: string): WorkspaceId => id as WorkspaceId
 const F = (id: string): FolderId => folderIdOf(id)
@@ -153,5 +166,189 @@ describe('resolveFolderDrop', () => {
     expect(resolveFolderDrop(tree, F('a'), 'folder', 'a', 'on')).toEqual({ kind: 'noop' })
     expect(resolveFolderDrop(tree, F('a'), 'folder', 'missing', 'on')).toEqual({ kind: 'noop' })
     expect(resolveFolderDrop(tree, F('a'), 'folder', ROOT_FOLDER_ID as unknown as string, 'before')).toEqual({ kind: 'noop' })
+  })
+})
+/* ── Multi-select group drag (⌘/Ctrl+click) ─────────────────────────── */
+
+/** One workspace leaf fixture row (id-derived label). */
+const leaf = (id: string): WorkspaceLeaf => ({
+  key: id,
+  workspaceId: W(id),
+  cwd: undefined,
+  createdAt: 0,
+  label: id,
+  sessionCount: 0,
+  expanded: false,
+  containsCurrent: false,
+  status: {},
+  sessions: [],
+})
+
+/** One folder node fixture; `expanded` gates whether the walker descends. */
+const folderNode = (id: string, rows: FolderRowNode[] = [], expanded = true): FolderNode => ({
+  folderId: F(id),
+  name: id,
+  depth: 0,
+  expanded,
+  rows,
+  sessionCount: 0,
+  containsCurrent: false,
+  status: {},
+})
+
+describe('orderedDragSources', () => {
+  it('lists the selected rows in display order, recency section first', () => {
+    const recents = [leaf('w-recent2'), leaf('w-recent1')]
+    const topRows: FolderRowNode[] = [
+      { kind: 'workspace', leaf: leaf('w-tree') },
+      { kind: 'folder', node: folderNode('团队', [
+        { kind: 'workspace', leaf: leaf('w-inner') },
+        { kind: 'folder', node: folderNode('子目录', [{ kind: 'workspace', leaf: leaf('w-deep') }]) },
+        { kind: 'workspace', leaf: leaf('w-inner2') },
+      ]) },
+    ]
+    const selected = new Set([
+      selectionKeyOf('workspace', 'w-inner2'),
+      selectionKeyOf('workspace', 'w-recent2'),
+      selectionKeyOf('workspace', 'w-inner'),
+      selectionKeyOf('folder', '子目录'),
+      selectionKeyOf('workspace', 'w-deep'),
+      selectionKeyOf('workspace', 'w-absent'), // selected but not rendered
+    ])
+    expect(orderedDragSources(recents, topRows, selected)).toEqual([
+      { kind: 'workspace', id: 'w-recent2' },
+      { kind: 'workspace', id: 'w-inner' },
+      { kind: 'folder', id: '子目录' },
+      { kind: 'workspace', id: 'w-deep' },
+      { kind: 'workspace', id: 'w-inner2' },
+    ])
+  })
+
+  it('collapses a duplicate id (recency + tree) to the first occurrence', () => {
+    const recents = [leaf('w-dup')]
+    const topRows: FolderRowNode[] = [{ kind: 'workspace', leaf: leaf('w-dup') }, { kind: 'workspace', leaf: leaf('w-other') }]
+    const selected = new Set([selectionKeyOf('workspace', 'w-dup'), selectionKeyOf('workspace', 'w-other')])
+    expect(orderedDragSources(recents, topRows, selected)).toEqual([
+      { kind: 'workspace', id: 'w-dup' },
+      { kind: 'workspace', id: 'w-other' },
+    ])
+  })
+
+  it('never descends into a collapsed folder (hidden children are not draggable)', () => {
+    const collapsedChildren: FolderRowNode[] = [
+      { kind: 'workspace', leaf: leaf('w-hidden') },
+      { kind: 'folder', node: folderNode('隐藏目录', [{ kind: 'workspace', leaf: leaf('w-deep-hidden') }]) },
+    ]
+    const topRows: FolderRowNode[] = [{ kind: 'folder', node: folderNode('团队', collapsedChildren, false) }]
+    const selected = new Set([selectionKeyOf('workspace', 'w-hidden'), selectionKeyOf('folder', '团队')])
+    expect(orderedDragSources([], topRows, selected)).toEqual([{ kind: 'folder', id: '团队' }])
+  })
+
+  it('returns an empty group when nothing is selected', () => {
+    const topRows: FolderRowNode[] = [{ kind: 'workspace', leaf: leaf('w-tree') }]
+    expect(orderedDragSources([], topRows, new Set())).toEqual([])
+  })
+})
+
+describe('resolveGroupDrop', () => {
+  it('moves a workspace group into a folder "on" in display order (appended)', () => {
+    let tree = rootTree(['w1', 'w2', 'w3'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, '团队', F('团队'), NOW).folders
+    const target: DropTarget = { kind: 'folder', id: '团队', zone: 'on' }
+    expect(resolveGroupDrop(tree, [{ kind: 'workspace', id: 'w2' }, { kind: 'workspace', id: 'w1' }], target)).toEqual([
+      { source: { kind: 'workspace', id: 'w2' }, resolution: { kind: 'move-workspace', folderId: F('团队') } },
+      { source: { kind: 'workspace', id: 'w1' }, resolution: { kind: 'move-workspace', folderId: F('团队') } },
+    ])
+  })
+
+  it('keeps display order when a group anchors before a row (insert-before composition)', () => {
+    let tree = rootTree(['w-anchor', 'w3', 'w2', 'w1'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, '甲', F('甲'), NOW).folders
+    tree = moveWorkspaceIn(tree, W('w1'), F('甲'), undefined, NOW)
+    tree = moveWorkspaceIn(tree, W('w2'), F('甲'), undefined, NOW)
+    tree = moveWorkspaceIn(tree, W('w3'), F('甲'), undefined, NOW)
+    // Group [w2, w1] anchored before the root-level row w-anchor: both leave
+    // 甲 and land before w-anchor, w2 first (display order preserved).
+    const target: DropTarget = { kind: 'workspace', id: 'w-anchor', zone: 'before' }
+    const resolutions = resolveGroupDrop(tree, [{ kind: 'workspace', id: 'w2' }, { kind: 'workspace', id: 'w1' }], target)
+    expect(resolutions.map(entry => entry.resolution)).toEqual([
+      { kind: 'move-workspace', folderId: ROOT_FOLDER_ID, beforeChild: workspaceChild(W('w-anchor')) },
+      { kind: 'move-workspace', folderId: ROOT_FOLDER_ID, beforeChild: workspaceChild(W('w-anchor')) },
+    ])
+    // Applying them sequentially in source order yields [w2, w1, w-anchor].
+    let applied = tree
+    for (const entry of resolutions) {
+      if (entry.resolution.kind === 'move-workspace') {
+        applied = moveWorkspaceIn(applied, entry.source.id as WorkspaceId, entry.resolution.folderId, entry.resolution.beforeChild, NOW)
+      }
+    }
+    expect(applied[ROOT_FOLDER_ID]!.children.slice(0, 3).map(child => child.id)).toEqual(['w2', 'w1', 'w-anchor'])
+  })
+
+  it('pre-skips a folder dropped "on" itself or its own descendant; the rest of the group still moves', () => {
+    let tree = rootTree(['w-art'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'alpha', F('alpha'), NOW).folders
+    tree = createFolderIn(tree, F('alpha'), 'beta', F('beta'), NOW).folders
+    // Group [alpha(folder), w-art] dropped "on" beta (beta ⊂ alpha).
+    const target: DropTarget = { kind: 'folder', id: 'beta', zone: 'on' }
+    const resolutions = resolveGroupDrop(tree, [
+      { kind: 'folder', id: 'alpha' },
+      { kind: 'workspace', id: 'w-art' },
+    ], target)
+    expect(resolutions).toEqual([
+      { source: { kind: 'folder', id: 'alpha' }, resolution: { kind: 'noop' } },
+      { source: { kind: 'workspace', id: 'w-art' }, resolution: { kind: 'move-workspace', folderId: F('beta') } },
+    ])
+    // Dropping the group onto alpha itself: alpha no-ops, w-art moves in.
+    const selfTarget: DropTarget = { kind: 'folder', id: 'alpha', zone: 'on' }
+    expect(resolveGroupDrop(tree, [
+      { kind: 'folder', id: 'alpha' },
+      { kind: 'workspace', id: 'w-art' },
+    ], selfTarget).map(entry => entry.resolution)).toEqual([
+      { kind: 'noop' },
+      { kind: 'move-workspace', folderId: F('alpha') },
+    ])
+  })
+
+  it('pre-skips a folder dragged "on" a folder already at max depth', () => {
+    let tree = rootTree()
+    // Build a chain: root → d1 → … → d5 (root = depth 1, so d5 sits at the
+    // MAX_FOLDER_DEPTH frontier: nothing may be parented UNDER it).
+    let parent: FolderId = ROOT_FOLDER_ID
+    for (let i = 1; i <= 5; i++) {
+      const id = F(`d${i}`)
+      tree = createFolderIn(tree, parent, `d${i}`, id, NOW).folders
+      parent = id
+    }
+    // Folder c at the root, dropped "on" d5: the depth guard would reject,
+    // so the group resolver pre-skips to a clean no-op.
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, 'c', F('c'), NOW).folders
+    const target: DropTarget = { kind: 'folder', id: 'd5', zone: 'on' }
+    expect(resolveGroupDrop(tree, [{ kind: 'folder', id: 'c' }], target)).toEqual([
+      { source: { kind: 'folder', id: 'c' }, resolution: { kind: 'noop' } },
+    ])
+  })
+
+  it("treats a member dropped onto its own row as a no-op without blocking the group", () => {
+    const tree = rootTree(['w1', 'w2', 'w3'])
+    const target: DropTarget = { kind: 'workspace', id: 'w1', zone: 'after' }
+    const resolutions = resolveGroupDrop(tree, [
+      { kind: 'workspace', id: 'w1' },
+      { kind: 'workspace', id: 'w3' },
+    ], target)
+    expect(resolutions.map(entry => entry.resolution)).toEqual([
+      { kind: 'noop' },
+      { kind: 'move-workspace', folderId: ROOT_FOLDER_ID, beforeChild: workspaceChild(W('w2')) },
+    ])
+  })
+
+  it('resolves a single-member group exactly like a single drag', () => {
+    let tree = rootTree(['w1'])
+    tree = createFolderIn(tree, ROOT_FOLDER_ID, '团队', F('团队'), NOW).folders
+    const single: DropTarget = { kind: 'folder', id: '团队', zone: 'on' }
+    const group = resolveGroupDrop(tree, [{ kind: 'workspace', id: 'w1' }], single)
+    expect(group).toEqual([
+      { source: { kind: 'workspace', id: 'w1' }, resolution: resolveWorkspaceDrop(tree, W('w1'), 'folder', '团队', 'on') },
+    ])
   })
 })
