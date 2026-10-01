@@ -96,12 +96,27 @@ async function measureHover(page: Page, label: string, target: ReturnType<Page['
       })
       node = node.parentElement
     }
-    return { chain, card: card === null ? null : card.getBoundingClientRect().toJSON(), anchor }
+    // Full horizontal context: the region's box, its ancestors up to the
+    // shell's sidebar column, and the card's computed padding — so the
+    // "too far" gap can be attributed precisely (card vs row, row vs
+    // sidebar edge, or the card's own content inset).
+    const region = document.querySelector<HTMLElement>('[data-dsh-enhanced-workspace="browser"]')
+    const context = region === null ? null : {
+      region: region.getBoundingClientRect().toJSON(),
+      regionPad: getComputedStyle(region).padding,
+      regionRight: getComputedStyle(region).paddingRight,
+      cardPad: card === null ? null : getComputedStyle(card).padding,
+      cardPadLeft: card === null ? null : getComputedStyle(card).paddingLeft,
+      content: card === null ? null : (el.getBoundingClientRect().left - card.getBoundingClientRect().left),
+      shell: (() => { const s = region.parentElement; return s === null ? null : s.getBoundingClientRect().toJSON() })(),
+    }
+    return { chain, card: card === null ? null : card.getBoundingClientRect().toJSON(), anchor, context }
   })
   console.log(`[geom-hovercard] ${label} rowBox=${JSON.stringify(rowBox)}`)
   console.log(`[geom-hovercard] ${label} chain=${JSON.stringify(probe.chain, null, 1)}`)
   console.log(`[geom-hovercard] ${label} card=${JSON.stringify(probe.card)}`)
   console.log(`[geom-hovercard] ${label} anchor=${JSON.stringify(probe.anchor)}`)
+  console.log(`[geom-hovercard] ${label} context=${JSON.stringify(probe.context)}`)
   await page.screenshot({ path: join(outDir, `${label}.png`) })
   // The alignment contract (built-in ui-workspace parity): the compact card
   // bed sits top-aligned with the row and 8px right of the row's right edge.
