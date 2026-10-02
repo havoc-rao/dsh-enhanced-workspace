@@ -1114,12 +1114,13 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
               >
                 <IconCloseOutlineRegular size={12} />
               </button>
+              {/* Optional hotkey hint inside the field's right edge; CSS hides
+                  it while the input or clear button has focus. Its props carry
+                  the slot's common `inject` face — the live search handle. */}
+              <span className={css.searchHint}>
+                {renderSlot(SEARCH_SLOT, searchOwner)}
+              </span>
             </div>
-            {/* The search hole: an optional occupant (e.g. a hotkey plugin's
-                companion control) renders beside the field while the browser
-                is wide. Its props carry the slot's common `inject` face —
-                the live search handle (`focus` / `setQuery` / `input`). */}
-            {renderSlot(SEARCH_SLOT, searchOwner)}
           </div>
         )
         : (

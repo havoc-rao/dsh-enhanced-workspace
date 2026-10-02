@@ -6,7 +6,9 @@
  * behavior — the original workspace-collects-sessions interaction and the
  * multi-level folder management on top of it.
  */
+import { readFileSync } from 'node:fs'
 import { StrictMode, useSyncExternalStore } from 'react'
+import css from '../src/client/Browser.module.css'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -199,7 +201,10 @@ async function renderBrowser(
         // external occupant reads.
         searchOwners.push(owner as EnhancedSearchOwnerProps)
         capturedSearchHandle = searchHandle
-        return searchOccupied ? <div data-testid="search-occupant" /> : null
+        // Real outlets retain this layout-neutral anchor even when empty.
+        return <div data-slot={SEARCH_SLOT} style={{ display: 'contents' }}>
+          {searchOccupied ? <kbd data-testid="search-occupant">⌘ K</kbd> : null}
+        </div>
       }
       const flowOwner = owner as EnhancedDirectoryFlowOwnerProps
       flowOwners.push(flowOwner)
@@ -1790,14 +1795,47 @@ describe('external search trigger surface (slot handle + global mirror + DOM fal
     }
   })
 
-  it('occupied search hole: the occupant renders beside the field and its props carry the handle', async () => {
+  it('occupied search hole: the hint is inside the field after clear, without taking focus', async () => {
     searchOccupied = true
     await renderBrowser()
     expect(searchOwners.length, 'the hole renders from the first wide render').toBeGreaterThan(0)
-    expect(container.querySelector('[data-testid="search-occupant"]'), 'the occupant mounts inside the search bar').not.toBeNull()
-    // The occupant's props ARE the inject face in the real renderer: the same
-    // handle identity the external action path uses.
+    const input = container.querySelector<HTMLInputElement>(SEARCH_INPUT_SELECTOR)!
+    const field = input.parentElement!
+    const hint = field.lastElementChild!
+    expect(hint.className).toBe(css.searchHint)
+    expect(hint.previousElementSibling).toBe(buttonByAria(zh.clearSearch))
+    expect(hint.querySelector('[data-testid="search-occupant"]')).not.toBeNull()
+    expect(hint.querySelector('button, input, [tabindex]')).toBeNull()
+    expect(document.activeElement).not.toBe(input)
+    act(() => { input.focus(); searchHandle.setQuery('文档') })
+    expect(document.activeElement).toBe(input)
+    act(() => { buttonByAria(zh.clearSearch)!.focus() })
+    expect(document.activeElement).toBe(buttonByAria(zh.clearSearch))
+    // The occupant's props ARE the inject face in the real renderer.
     expect(capturedSearchHandle).toBe(searchHandle)
+  })
+
+  it('empty search hint matches the no-gap selector, including the real outlet anchor', async () => {
+    await renderBrowser()
+    const field = container.querySelector(SEARCH_INPUT_SELECTOR)!.parentElement!
+    const hint = field.lastElementChild!
+    expect(hint.className).toBe(css.searchHint)
+    expect(hint.matches(':has(> [data-slot]:only-child:empty)')).toBe(true)
+    searchOccupied = true
+    await rerenderWith({})
+    expect(hint.matches(':has(> [data-slot]:only-child:empty)')).toBe(false)
+    searchOccupied = false
+    await rerenderWith({})
+    expect(hint.matches(':has(> [data-slot]:only-child:empty)')).toBe(true)
+  })
+
+  it('hint CSS hides empty seats and all field focus states while keeping the input shrinkable', () => {
+    // jsdom cannot evaluate :focus-within layout: assert the CSS contract,
+    // separately from the DOM placement and actual focus transitions above.
+    const stylesheet = readFileSync('src/client/Browser.module.css', 'utf8')
+    expect(stylesheet).toMatch(/\.searchHint\s*\{\s*display: inline-flex;\s*align-items: center;\s*flex: none;/)
+    expect(stylesheet).toMatch(/\.searchHint:empty,\s*\.searchHint:has\(> \[data-slot\]:only-child:empty\),\s*\.searchField:focus-within \.searchHint\s*\{\s*display: none;/)
+    expect(stylesheet).toMatch(/\.searchInput\s*\{\s*flex: 1;\s*min-width: 0;/)
   })
 
   it('unmount withdraws the handle and the global mirror (no dead external trigger)', async () => {

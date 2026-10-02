@@ -53,7 +53,7 @@
   flex: none;
 }
 
-/* The field is ONE quiet containment: icon, input and clear share a soft
+/* The field is ONE quiet containment: icon, input, clear and hint share a soft
    filled box with a hairline border (the input's own chrome is stripped).
    Resting state is near-invisible; the box brightens on hover and lights
    up while typing — the DSH monochrome language, no accent colors. */
@@ -87,6 +87,20 @@
 
 .searchField:focus-within .searchIcon {
   color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.9));
+}
+
+.searchHint {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+/* The real slot outlet retains a display:contents [data-slot] anchor even
+   without an occupant; hide that empty seat too, so flex gap adds no space. */
+.searchHint:empty,
+.searchHint:has(> [data-slot]:only-child:empty),
+.searchField:focus-within .searchHint {
+  display: none;
 }
 
 .searchInput {
