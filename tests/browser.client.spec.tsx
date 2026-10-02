@@ -1614,6 +1614,27 @@ describe('search: in-place filter of the original dirs list', () => {
     typeText(searchInput(), '')
     expect(sessionRowByText('配色研究'), 'clearing restores the flat list').toBeDefined()
   })
+
+  it('the clear button follows the query and empties the field in one click, restoring the list', async () => {
+    await renderBrowser()
+    const input = searchInput()
+    const clearButton = (): HTMLButtonElement | undefined =>
+      [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find(button => button.getAttribute('aria-label') === zh.clearSearch)
+    expect(clearButton()).toBeDefined() // always mounted for a stable field width
+
+    typeText(input, '文档')
+    expect(clearButton()!.getAttribute('class'), 'the affordance arms with a query').toContain('searchClear')
+    expect(clearButton()!.getAttribute('class')).not.toContain('searchClearHidden')
+    click(clearButton()!)
+    expect(input.value, 'one click empties the query').toBe('')
+    expect(sections()).toHaveLength(2) // recency + all restore
+    expect(treeRowByText('绘画收集')).toBeDefined()
+    expect(document.activeElement, 'focus returns to the field').toBe(input)
+
+    // Empty again: the seat stays but turns inert.
+    expect(clearButton()!.getAttribute('class')).toContain('searchClearHidden')
+  })
 })
 
 describe('rail fold (shell collapse parity)', () => {

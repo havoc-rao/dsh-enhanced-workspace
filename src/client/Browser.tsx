@@ -38,6 +38,7 @@ import {
   IconArchiveOutlineRegular,
   IconBranchOutlineRegular,
   IconChevronUpOutlineRegular,
+  IconCloseOutlineRegular,
   IconEditOutlineRegular,
   IconEllipsisOutlineRegular,
   IconFolderCloseRegular,
@@ -517,6 +518,12 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
     expandSidebar()
   }, [expandSidebar])
   const setSearchQuery = useCallback((next: string): void => { setQuery(next) }, [])
+  // The clear button empties the query and returns focus to the field so the
+  // filtered list restores and typing can continue in one gesture.
+  const clearSearch = useCallback((): void => {
+    setQuery('')
+    searchInputRef.current?.focus({ preventScroll: true })
+  }, [])
   const readSearchInput = useCallback((): HTMLInputElement | null => searchInputRef.current, [])
   // Publish/withdraw the handle with the region's mount. `installSearchHandle`
   // restores the previous owner on cleanup, so StrictMode's setup/cleanup
@@ -1076,20 +1083,38 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
       {wide
         ? (
           <div className={css.searchBar}>
-            <IconSearchOutlineRegular className={css.searchIcon} />
-            <input
-              ref={searchInputRef}
-              className={css.searchInput}
-              type="search"
-              aria-label={t('searchAria')}
-              /* Stable external marker: the DOM fallback trigger path
-                 (`SEARCH_INPUT_ATTR_VALUE`, contract.ts). Class names are
-                 hashed per build; this attribute is the contract. */
-              data-dsh-enhanced-workspace="search"
-              placeholder={t('searchPlaceholder')}
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-            />
+            {/* The field is one quiet containment: icon, input and the clear
+                button share a single filled, hairline-bordered box (the
+                input's own chrome is stripped in CSS). */}
+            <div className={css.searchField}>
+              <IconSearchOutlineRegular size={14} className={css.searchIcon} />
+              <input
+                ref={searchInputRef}
+                className={css.searchInput}
+                type="search"
+                aria-label={t('searchAria')}
+                /* Stable external marker: the DOM fallback trigger path
+                   (`SEARCH_INPUT_ATTR_VALUE`, contract.ts). Class names are
+                   hashed per build; this attribute is the contract. */
+                data-dsh-enhanced-workspace="search"
+                placeholder={t('searchPlaceholder')}
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+              />
+              {/* Custom clear affordance, replacing the native WebKit X (the
+                  `::-webkit-search-cancel-button` is suppressed in CSS so
+                  Chromium never paints a second one). Always mounted so the
+                  field's width never jumps while typing; emptied queries
+                  render it hidden + inert. */}
+              <button
+                type="button"
+                className={query !== '' ? css.searchClear : `${css.searchClear} ${css.searchClearHidden}`}
+                aria-label={t('clearSearch')}
+                onClick={clearSearch}
+              >
+                <IconCloseOutlineRegular size={12} />
+              </button>
+            </div>
             {/* The search hole: an optional occupant (e.g. a hotkey plugin's
                 companion control) renders beside the field while the browser
                 is wide. Its props carry the slot's common `inject` face —

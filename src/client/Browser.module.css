@@ -53,20 +53,110 @@
   flex: none;
 }
 
+/* The field is ONE quiet containment: icon, input and clear share a soft
+   filled box with a hairline border (the input's own chrome is stripped).
+   Resting state is near-invisible; the box brightens on hover and lights
+   up while typing — the DSH monochrome language, no accent colors. */
+.searchField {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2, rgba(128, 128, 128, 0.06));
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.searchField:hover {
+  border-color: var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.55));
+}
+
+.searchField:focus-within {
+  border-color: var(--dsw-alias-border-l4, rgba(128, 128, 128, 0.7));
+}
+
 .searchIcon {
   flex: none;
   color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.9));
+  transition: color 120ms ease;
+}
+
+.searchField:focus-within .searchIcon {
+  color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.9));
 }
 
 .searchInput {
   flex: 1;
   min-width: 0;
   box-sizing: border-box;
-  padding: 4px 8px;
-  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 128, 128, 0.35));
-  border-radius: 6px;
+  /* Own chrome is gone (the field box provides border/bg): a transparent
+     text lane. `appearance: none` plus the explicit pseudo-element
+     suppression below also removes the native WebKit search X — the custom
+     `.searchClear` button is the only clear affordance. */
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 4px 0;
+  border: none;
   background: transparent;
+  font: inherit;
   color: inherit;
+}
+
+.searchInput:focus {
+  outline: none;
+}
+
+.searchInput::placeholder {
+  color: var(--dsw-alias-label-dimmed, rgba(128, 128, 128, 0.55));
+}
+
+.searchInput::-webkit-search-cancel-button,
+.searchInput::-webkit-search-decoration,
+.searchInput::-webkit-search-results-button,
+.searchInput::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
+/* Custom clear button: a theme-consistent X in the field's right corner.
+   `cursor: pointer` is its hover affordance; the hover wash matches the
+   header icon buttons. */
+.searchClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, rgba(128, 128, 128, 0.9));
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.searchClear:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.15));
+  color: var(--dsw-alias-label-primary, inherit);
+}
+
+.searchClear:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.35));
+}
+
+/* Empty query: the button keeps its seat (the field's width never jumps
+   while typing) but is invisible, inert and out of the a11y tree. */
+.searchClearHidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .scroll {
