@@ -1,7 +1,8 @@
 /**
  * Remote-mirror git markers of the enhanced workspace browser: the fetch
  * layer consuming the dsh-remote host-half endpoint
- * `GET /dsh-remote/git-workspace?local=<mirror path>` (same origin — the
+ * `GET /dsh-remote/git-workspace?local=<mirror path>` (`/api`-prefixed on
+ * Desktop, same origin — the
  * browser half fetches it directly, exactly like dsh-remote's own client),
  * and the pure merge layer that overlays the returned markers onto the
  * local git probe as VIRTUAL remote trees.
@@ -190,6 +191,11 @@ export function createRemoteGitSource(
 ): RemoteGitSource {
   const ttlMs = options.ttlMs ?? REMOTE_GIT_MARKER_TTL_MS
   const cache = new Map<string, MarkerCacheEntry>()
+  // Desktop's private carrier exposes Connection routes under /api;
+  // legacy Web hosts retain the direct dsh-remote route.
+  const endpoint = typeof window !== 'undefined' && window.location.protocol === 'dsh-app:'
+    ? `/api${REMOTE_GIT_WORKSPACE_PATH}`
+    : REMOTE_GIT_WORKSPACE_PATH
 
   const fetchOne = (path: string, refresh: boolean): Promise<RemoteGitMarker | null> => {
     const key = normalizeProbePath(path)
@@ -199,7 +205,7 @@ export function createRemoteGitSource(
     const params = new URLSearchParams()
     params.set('local', key)
     if (refresh) params.set('refresh', '1')
-    const promise = fetcher(`${REMOTE_GIT_WORKSPACE_PATH}?${params.toString()}`, { method: 'GET' })
+    const promise = fetcher(`${endpoint}?${params.toString()}`, { method: 'GET' })
       .then(async (response) => {
         if (!response.ok) {
           // 500/501: credential-less / offline machine, machine not saved,

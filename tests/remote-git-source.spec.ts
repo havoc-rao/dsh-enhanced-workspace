@@ -6,7 +6,7 @@
  * isRepo:false, malformed body, network error) resolves to "no marker",
  * never rejects, never blocks the browser.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteGitMarker } from '../src/shared/git.ts'
 import { createRemoteGitSource, type RemoteGitSource } from '../src/client/remote-git.ts'
 
@@ -54,6 +54,20 @@ function repoMarker(overrides: Partial<RemoteGitMarker> = {}): RemoteGitMarker {
 const okResponse = (marker: RemoteGitMarker | null) => ({ ok: true, status: 200, body: { ok: true, marker } })
 
 describe('createRemoteGitSource — fetch contract', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it.each(['dsh-app:', 'http:', 'https:'])('uses the %s carrier for fetch and refresh', async (protocol) => {
+    vi.stubGlobal('window', { location: { protocol } })
+    const fetcher = stubFetch(okResponse(repoMarker()))
+    const source = createRemoteGitSource(fetcher as never)
+    const prefix = protocol === 'dsh-app:' ? '/api' : ''
+    const endpoint = `${prefix}/dsh-remote/git-workspace?local=${encodeURIComponent(REMOTE_PATH)}`
+
+    expect((await source.fetchMarkers([REMOTE_PATH])).get(REMOTE_PATH)?.branch).toBe('dev')
+    expect((await source.refresh([REMOTE_PATH])).get(REMOTE_PATH)?.branch).toBe('dev')
+    expect(fetcher.mock.calls.map(call => call[0])).toEqual([endpoint, `${endpoint}&refresh=1`])
+  })
+
   it('GETs the same-origin endpoint with the local mirror path and returns the repo marker', async () => {
     const fetcher = stubFetch(okResponse(repoMarker()))
     const source = createRemoteGitSource(fetcher as never, { ttlMs: 0 })

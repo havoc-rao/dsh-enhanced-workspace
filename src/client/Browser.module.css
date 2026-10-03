@@ -110,6 +110,7 @@
 
 /* The real slot outlet retains a display:contents [data-slot] anchor even
    without an occupant; hide that empty seat too, so flex gap adds no space. */
+.searchHintHidden,
 .searchHint:empty,
 .searchHint:has(> [data-slot]:only-child:empty),
 .searchField:focus-within .searchHint {

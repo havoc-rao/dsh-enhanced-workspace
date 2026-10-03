@@ -1110,16 +1110,21 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
                 type="button"
                 className={query !== '' ? css.searchClear : `${css.searchClear} ${css.searchClearHidden}`}
                 aria-label={t('clearSearch')}
+                // Keep pointer presses from moving focus before the click.
+                // Keyboard activation still uses the normal button behavior.
+                onMouseDown={event => event.preventDefault()}
                 onClick={clearSearch}
               >
                 <IconCloseOutlineRegular size={12} />
               </button>
               {/* Optional text-only hotkey hint inside the field's right edge.
                   The search owner controls typography, placeholder-matched ink,
-                  layout and inert pointer behavior, and hides it on field focus.
+                  layout and inert pointer behavior, and hides it on field focus
+                  or whenever there is a query. Keep the outlet mounted so its
+                  provider's lifecycle does not depend on typing.
                   The provider supplies shortcut text/metadata, not visual styles;
                   slot props carry the common `inject` live search handle. */}
-              <span className={css.searchHint}>
+              <span className={query === '' ? css.searchHint : `${css.searchHint} ${css.searchHintHidden}`}>
                 {renderSlot(SEARCH_SLOT, searchOwner)}
               </span>
             </div>

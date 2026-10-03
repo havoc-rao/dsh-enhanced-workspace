@@ -1826,6 +1826,31 @@ describe('external search trigger surface (slot handle + global mirror + DOM fal
     expect(capturedSearchHandle).toBe(searchHandle)
   })
 
+  it('a populated query hides the hotkey hint even while blurred and clears on the first pointer click', async () => {
+    searchOccupied = true
+    await renderBrowser()
+    const input = container.querySelector<HTMLInputElement>(SEARCH_INPUT_SELECTOR)!
+    const hint = input.parentElement!.lastElementChild!
+    const clear = buttonByAria(zh.clearSearch)!
+
+    act(() => { searchHandle.setQuery('文档') })
+    expect(document.activeElement).not.toBe(input)
+    expect(hint.classList.contains(css.searchHintHidden)).toBe(true)
+    expect(hint.querySelector('[data-testid="search-occupant"]')).not.toBeNull()
+
+    const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    act(() => { clear.dispatchEvent(press) })
+    expect(press.defaultPrevented, 'pointer press must not shift focus before click').toBe(true)
+    click(clear)
+    expect(input.value).toBe('')
+    expect(document.activeElement).toBe(input)
+    expect(treeRowByText('绘画收集')).toBeDefined()
+    expect(hint.classList.contains(css.searchHintHidden)).toBe(false)
+
+    act(() => { searchHandle.setQuery(' ') })
+    expect(hint.classList.contains(css.searchHintHidden), 'any content hides the hint').toBe(true)
+  })
+
   it('empty search hint matches the no-gap selector, including the real outlet anchor', async () => {
     await renderBrowser()
     const field = container.querySelector(SEARCH_INPUT_SELECTOR)!.parentElement!
@@ -1845,7 +1870,7 @@ describe('external search trigger surface (slot handle + global mirror + DOM fal
     // separately from the DOM placement and actual focus transitions above.
     const stylesheet = readFileSync('src/client/Browser.module.css', 'utf8')
     expect(stylesheet).toMatch(/\.searchHint\s*\{\s*display: inline-flex;\s*align-items: center;\s*flex: none;/)
-    expect(stylesheet).toMatch(/\.searchHint:empty,\s*\.searchHint:has\(> \[data-slot\]:only-child:empty\),\s*\.searchField:focus-within \.searchHint\s*\{\s*display: none;/)
+    expect(stylesheet).toMatch(/\.searchHintHidden,\s*\.searchHint:empty,\s*\.searchHint:has\(> \[data-slot\]:only-child:empty\),\s*\.searchField:focus-within \.searchHint\s*\{\s*display: none;/)
     expect(stylesheet).toMatch(/\.searchInput\s*\{\s*flex: 1;\s*min-width: 0;/)
   })
 

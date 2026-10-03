@@ -26,6 +26,9 @@ importers:
       '@deepseek-ai/dsh-client-store':
         specifier: 0.1.7-rc.2
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)
+      '@deepseek-ai/dsh-client-ui-command-palette':
+        specifier: link:../dsh-command-palette
+        version: link:../dsh-command-palette
       '@deepseek-ai/dsh-client-ui-conversation':
         specifier: 0.1.7-rc.2
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)

@@ -41,6 +41,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 // LocaleRuntime registering this plugin's dictionary) is declared there.
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { EnhancedWorkspaceBrowser } from './Browser.tsx'
+import installWorkspacePalette from './command-palette/install.ts'
 import {
   createApprovalSeatPoller,
   APPROVAL_SEAT_PRECEDENCE,
@@ -175,6 +176,7 @@ export const inject = ['slots', 'sessions', 'workspaces', 'uiWorkspace', 'locale
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
+  installWorkspacePalette(ctx)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-enhanced-workspace: dictionaries')
 
   // Approval-status fallback seat (see approval-status.ts): publish the

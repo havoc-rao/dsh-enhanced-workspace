@@ -132,6 +132,8 @@ function purityGatePlugin(): NonNullable<UserConfig['plugins']> {
       if (!source.startsWith('@deepseek-ai/')) return null
       if (CLIENT_EXTERNALS.includes(source)) return null // platform module: external wins
       if (INLINE_SAFE.test(source)) return null // wire/type layer: inline is the point
+      // Pure, import-free title fold owned by workspace-controller (not a service).
+      if (source === '@deepseek-ai/dsh-api-workspace-controller/default-workspace') return null
       throw new Error(
         `client bundle purity: "${source}" is not a platform module (CLIENT_EXTERNALS) and not an inline-safe wire layer — `
         + 'cross-plugin value imports are forbidden; collaborate through cordis services (type-only imports are erased and never reach this gate)',

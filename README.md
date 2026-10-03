@@ -88,6 +88,29 @@ dsh plugin --profile <name> add dsh-enhanced-workspace
 `cordis.patch.yml` 随 `dsh.profile.bundles` 协调自动挂载；客户端 half 经
 `dsh.plugin.json` 的 `client.main`（`lib/client-registry.js`）加载。
 
+## 可选 Command Palette 联动
+
+同时装载 `@deepseek-ai/dsh-client-ui-command-palette` 时，本插件向其
+`commandPalette` 服务贡献「查找 / 切换工作区」命令和工作区 picker；两者 ID
+均为 `workspaces.find`（不同注册表），可作为 palette 的 Quick Open 目标。
+没有 palette 时不注册贡献、不影响工作区浏览器；服务卸载时随 fiber 清理，
+再次提供服务时重新注册。顶层 `inject` 不包含 palette，也没有 palette 运行时包依赖；
+开发时仅通过 `devDependencies` 的 `link:../dsh-command-palette` 消费 core 类型。
+
+- 数据来自完整宿主工作区列表，不受侧边栏搜索、目录折叠或分页影响。
+- 标签复用 workspace-controller 的 `workspaceDisplayTitle` helper 本地化默认
+  工作区；搜索同时匹配存储标题、显示标题、路径 basename 和完整路径。
+  查询按 NFKC、大小写与空白归一化，每个 token 必须命中；每 token 按
+  精确、前缀、子串、有序子序列计分并累加，分数相同保留宿主顺序。
+  空查询优先显示当前主视图会话所属工作区。
+- 工作区列表未 ready 或连接未 connected 时显示错误，而不是「尚无工作区」；
+  工作区、当前会话及连接变化会触发 picker 重新查询，语言切换会刷新标签。
+- 确认时重新检查连接、列表与工作区身份，取消只在 handoff 前有效；随后
+  调用浏览器已有的 `uiWorkspace.startSession(workspaceId)` void owner，复用
+  它的空会话复用/创建及导航反馈，不另造会话创建流程。
+  `completed` 仅表示请求已交接，不代表创建或导航已经完成；不等待严格
+  navigation settlement，不支持交接后撤销，也不额外发送切换成功 toast。
+
 ## 开发
 
 ```sh
