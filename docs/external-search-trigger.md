@@ -66,6 +66,21 @@ export function apply(ctx) {
 > 占用者要么只注册一个，要么显式给不同 `priority`（低者渲染）。如果外部
 > 插件只想**拿句柄、不想渲染**，`return null` 即可，不会干扰搜索框布局。
 
+### 搜索提示的样式所有权
+
+搜索 slot 位于 `searchField` 内部右侧、clear 按钮之后。快捷键 provider 只输出
+无 `style` / 样式类的 `span`（例如 macOS 的 `⇧⌘F`）及 data marker、title、
+aria-label；不使用带浏览器默认等宽字体的 `kbd`，也不由插件决定「浅色」外观。
+`Browser.module.css` 的 `.searchHint` 由搜索 owner 统一控制字体、12px 字号、
+16px 行高、不换行、flex 布局与非交互指针行为（`pointer-events: none`、
+`user-select: none`）。提示不抢焦点、不表现为可点击按钮。
+
+placeholder 与提示共享搜索 owner 的 `--search-prompt-color`，跟随同一个主题
+label token，不额外弱化提示颜色或增加 opacity；placeholder 显式 `opacity: 1`
+以消除浏览器默认透明度。输入框保持 `min-width: 0`，避免与提示重叠。
+搜索框 `focus-within` 时隐藏提示；没有 provider 或 provider 返回 null 时，
+即使真实 SlotOutlet 留下空的 `display: contents` / `data-slot` 锚点也不留 gap。
+
 ## 2. 全局镜像（热键 action 的 `run` 用这条）
 
 `Browser.tsx` 在挂载期间把同一句柄镜像到：
@@ -169,10 +184,11 @@ function actSearchEnhancedWorkspace(query) {
   声明的 `inject === searchHandle`、外部插件注册进该 slot 合法；未挂载句柄
   惰性（no-op / null / `available=false`）；DOM 兜底提交路径。
 - `tests/browser.client.spec.tsx` → `describe('external search trigger surface
-  (slot handle + global mirror + DOM fallback)')`（组件层，6 例）：宽态句柄
-  seed+focus 落到真实 input 与过滤；全局镜像与选择器常量；折叠态句柄触发
-  expandSidebar + 折叠后落焦；DOM 提交 + rail 按钮展开；占用者渲染；卸载撤回
-  句柄 / 镜像并变惰性。
+  (slot handle + global mirror + DOM fallback)')`：宽态句柄 seed+focus 落到
+  真实 input 与过滤；全局镜像与选择器常量；折叠态句柄触发 expandSidebar +
+  折叠后落焦；DOM 提交 + rail 按钮展开；无样式 span provider 在 clear 后渲染且
+  不抢焦点；真实空 outlet 不留间距；focus-within 隐藏、input 可收缩；owner
+  字体/布局/指针规则及 placeholder 与提示颜色一致；卸载撤回句柄 / 镜像。
 
 手动（真实 DSH）：
 

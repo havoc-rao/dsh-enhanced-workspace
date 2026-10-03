@@ -203,7 +203,12 @@ async function renderBrowser(
         capturedSearchHandle = searchHandle
         // Real outlets retain this layout-neutral anchor even when empty.
         return <div data-slot={SEARCH_SLOT} style={{ display: 'contents' }}>
-          {searchOccupied ? <kbd data-testid="search-occupant">⌘ K</kbd> : null}
+          {searchOccupied ? <span
+            data-testid="search-occupant"
+            data-dsh-hotkey-hint="focus.workspaceSearch"
+            title="⇧⌘F"
+            aria-label="⇧⌘F"
+          >⇧⌘F</span> : null}
         </div>
       }
       const flowOwner = owner as EnhancedDirectoryFlowOwnerProps
@@ -1804,7 +1809,13 @@ describe('external search trigger surface (slot handle + global mirror + DOM fal
     const hint = field.lastElementChild!
     expect(hint.className).toBe(css.searchHint)
     expect(hint.previousElementSibling).toBe(buttonByAria(zh.clearSearch))
-    expect(hint.querySelector('[data-testid="search-occupant"]')).not.toBeNull()
+    const occupant = hint.querySelector<HTMLElement>('[data-testid="search-occupant"]')!
+    expect(occupant.tagName).toBe('SPAN')
+    expect(occupant.textContent).toBe('⇧⌘F')
+    expect(occupant.hasAttribute('style')).toBe(false)
+    expect(occupant.hasAttribute('class')).toBe(false)
+    expect(occupant.getAttribute('aria-label')).toBe('⇧⌘F')
+    expect(occupant.getAttribute('title')).toBe('⇧⌘F')
     expect(hint.querySelector('button, input, [tabindex]')).toBeNull()
     expect(document.activeElement).not.toBe(input)
     act(() => { input.focus(); searchHandle.setQuery('文档') })
@@ -1836,6 +1847,33 @@ describe('external search trigger surface (slot handle + global mirror + DOM fal
     expect(stylesheet).toMatch(/\.searchHint\s*\{\s*display: inline-flex;\s*align-items: center;\s*flex: none;/)
     expect(stylesheet).toMatch(/\.searchHint:empty,\s*\.searchHint:has\(> \[data-slot\]:only-child:empty\),\s*\.searchField:focus-within \.searchHint\s*\{\s*display: none;/)
     expect(stylesheet).toMatch(/\.searchInput\s*\{\s*flex: 1;\s*min-width: 0;/)
+  })
+
+  it('the owner styles a text-only provider with placeholder-matched ink and inert typography', () => {
+    // jsdom does not resolve custom properties or placeholder pseudo styles.
+    // Compare the two declarations and their shared owner token, not a mocked
+    // computed color; DOM placement/focus and CSS layout rules are tested above.
+    const stylesheet = readFileSync('src/client/Browser.module.css', 'utf8')
+    const rule = (selector: string): string => {
+      const start = stylesheet.indexOf(`${selector} {`)
+      expect(start).toBeGreaterThanOrEqual(0)
+      return stylesheet.slice(start, stylesheet.indexOf('}', start) + 1)
+    }
+    const hint = rule('.searchHint')
+    const placeholder = rule('.searchInput::placeholder')
+    const color = (block: string) => block.match(/\n\s*color:\s*([^;]+);/)?.[1]
+    expect(color(hint)).toBe('var(--search-prompt-color)')
+    expect(color(placeholder)).toBe(color(hint))
+    expect(rule('.searchField')).toContain('--search-prompt-color: var(--dsw-alias-label-dimmed, rgba(128, 128, 128, 0.55));')
+    expect(hint).toContain('font: inherit;')
+    expect(hint).toContain('font-size: 12px;')
+    expect(hint).toContain('line-height: 16px;')
+    expect(hint).toContain('white-space: nowrap;')
+    expect(hint).toContain('pointer-events: none;')
+    expect(hint).toContain('user-select: none;')
+    expect(hint).toContain('cursor: default;')
+    expect(hint).not.toMatch(/opacity\s*:|color-mix\(|monospace/)
+    expect(placeholder).toContain('opacity: 1;')
   })
 
   it('unmount withdraws the handle and the global mirror (no dead external trigger)', async () => {

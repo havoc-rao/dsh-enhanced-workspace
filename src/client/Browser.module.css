@@ -58,6 +58,8 @@
    Resting state is near-invisible; the box brightens on hover and lights
    up while typing — the DSH monochrome language, no accent colors. */
 .searchField {
+  /* One owner-controlled ink for placeholder and shortcut hint in all themes. */
+  --search-prompt-color: var(--dsw-alias-label-dimmed, rgba(128, 128, 128, 0.55));
   display: flex;
   align-items: center;
   gap: 4px;
@@ -89,10 +91,21 @@
   color: var(--dsw-alias-label-secondary, rgba(128, 128, 128, 0.9));
 }
 
+/* The provider supplies only shortcut text (an unstyled span). The field
+   owner supplies the quiet, unboxed tooltip-style typography and interaction;
+   do not add a weaker hint color/opacity or rely on browser kbd defaults. */
 .searchHint {
   display: inline-flex;
   align-items: center;
   flex: none;
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--search-prompt-color);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  cursor: default;
 }
 
 /* The real slot outlet retains a display:contents [data-slot] anchor even
@@ -125,7 +138,9 @@
 }
 
 .searchInput::placeholder {
-  color: var(--dsw-alias-label-dimmed, rgba(128, 128, 128, 0.55));
+  color: var(--search-prompt-color);
+  /* Neutralize the browser's default placeholder opacity: match hint ink. */
+  opacity: 1;
 }
 
 .searchInput::-webkit-search-cancel-button,

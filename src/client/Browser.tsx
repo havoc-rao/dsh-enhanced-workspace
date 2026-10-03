@@ -1114,9 +1114,11 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
               >
                 <IconCloseOutlineRegular size={12} />
               </button>
-              {/* Optional hotkey hint inside the field's right edge; CSS hides
-                  it while the input or clear button has focus. Its props carry
-                  the slot's common `inject` face — the live search handle. */}
+              {/* Optional text-only hotkey hint inside the field's right edge.
+                  The search owner controls typography, placeholder-matched ink,
+                  layout and inert pointer behavior, and hides it on field focus.
+                  The provider supplies shortcut text/metadata, not visual styles;
+                  slot props carry the common `inject` live search handle. */}
               <span className={css.searchHint}>
                 {renderSlot(SEARCH_SLOT, searchOwner)}
               </span>
