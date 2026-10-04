@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import { createPaletteController } from '@deepseek-ai/dsh-client-ui-command-palette/core'
 import type { Command, ItemId, Picker, QueryBatch } from '@deepseek-ai/dsh-client-ui-command-palette/core'
 import installWorkspacePalette from '../src/client/command-palette/install.ts'
-import { createWorkspacePicker, registerWorkspaceProvider, WORKSPACE_COMMAND_ID, WORKSPACE_PICKER_ID, type WorkspaceAdapter, type WorkspaceRecord } from '../src/client/command-palette/provider.ts'
+import { createWorkspacePicker, registerWorkspaceProvider, WORKSPACE_COMMAND_ID, WORKSPACE_PICKER_ID, workspaceTag, type WorkspaceAdapter, type WorkspaceRecord } from '../src/client/command-palette/provider.ts'
 
 const row = (id: string, title: string, path = `/projects/${id}`, displayTitle = title): WorkspaceRecord => ({
   workspaceId: id, title, displayTitle, path, sessionIds: [id],
@@ -116,6 +117,83 @@ describe('workspace palette provider', () => {
   })
 })
 
+describe('two-layer palette compatibility', () => {
+  it('searches across tag and child fields without leaking unrelated commands; accepts pure English and legacy rows', () => {
+    let language = 'zh-CN'
+    const controller = createPaletteController({ captureContext: () => undefined, getLocale: () => language })
+    const action = { kind: 'action' as const, execute: () => ({ kind: 'completed' as const }) }
+    controller.registerCommand({ id: 'workspace.switch' as Command['id'],
+      describe: () => ({ title: '切换', localizedTitles: { zh: '切换', en: 'Switch' }, pluginTag: workspaceTag }), target: action })
+    controller.registerCommand({ id: 'other.switch' as Command['id'],
+      describe: () => ({ title: 'Switch', pluginTag: { id: 'other', title: 'Other' } }), target: action })
+    controller.registerCommand({ id: 'english.open' as Command['id'],
+      describe: () => ({ title: 'Open', localizedTitles: { en: 'Open' },
+        pluginTag: { id: 'english', title: 'English', localizedTitles: { en: 'English' } } }), target: action })
+    controller.registerCommand({ id: 'legacy.open' as Command['id'],
+      describe: () => ({ title: 'Legacy Open', category: 'Legacy' }), target: action })
+    try {
+      controller.openCommands()
+      for (const query of ['wsp swt', '工区 switch', '工作区 切换']) {
+        controller.setQuery(query)
+        expect(controller.getSnapshot().rows.map(row => row.id)).toEqual(['workspace.switch'])
+      }
+      for (const locale of ['zh-CN', 'en-US']) {
+        language = locale
+        controller.setQuery('english open')
+        expect(controller.getSnapshot().rows).toMatchObject([{ label: 'Open', pluginTagLabel: 'English' }])
+        expect(controller.getSnapshot().rows).toHaveLength(1)
+        expect(controller.getSnapshot().rows[0]!.secondaryLabel).toBeUndefined()
+        expect(controller.getSnapshot().rows[0]!.pluginTagSecondaryLabel).toBeUndefined()
+        controller.setQuery('legacy')
+        expect(controller.getSnapshot().rows).toMatchObject([{ label: 'Legacy Open', detail: 'Legacy' }])
+        expect(controller.getSnapshot().rows[0]!.pluginTagId).toBeUndefined()
+      }
+    } finally { controller.dispose() }
+  })
+
+  it('preserves picker entry/back navigation and detaches an active picker when the provider unloads', async () => {
+    const f = fixture([row('a', 'A')])
+    const offInvalidation = vi.fn()
+    f.adapter.subscribe = vi.fn(() => offInvalidation)
+    const controller = createPaletteController({ captureContext: () => undefined, getLocale: () => 'zh' })
+    const off = registerWorkspaceProvider(controller, f.adapter)
+    try {
+      controller.openCommands()
+      controller.setQuery('wsp swt')
+      const key = controller.getSnapshot().rows[0]!.key
+      expect(controller.getSnapshot().rows[0]).toMatchObject({ iconId: 'open', pluginTagIconId: 'workspace' })
+      await controller.accept(key)
+      expect(controller.getSnapshot()).toMatchObject({ mode: 'picker', pickerId: WORKSPACE_PICKER_ID, canGoBack: true })
+      expect(controller.getSnapshot().rows).toMatchObject([{ id: 'a', label: 'A' }])
+      const assertResourceIcons = () => {
+        expect(controller.getSnapshot().rows).toHaveLength(1)
+        for (const resource of controller.getSnapshot().rows) {
+          expect(resource.iconId).toBeUndefined()
+          expect(resource.pluginTagIconId).toBeUndefined()
+          expect(resource.icon).toBeUndefined()
+        }
+      }
+      assertResourceIcons()
+      controller.close()
+      expect(controller.openPicker(WORKSPACE_PICKER_ID)).toBe(true)
+      assertResourceIcons() // Direct quick-open must not inherit the tag either.
+      controller.close()
+      controller.openCommands()
+      controller.setQuery('wsp swt')
+      await controller.accept(key)
+      assertResourceIcons()
+      expect(controller.back()).toBe(true)
+      expect(controller.getSnapshot()).toMatchObject({ mode: 'commands', query: 'wsp swt', selectedKey: key })
+      expect(offInvalidation).toHaveBeenCalledTimes(3)
+      await controller.accept(key)
+      off(); off()
+      expect(offInvalidation).toHaveBeenCalledTimes(4)
+      expect(controller.getSnapshot().rows).toEqual([])
+      expect(f.openWorkspace).not.toHaveBeenCalled()
+    } finally { off(); controller.dispose() }
+  })
+})
+
 describe('optional palette installation', () => {
   it('waits for the optional service, reuses title owner/openWorkspace, invalidates and cleans up', async () => {
     let activate: ((ctx: Context) => void) | undefined
@@ -152,10 +230,47 @@ describe('optional palette installation', () => {
     expect(picker).toBeUndefined()
     activate!(ctx as unknown as Context)
     expect(command!.id).toBe('workspaces.find')
+    // Use the real cmd matcher: both languages must find one localized row.
+    const controller = createPaletteController({ captureContext: () => undefined, getLocale: () => language })
+    controller.registerPicker(picker!)
+    controller.registerCommand(command!)
+    controller.openCommands()
+    const assertSearch = (title: string, category: string) => {
+      const descriptor = command!.describe(undefined)
+      expect(descriptor).toMatchObject({ title, category, iconId: 'open',
+        localizedTitles: { zh: '切换工作区', en: 'Switch Workspace' },
+        pluginTag: { id: 'workspace', title: 'Workspace', iconId: 'workspace', localizedTitles: { zh: '工作区', en: 'Workspace' } } })
+      expect(descriptor.pluginTag).toBe(workspaceTag)
+      expect(descriptor.title).not.toContain(' · ')
+      for (const query of ['', '切换工作区', 'Switch Workspace', '工作区', 'Workspace',
+        '搜索工作区', 'open workspace', '切换 workspace', 'switch 工作区',
+        'wsp swt', '工区 switch', 'workspace', 'wsp', '工区', 'swt', 'workspaces.find']) {
+        controller.setQuery(query)
+        expect(controller.getSnapshot().rows).toMatchObject([{ id: WORKSPACE_COMMAND_ID, label: title, detail: category,
+          iconId: 'open', pluginTagIconId: 'workspace' }])
+        expect(controller.getSnapshot().rows).toHaveLength(1)
+        const row = controller.getSnapshot().rows[0]!
+        if (language === 'zh') {
+          expect(row).toMatchObject({ secondaryLabel: 'Switch Workspace', secondaryLocale: 'en',
+            pluginTagId: 'workspace', pluginTagLabel: '工作区', pluginTagSecondaryLabel: 'Workspace' })
+        } else {
+          expect(row).toMatchObject({ pluginTagId: 'workspace', pluginTagLabel: 'Workspace' })
+          expect(row.secondaryLabel).toBeUndefined()
+          expect(row.secondaryLocale).toBeUndefined()
+          expect(row.pluginTagSecondaryLabel).toBeUndefined()
+        }
+      }
+      controller.setQuery('unrelated')
+      expect(controller.getSnapshot().rows).toEqual([])
+    }
+    assertSearch('切换工作区', '工作区')
     const args = { query: '', limit: 10, context: undefined, signal: new AbortController().signal }
     expect((await picker!.query(args)).items[0]?.label).toBe('默认工作区')
     language = 'en'; listeners.locale()
     expect(refresh).toHaveBeenCalledOnce()
+    controller.refresh()
+    assertSearch('Switch Workspace', 'Workspace')
+    controller.dispose()
     expect((await picker!.query(args)).items[0]?.label).toBe('Default Workspace')
     const invalidate = vi.fn()
     const unsubscribe = picker!.subscribeInvalidation!(invalidate)

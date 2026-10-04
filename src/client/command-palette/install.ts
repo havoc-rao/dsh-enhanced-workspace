@@ -6,16 +6,16 @@ import type {} from '@deepseek-ai/dsh-client-ui-workspace/client';
 import type {} from '@deepseek-ai/dsh-client-locale/client';
 import type {} from '@deepseek-ai/dsh-client-ui-session/client';
 import type { PaletteService } from '@deepseek-ai/dsh-client-ui-command-palette/core';
-import { registerWorkspaceProvider, type WorkspaceAdapter, type WorkspaceCopy } from './provider.ts';
+import { registerWorkspaceProvider, workspaceCommandMetadata, type WorkspaceAdapter, type WorkspaceCopy } from './provider.ts';
 
 const NS = 'enhancedWorkspacePalette' as const;
 const zh: WorkspaceCopy = {
-  commandTitle: '查找 / 切换工作区', category: '工作区', pickerTitle: '切换工作区',
+  commandTitle: workspaceCommandMetadata.zh.title, category: workspaceCommandMetadata.zh.category, pickerTitle: '切换工作区',
   placeholder: '搜索工作区名称或路径…', emptyText: '尚无工作区', noResultsText: '没有匹配的工作区',
   unavailable: '工作区列表尚未就绪', missing: '该工作区已不存在', disconnected: '连接已断开', defaultName: '默认工作区',
 };
 const en: WorkspaceCopy = {
-  commandTitle: 'Find / Switch Workspace', category: 'Workspace', pickerTitle: 'Switch Workspace',
+  commandTitle: workspaceCommandMetadata.en.title, category: workspaceCommandMetadata.en.category, pickerTitle: 'Switch Workspace',
   placeholder: 'Search workspace names or paths…', emptyText: 'No workspaces yet', noResultsText: 'No matching workspaces',
   unavailable: 'Workspace catalogue is not ready', missing: 'This workspace no longer exists', disconnected: 'Connection is disconnected', defaultName: 'Default Workspace',
 };

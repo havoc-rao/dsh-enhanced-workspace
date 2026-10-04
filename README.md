@@ -93,12 +93,19 @@ dsh plugin --profile <name> add dsh-enhanced-workspace
 ## 可选 Command Palette 联动
 
 同时装载 `@deepseek-ai/dsh-client-ui-command-palette` 时，本插件向其
-`commandPalette` 服务贡献「查找 / 切换工作区」命令和工作区 picker；两者 ID
+`commandPalette` 服务贡献「切换工作区 / Switch Workspace」命令和工作区 picker；两者 ID
 均为 `workspaces.find`（不同注册表），可作为 palette 的 Quick Open 目标。
 没有 palette 时不注册贡献、不影响工作区浏览器；服务卸载时随 fiber 清理，
 再次提供服务时重新注册。顶层 `inject` 不包含 palette，也没有 palette 运行时包依赖；
 开发时仅通过 `devDependencies` 的 `link:../dsh-command-palette` 消费 core 类型。
 
+- 命令描述提供两层独立双语：稳定 `workspace` 总 tag（工作区 / Workspace）与
+  子命令（切换工作区 / Switch Workspace）。title 仅返回当前语言，不拼接译文；
+  保留 aliases/category。面板负责 locale 显示与两层 fuzzy 搜索，支持 `wsp swt`、
+  `工区 switch`；纯英文与旧 provider 兼容，无强制 subtitle。
+  图标已接入语义 ID：总 tag 为 `workspace`（工作区树），切换子命令为 `open`
+  （打开的文件夹，不因 picker target 使用放大镜）；资源项不继承 tag 图标。
+  详见[对接协议与验证边界](docs/command-palette.md)。
 - 数据来自完整宿主工作区列表，不受侧边栏搜索、目录折叠或分页影响。
 - 标签复用 workspace-controller 的 `workspaceDisplayTitle` helper 本地化默认
   工作区；搜索同时匹配存储标题、显示标题、路径 basename 和完整路径。

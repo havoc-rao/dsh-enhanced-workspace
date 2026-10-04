@@ -28,8 +28,25 @@ export interface WorkspaceCopy {
   emptyText: string; noResultsText: string; unavailable: string; missing: string;
   disconnected: string; defaultName: string;
 }
+/** Stable domain tag shared by every workspace command; titles never include the tag. */
+export const workspaceTag = {
+  id: 'workspace',
+  title: 'Workspace',
+  localizedTitles: { zh: '工作区', en: 'Workspace' },
+  iconId: 'workspace',
+} as const;
+/** Independent child-command translations; the palette owns display and fuzzy search. */
+export const workspaceCommandMetadata = {
+  zh: { title: '切换工作区', category: '工作区' },
+  en: { title: 'Switch Workspace', category: 'Workspace' },
+} as const;
+const workspaceCommandAliases: readonly string[] = [
+  ...Object.values(workspaceCommandMetadata).flatMap(({ title, category }) => [title, category]),
+  '查找工作区', '搜索工作区', '打开工作区', '切换项目',
+  'find workspace', 'search workspace', 'open workspace', 'switch project',
+];
 export const defaultWorkspaceCopy: WorkspaceCopy = {
-  commandTitle: '查找 / 切换工作区', category: '工作区', pickerTitle: '切换工作区',
+  commandTitle: workspaceCommandMetadata.zh.title, category: workspaceCommandMetadata.zh.category, pickerTitle: '切换工作区',
   placeholder: '搜索工作区名称或路径…', emptyText: '尚无工作区', noResultsText: '没有匹配的工作区',
   unavailable: '工作区列表尚未就绪', missing: '该工作区已不存在',
   disconnected: '连接已断开', defaultName: '默认工作区',
@@ -125,7 +142,16 @@ export function registerWorkspaceProvider<C = unknown>(
   try {
     removeCommand = palette.registerCommand({
       id: WORKSPACE_COMMAND_ID,
-      describe: () => ({ title: copy().commandTitle, category: copy().category }),
+      describe: () => {
+        const text = copy();
+        return {
+          pluginTag: workspaceTag,
+          iconId: 'open',
+          title: text.commandTitle,
+          localizedTitles: { zh: workspaceCommandMetadata.zh.title, en: workspaceCommandMetadata.en.title },
+          category: text.category, aliases: workspaceCommandAliases,
+        };
+      },
       target: { kind: 'picker', pickerId: WORKSPACE_PICKER_ID },
     });
   } catch (error) { removePicker(); throw error; }
