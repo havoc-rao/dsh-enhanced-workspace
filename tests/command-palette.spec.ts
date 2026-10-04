@@ -11,14 +11,14 @@ function fixture(items: WorkspaceRecord[] = []) {
   let phase = 'ready'
   let connected = true
   let current: string | undefined
-  const startSession = vi.fn()
+  const openWorkspace = vi.fn(async () => {})
   const adapter: WorkspaceAdapter = {
     getSnapshot: () => ({ phase, items }), isConnected: () => connected,
-    getCurrentSessionId: () => current, subscribe: vi.fn(() => vi.fn()), startSession,
+    getCurrentSessionId: () => current, subscribe: vi.fn(() => vi.fn()), openWorkspace,
   }
   const picker = createWorkspacePicker(adapter)
   const controller = new AbortController()
-  return { picker, adapter, startSession, controller,
+  return { picker, adapter, openWorkspace, controller,
     setPhase: (value: string) => { phase = value },
     setConnected: (value: boolean) => { connected = value },
     setCurrent: (value: string) => { current = value },
@@ -58,21 +58,48 @@ describe('workspace palette provider', () => {
     f.setPhase('ready'); f.setConnected(false)
     await expect(f.query()).rejects.toThrow('连接已断开')
     expect(await f.accept('a')).toMatchObject({ kind: 'failed', message: '连接已断开' })
-    expect(f.startSession).not.toHaveBeenCalled()
+    expect(f.openWorkspace).not.toHaveBeenCalled()
     expect(await fixture().query()).toEqual({ items: [], hasMore: false })
   })
-  it('rechecks membership, cancels before handoff, and never reports navigation settlement or a success toast', async () => {
+  it('rechecks membership, cancels before handoff, and never emits a success toast', async () => {
     const items = [row('a', 'A')]
     const f = fixture(items)
     await f.query(); items.length = 0
     expect(await f.accept('a')).toMatchObject({ kind: 'failed' })
     items.push(row('a', 'A'))
     expect(await f.accept('a')).toEqual({ kind: 'completed' })
-    expect(f.startSession).toHaveBeenCalledExactlyOnceWith('a')
+    expect(f.openWorkspace).toHaveBeenCalledExactlyOnceWith('a')
     f.controller.abort()
     expect(await f.accept('a')).toEqual({ kind: 'cancelled' })
-    expect(f.startSession).toHaveBeenCalledTimes(1)
+    expect(f.openWorkspace).toHaveBeenCalledTimes(1)
     expect(await f.query()).toEqual({ items: [], hasMore: false })
+  })
+  it('awaits navigation and reports rejected opens with workspace context and the original error', async () => {
+    const f = fixture([row('a', 'A', '/missing/project')])
+    let reject!: (error: Error) => void
+    f.openWorkspace.mockImplementation(() => new Promise<void>((_resolve, fail) => { reject = fail }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      let settled = false
+      const accepted = Promise.resolve(f.accept('a')).then(result => { settled = true; return result })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+      const error = new Error('workspace directory does not exist')
+      reject(error)
+      expect(await accepted).toEqual({ kind: 'failed', message: error.message })
+      expect(warn).toHaveBeenCalledExactlyOnceWith('dsh-enhanced-workspace: open workspace failed',
+        { workspaceId: 'a', path: '/missing/project' }, error)
+    } finally { warn.mockRestore() }
+  })
+  it('honors cancellation after navigation handoff without trying a second open', async () => {
+    const f = fixture([row('a', 'A')])
+    let finish!: () => void
+    f.openWorkspace.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
+    const accepted = f.accept('a')
+    f.controller.abort()
+    finish()
+    expect(await accepted).toEqual({ kind: 'cancelled' })
+    expect(f.openWorkspace).toHaveBeenCalledTimes(1)
   })
   it('registers stable IDs and releases contributions idempotently, including partial failure', () => {
     const removePicker = vi.fn(), removeCommand = vi.fn()
@@ -90,7 +117,7 @@ describe('workspace palette provider', () => {
 })
 
 describe('optional palette installation', () => {
-  it('waits for the optional service, reuses title owner/startSession, invalidates and cleans up', async () => {
+  it('waits for the optional service, reuses title owner/openWorkspace, invalidates and cleans up', async () => {
     let activate: ((ctx: Context) => void) | undefined
     const disposers: (() => void)[] = []
     let picker: Picker | undefined
@@ -102,7 +129,7 @@ describe('optional palette installation', () => {
     let language = 'zh'
     let dictionaries: Record<string, Record<string, string>> = {}
     let connected = true
-    const startSession = vi.fn(), refresh = vi.fn()
+    const openWorkspace = vi.fn(async () => {}), refresh = vi.fn()
     const ctx = {
       inject: vi.fn((_keys, callback) => { activate = callback }),
       effect: (effect: () => () => void) => { disposers.push(effect()) },
@@ -114,7 +141,7 @@ describe('optional palette installation', () => {
       },
       workspaces: { list: { getSnapshot: () => ({ phase: 'ready', items: [row('default', 'default-workspace')] }), subscribe: (fn: () => void) => { listeners.workspace = fn; return off.workspace } } },
       sessions: { list: { getSnapshot: () => ({ byId: {} }), subscribe: (fn: () => void) => { listeners.session = fn; return off.session } } },
-      uiWorkspace: { startSession },
+      uiWorkspace: { openWorkspace },
       commandPalette: {
         registerPicker: (value: Picker) => { picker = value; return off.picker },
         registerCommand: (value: Command) => { command = value; return off.command }, refresh,
@@ -135,7 +162,7 @@ describe('optional palette installation', () => {
     listeners.workspace(); listeners.session(); listeners.connection()
     expect(invalidate).toHaveBeenCalledTimes(3)
     expect(await picker!.accept('default' as ItemId, args)).toEqual({ kind: 'completed' })
-    expect(startSession).toHaveBeenCalledExactlyOnceWith('default')
+    expect(openWorkspace).toHaveBeenCalledExactlyOnceWith('default')
     connected = false
     expect(await picker!.accept('default' as ItemId, args)).toMatchObject({ kind: 'failed' })
     unsubscribe(); disposers.reverse().forEach(dispose => dispose())

@@ -40,7 +40,7 @@ import { ROOT_FOLDER_ID, recentGroupKey, workspaceChild, type FolderId, type Fol
 import { zh } from '../src/client/locales.ts'
 import type { EnhancedWorkspaceState } from '../src/client/store.ts'
 import { createEnhancedWorkspaceStore } from '../src/client/store.ts'
-import { sessionMention } from '../src/client/reference.ts'
+import { sessionMention, workspaceMention } from '../src/client/reference.ts'
 
 const W = (id: string): WorkspaceId => id as WorkspaceId
 
@@ -1277,13 +1277,11 @@ describe('enhanced workspace browser', () => {
     const workspaceRow = treeRowByText('绘画收集')!
     if (workspaceRow.getAttribute('aria-expanded') !== 'true') click(workspaceRow)
     const sessionRow = sessionRowByText('画布草图')!
-    // The workspace drag references its primary session (current, else the
-    // most recent member — s1 here, fixture current is undefined) under the
-    // workspace title; the session drag references the session itself.
+    // Workspace drag targets the workspace; only session drag references history.
     const expected: Record<string, Record<string, unknown>> = {
       workspace: {
-        version: 1, kind: 'workspace', id: 'w-art', label: '绘画收集', sessionId: 's1',
-        mention: sessionMention('s1', '绘画收集'),
+        version: 1, kind: 'workspace', id: 'w-art', label: '绘画收集',
+        mention: workspaceMention('w-art', '绘画收集'),
       },
       session: {
         version: 1, kind: 'session', id: 's1', label: '画布草图',
@@ -1302,6 +1300,22 @@ describe('enhanced workspace browser', () => {
       expect(transfer.effectAllowed).toBe(effect)
       act(() => { row.dispatchEvent(dragEvent('dragend', 0)) })
     }
+  })
+
+  it('exports an empty collapsed workspace as a workspace target without selecting history', async () => {
+    workspacesState = { ...WORKSPACES_STATE, items: [workspace('w-empty', '空工作区', [])] }
+    const props = await renderBrowser()
+    const row = treeRowByText('空工作区')!
+    const data = new Map<string, string>()
+    const event = new Event('dragstart', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', { value: { effectAllowed: '', setData: (key: string, value: string) => data.set(key, value) } })
+    act(() => { row.dispatchEvent(event) })
+    expect(JSON.parse(data.get('application/x-dsh-reference+json')!)).toEqual({
+      version: 1, kind: 'workspace', id: 'w-empty', label: '空工作区', mention: workspaceMention('w-empty', '空工作区'),
+    })
+    expect(data.get('text/plain')).toBe(workspaceMention('w-empty', '空工作区'))
+    expect(props.open).not.toHaveBeenCalled()
+    act(() => { row.dispatchEvent(dragEvent('dragend', 0)) })
   })
 
   it('drags a workspace onto a folder row: the drop moves it into that folder (appended)', async () => {
@@ -1919,6 +1933,19 @@ describe('the add entry and the plugin-owned directory-flow hole', () => {
     expect(flowOwners, 'the hole stays unrendered while unoccupied').toHaveLength(0)
     expect(props.pickDirectory).toHaveBeenCalled()
     expect(props.createWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('unoccupied hole: picker failures log the original error and do not create a workspace', async () => {
+    const props = await renderBrowser()
+    const error = new Error('native directory picker unavailable')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const pickDirectory = vi.fn(async () => { throw error })
+      await rerenderWith({ pickDirectory })
+      await act(async () => { click(buttonByAria(zh.addWorkspace)!) })
+      expect(warn).toHaveBeenCalledExactlyOnceWith('dsh-enhanced-workspace: pick directory failed', error)
+      expect(props.createWorkspace).not.toHaveBeenCalled()
+    } finally { warn.mockRestore() }
   })
 
   it('occupied hole: clicking add renders the occupant with the flow owner conversation', async () => {

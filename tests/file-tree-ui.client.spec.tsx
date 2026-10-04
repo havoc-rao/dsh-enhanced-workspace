@@ -44,7 +44,7 @@ import { DIRECTORY_FLOW_SLOT, SEARCH_SLOT, type EnhancedWorkspaceBrowserProps } 
 import { createFileTreeUiResolver } from '../src/client/index.tsx'
 import { zh } from '../src/client/locales.ts'
 import { ROOT_FOLDER_ID, type FolderId, type FolderRecord } from '../src/client/model.ts'
-import { sessionMention } from '../src/client/reference.ts'
+import { sessionMention, workspaceMention } from '../src/client/reference.ts'
 import { createEnhancedWorkspaceStore, type EnhancedWorkspaceState } from '../src/client/store.ts'
 import type { GitProbeResultJSON } from '../src/shared/git.ts'
 
@@ -841,6 +841,23 @@ describe('fileTreeUi service path (FolderRow)', () => {
 })
 
 describe('fileTreeUi service path (LeafRow)', () => {
+  it('exports workspace identity from framework rows even for an empty workspace', async () => {
+    workspacesState = { ...WORKSPACES_STATE, items: [...WORKSPACES, workspace('w-empty', '空工作区', [])] }
+    await renderBrowser()
+    fileTreeUiSeat = makeFileTreeUiService()
+    await rerender()
+    for (const [id, label] of [['w-art', '绘画收集'], ['w-empty', '空工作区']] as const) {
+      const row = treeRowByText(label)!
+      const drag = dragStartWithPayload(row)
+      expect(JSON.parse(drag.payloads['application/x-dsh-reference+json']!)).toEqual({
+        version: 1, kind: 'workspace', id, label, mention: workspaceMention(id, label),
+      })
+      expect(drag.payloads['text/plain']).toBe(workspaceMention(id, label))
+      expect(drag.effectAllowed).toBe('copyMove')
+      act(() => { row.dispatchEvent(dragEvent('dragend', 0)) })
+    }
+  })
+
   it('seats the collapsed busy marker in the restingIndicator slot, hidden on hover by the provider rule', async () => {
     // '绘画收集' is collapsed with two unread completions → the top-priority
     // done dot sits in the actions slot at rest.

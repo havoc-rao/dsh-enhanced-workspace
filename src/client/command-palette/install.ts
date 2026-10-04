@@ -55,8 +55,8 @@ export default function installWorkspacePalette(ctx: Context): void {
           try { offWorkspaces(); } finally { try { offSessions(); } finally { offConnection(); } }
         };
       },
-      // Exact same navigation action as enhanced's injected startSession.
-      startSession: workspaceId => { paletteCtx.uiWorkspace.startSession(workspaceId as WorkspaceId); },
+      // Unlike startSession's void handoff, this public API preserves failures.
+      openWorkspace: workspaceId => paletteCtx.uiWorkspace.openWorkspace(workspaceId as WorkspaceId),
     };
     paletteCtx.effect(() => registerWorkspaceProvider(palette, adapter, copy));
     paletteCtx.effect(() => paletteCtx.locale.subscribe(() => palette.refresh()));

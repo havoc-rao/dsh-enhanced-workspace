@@ -4,12 +4,11 @@ import {
   WORKSPACE_REFERENCE_MIME,
   encodeDragReference,
   encodeSessionReferenceUri,
-  getActiveReference,
   parseDragReference,
   sessionMention,
   sessionReferencePayload,
-  stashActiveReference,
   workspaceReferencePayload,
+  workspaceMention,
 } from '../src/client/reference.ts'
 
 describe('encodeSessionReferenceUri (DSH host wire mirror)', () => {
@@ -37,22 +36,24 @@ describe('sessionMention', () => {
 })
 
 describe('workspaceReferencePayload', () => {
-  it('references the primary session under the workspace title label', () => {
-    const payload = workspaceReferencePayload({
-      id: 'ws-1',
-      label: 'dsh-enhanced-workspace',
-      primarySession: { id: 'sess-9', title: '重构 dnd 框架' },
-    })
-    expect(payload.kind).toBe('workspace')
-    expect(payload.sessionId).toBe('sess-9')
-    expect(payload.mention).toBe(sessionMention('sess-9', 'dsh-enhanced-workspace'))
-    expect(payload.label).toBe('dsh-enhanced-workspace')
+  it('preserves workspace identity without selecting any session', () => {
+    const payload = workspaceReferencePayload({ id: 'ws-1', label: '项目' })
+    expect(payload).toEqual({ version: 1, kind: 'workspace', id: 'ws-1', label: '项目', mention: workspaceMention('ws-1', '项目') })
+    expect(payload).not.toHaveProperty('sessionId')
+    expect(payload.mention).not.toContain('dsh-session:')
   })
 
-  it('falls back to the plain title (never the raw uuid) without a referenceable session', () => {
-    const payload = workspaceReferencePayload({ id: 'ws-1', label: '空工作区' })
-    expect(payload.sessionId).toBeUndefined()
-    expect(payload.mention).toBe('空工作区')
+  it('keeps an empty workspace referenceable, never falling back to plain title', () => {
+    const payload = workspaceReferencePayload({ id: 'ws-empty', label: '空工作区' })
+    const raw = payload.mention.slice('@workspace-ref/'.length)
+    expect(JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'))).toEqual({ id: 'ws-empty', label: '空工作区' })
+  })
+
+  it('mirrors workspace-chain UTF-8 JSON property order and base64url byte-for-byte', () => {
+    for (const [id, label] of [['ws-1', '标题'], ['工作区-αβ', 'a\\b]c / + = 😀'], ['x'.repeat(200), '']]) {
+      const encoded = Buffer.from(JSON.stringify({ id, label }), 'utf8').toString('base64url')
+      expect(workspaceMention(id!, label!)).toBe(`@workspace-ref/${encoded}`)
+    }
   })
 })
 
@@ -73,7 +74,6 @@ describe('payload encode/parse round trip', () => {
     const payload = workspaceReferencePayload({
       id: 'ws-1',
       label: 'L',
-      primarySession: { id: 'sess-1' },
     })
     expect(parseDragReference(encodeDragReference(payload))).toEqual(payload)
   })
@@ -86,18 +86,6 @@ describe('payload encode/parse round trip', () => {
     expect(parseDragReference('{"kind":"workspace","id":"a","mention":"b","label":"c"}')).toBeNull()
     expect(parseDragReference('{"version":1,"kind":"ufo","id":"a","mention":"b","label":"c"}')).toBeNull()
     expect(parseDragReference('{"version":1,"kind":"workspace","id":42}')).toBeNull()
-  })
-})
-
-describe('active-drag stash', () => {
-  it('holds exactly the latest stashed payload and clears on null', () => {
-    stashActiveReference(null)
-    expect(getActiveReference()).toBeNull()
-    const payload = sessionReferencePayload({ id: 'sess-1' })
-    stashActiveReference(payload)
-    expect(getActiveReference()).toBe(payload)
-    stashActiveReference(null)
-    expect(getActiveReference()).toBeNull()
   })
 })
 

@@ -29,12 +29,14 @@ Harness 本体**：以 `priority: -1` 遮蔽 `sidebar.workspaces` 槽位，替�
   仅拖该行并把选中态转移给它；目录收起 / 折叠全部后，被隐藏行的选中项自动
   修剪（选中态是瞬态视图状态，不持久化）。组解析为纯函数
   （`resolveGroupDrop` / `orderedDragSources`，drag.spec 全量覆盖）
-- **拖到对话区 = 引用**：工作区 / 会话行拖入聊天输入列（composer 或会话区任意
-  位置）时，填入的是 DSH 规范的会话引用 mention（`@[label](dsh-session:…)`，
-  工作区行引用其当前 / 最近活跃会话，标签用工作区标题）——提交时由 DSH 本体
-  预置管线解析为真实引用会话上下文；不再是一串原始 uuid。路由层（`reference.ts`
-  协议 + `chat-drop.ts` 窗口级拦截 + 悬浮 pill 提示）挂在 fiber 级，侧边栏收起
-  仍生效；拖到任意文本输入处则为常规文本插入（同样拿到 mention）。
+- **工作区 / 会话拖动引用**：行拖动保留 version 1 的
+  `application/x-dsh-reference+json`（kind/id/label/mention）和规范 `text/plain`。
+  工作区使用 workspace-chain 的 `@workspace-ref/<base64url(JSON({id,label}))>`
+  编码，仅定位工作区 / 指定任务目标，**不会自动选择当前或最近会话**；空工作区
+  同样可定位。会话行保留 DSH canonical session mention，显式引用该会话的历史。
+  对话输入的结构化 drop / chip 插入由 **workspace-chain** 统一负责，并以 live
+  kind/id 验证目标；本插件只提供拖动源，不监听窗口级对话 drop，不直接写 composer。
+  侧栏树内移动、排序和整组拖动保持原行为。
 - **内置状态复刻**：会话行状态点（running = 像素追逐 loading 动画 /
   等待处理 / 已完成），所在目录与工作区行（含最近使用行）同步点亮图标；
   **目录行聚合状态点**：收起时有会话在工作/等待/完成的目录行（含逐层
@@ -105,11 +107,12 @@ dsh plugin --profile <name> add dsh-enhanced-workspace
   空查询优先显示当前主视图会话所属工作区。
 - 工作区列表未 ready 或连接未 connected 时显示错误，而不是「尚无工作区」；
   工作区、当前会话及连接变化会触发 picker 重新查询，语言切换会刷新标签。
-- 确认时重新检查连接、列表与工作区身份，取消只在 handoff 前有效；随后
-  调用浏览器已有的 `uiWorkspace.startSession(workspaceId)` void owner，复用
-  它的空会话复用/创建及导航反馈，不另造会话创建流程。
-  `completed` 仅表示请求已交接，不代表创建或导航已经完成；不等待严格
-  navigation settlement，不支持交接后撤销，也不额外发送切换成功 toast。
+- 确认时重新检查连接、列表与工作区身份；随后等待公开
+  `uiWorkspace.openWorkspace(workspaceId)`，复用宿主的空会话复用/创建与导航策略，
+  不另造会话创建流程。打开拒绝时返回 `failed` 并在浏览器 console 记录工作区
+  ID、路径与原始错误，不再把 void handoff 提前报告为 `completed`。
+  宿主仍负责导航 supersession：正常 resolve 也可能表示请求被后续导航取代，
+  因而不额外发送切换成功 toast。交接后取消只抑制结果反馈，不撤销宿主导航。
 
 ## 开发
 

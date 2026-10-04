@@ -115,7 +115,6 @@ import {
   orderDeltas,
   pendingInteractionOf,
   RECENT_GROUP_KEY_PREFIX,
-  referenceSessionOf,
   currentSessionIdOf,
   sessionStatusDot,
   sessionStatusTableOf,
@@ -145,7 +144,6 @@ import {
   WORKSPACE_REFERENCE_MIME,
   encodeDragReference,
   sessionReferencePayload,
-  stashActiveReference,
   workspaceReferencePayload,
 } from './reference.ts'
 import type { GitProbeResultJSON, GitTreeInfoJSON, RemoteGitMarker } from '../shared/git.ts'
@@ -768,7 +766,14 @@ export function EnhancedWorkspaceBrowser(props: EnhancedWorkspaceBrowserProps): 
    *  the hole's occupant; unoccupied → open the native directory picker. */
   const openAddEntry = (): void => {
     if (directoryFlowAvailable) setFlowOpen(true)
-    else void pickDirectory().then(path => { if (path !== null) void addWorkspace(path) })
+    else void (async () => {
+      try {
+        const path = await pickDirectory()
+        if (path !== null) await addWorkspace(path)
+      } catch (error) {
+        console.warn('dsh-enhanced-workspace: pick directory failed', error)
+      }
+    })()
   }
 
   // Owner share of the search hole. Deliberately empty (the slot publishes
@@ -1644,17 +1649,13 @@ function GroupedView(props: {
   return (
     // The container swallows dragover/drop so a drag released on empty space
     // cancels instead of navigating (dropped text must never leave the region).
-    // `data-dsh-ew-browser` marks the whole tree as plugin-owned for the
-    // window-level chat-drop router (zones inside it are never intercepted).
     <div
       className={css.grouped}
-      data-dsh-ew-browser=""
       onDragOver={event => { if (dragSource !== null) event.preventDefault() }}
       onDrop={event => {
         if (dragSource === null) return
         event.preventDefault()
         clearDrag()
-        stashActiveReference(null)
       }}
     >
       {props.fileTreeUi === undefined
@@ -2264,9 +2265,9 @@ function LeafRow(props: {
     </div>
   )
   // Workspace drags copyMove an `application/x-dsh-reference+json` reference
-  // plus the canonical session-reference mention as `text/plain` (what any
-  // text surface — the conversation composer first of all — inserts; the
-  // drop-zone judgement (rowDropZone) stays in the consumer — only the
+  // plus the canonical workspace reference as `text/plain`. workspace-chain
+  // owns composer insertion; tree drop-zone judgement (rowDropZone) stays
+  // in this consumer — only the
   // visual three-state goes to the service row.
   const workspaceDragStart = (event: DragEvent<HTMLDivElement>): void => {
     const transfer = event.dataTransfer
@@ -2275,11 +2276,9 @@ function LeafRow(props: {
       const payload = workspaceReferencePayload({
         id: leaf.workspaceId as string,
         label: leaf.label,
-        primarySession: leaf.primarySession,
       })
       transfer.setData(WORKSPACE_REFERENCE_MIME, encodeDragReference(payload))
       transfer.setData('text/plain', payload.mention)
-      stashActiveReference(payload)
     }
     props.drag.onDragStart({ kind: 'workspace', id: leaf.workspaceId as string })
   }
@@ -2660,7 +2659,6 @@ function SessionRow(props: {
     })
     event.dataTransfer.setData(WORKSPACE_REFERENCE_MIME, encodeDragReference(payload))
     event.dataTransfer.setData('text/plain', payload.mention)
-    stashActiveReference(payload)
   }
   // The status-dot leading slot (16px fixed, with a visually hidden label).
   const statusSlot = (
@@ -3047,7 +3045,6 @@ function sessionLeafOf(
     .map(id => sessions.byId[id as SessionId])
     .filter((summary): summary is SessionSummary => summary !== undefined)
     .filter(summary => !summary.blank && summary.origin !== 'subagent')
-  const primarySession = referenceSessionOf(members, currentSessionIdOf(sessions))
   return {
     key: workspace.workspaceId,
     workspaceId: workspace.workspaceId,
@@ -3057,7 +3054,6 @@ function sessionLeafOf(
     sessionCount: workspace.sessionIds.length,
     expanded,
     containsCurrent: currentSessionIdOf(sessions) !== undefined && workspace.sessionIds.includes(currentSessionIdOf(sessions) as SessionId),
-    ...(primarySession === undefined ? {} : { primarySession }),
     // Repo-group leaves carry no subagent descendant index (their session
     // rows render runningSubagentCount: 0 too) — own activity only.
     status: workspaceSessionStatus(members, undefined, statuses),
@@ -3283,7 +3279,6 @@ function sessionRowModel(props: {
     })
     event.dataTransfer.setData(WORKSPACE_REFERENCE_MIME, encodeDragReference(payload))
     event.dataTransfer.setData('text/plain', payload.mention)
-    stashActiveReference(payload)
   }
   // The status-dot leading slot (16px fixed, with a visually hidden label).
   const statusSlot = (
@@ -3463,11 +3458,9 @@ function leafRowModel(props: {
       const payload = workspaceReferencePayload({
         id: leaf.workspaceId as string,
         label: leaf.label,
-        primarySession: leaf.primarySession,
       })
       transfer.setData(WORKSPACE_REFERENCE_MIME, encodeDragReference(payload))
       transfer.setData('text/plain', payload.mention)
-      stashActiveReference(payload)
     }
     props.drag.onDragStart({ kind: 'workspace', id: leaf.workspaceId as string })
   }

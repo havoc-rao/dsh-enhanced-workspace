@@ -48,10 +48,6 @@ import {
   type ApprovalSeatEntry,
 } from './approval-status.ts'
 import {
-  createChatDropAffordance,
-  installChatDropRouter,
-} from './chat-drop.ts'
-import {
   DIRECTORY_FLOW_SLOT,
   FILE_TREE_UI_SERVICE,
   FILE_TREE_UI_PROTOCOL_VERSION,
@@ -202,26 +198,6 @@ export function apply(ctx: ClientContext): void {
     poller.start()
     return () => { poller.stop() }
   }, 'dsh-enhanced-workspace: approval status seat')
-
-  // Drag → chat-input router (fiber level, NOT the browser tree — the sidebar
-  // may be collapsed while the chat column stays live). Plugin workspace and
-  // session rows drag a canonical DSH session-reference mention; this router
-  // routes drops over the conversation column into the composer draft, where
-  // DSH's own plain-text reference scan and the host's pre-step mention parse
-  // turn them into real referenced-session context (see chat-drop.ts).
-  ctx.effect(() => {
-    const affordance = createChatDropAffordance()
-    const offRouter = installChatDropRouter({
-      onActive: payload => affordance.update(payload),
-      onInsert: () => {
-        /* Framework seam: post-insert feedback (toast / flash) hooks here. */
-      },
-    })
-    return () => {
-      offRouter()
-      affordance.dispose()
-    }
-  }, 'dsh-enhanced-workspace: chat drop router')
 
   // Resolve the service at call time; a captured absent handle must not
   // permanently disable persistence after the connection becomes available.

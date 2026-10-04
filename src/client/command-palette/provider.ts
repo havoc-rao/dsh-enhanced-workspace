@@ -20,8 +20,8 @@ export interface WorkspaceAdapter {
   isConnected(): boolean;
   /** Subscribe to BOTH catalogue and current-session retention changes. */
   subscribe(listener: () => void): Disposer;
-  /** Existing enhanced-workspace startSession callback. Returns after handoff. */
-  startSession(workspaceId: string): void;
+  /** Public navigation completion; supersession may resolve without opening. */
+  openWorkspace(workspaceId: string): Promise<void>;
 }
 export interface WorkspaceCopy {
   commandTitle: string; category: string; pickerTitle: string; placeholder: string;
@@ -93,7 +93,7 @@ export function createWorkspacePicker<C = unknown>(adapter: WorkspaceAdapter,
         id: record.workspaceId as ItemId, label: record.displayTitle, detail: record.path,
       })), hasMore: ranked.length > bound };
     },
-    accept: (id, { signal }) => {
+    accept: async (id, { signal }) => {
       if (signal.aborted) return { kind: 'cancelled' };
       const snapshot = adapter.getSnapshot();
       if (!adapter.isConnected()) return { kind: 'failed', message: copy().disconnected };
@@ -101,9 +101,16 @@ export function createWorkspacePicker<C = unknown>(adapter: WorkspaceAdapter,
       const record = snapshot.items.find(workspace => workspace.workspaceId === id);
       if (!record) return { kind: 'failed', message: copy().missing };
       if (signal.aborted) return { kind: 'cancelled' };
-      // Not navigation settlement: reuses the existing void-returning enhanced action.
-      adapter.startSession(record.workspaceId);
-      return { kind: 'completed' };
+      try {
+        await adapter.openWorkspace(record.workspaceId);
+        // The host owns supersession; do not announce success or open again.
+        return signal.aborted ? { kind: 'cancelled' } : { kind: 'completed' };
+      } catch (error: unknown) {
+        console.warn('dsh-enhanced-workspace: open workspace failed',
+          { workspaceId: record.workspaceId, path: record.path }, error);
+        if (signal.aborted) return { kind: 'cancelled' };
+        return { kind: 'failed', message: error instanceof Error ? error.message : String(error) };
+      }
     },
     subscribeInvalidation: listener => adapter.subscribe(listener),
   };
