@@ -10,12 +10,12 @@ import { registerWorkspaceProvider, workspaceCommandMetadata, type WorkspaceAdap
 
 const NS = 'enhancedWorkspacePalette' as const;
 const zh: WorkspaceCopy = {
-  commandTitle: workspaceCommandMetadata.zh.title, category: workspaceCommandMetadata.zh.category, pickerTitle: '切换工作区',
+  commandTitle: workspaceCommandMetadata.zh.title, category: workspaceCommandMetadata.zh.category, pickerTitle: '选择工作区新建会话',
   placeholder: '搜索工作区名称或路径…', emptyText: '尚无工作区', noResultsText: '没有匹配的工作区',
   unavailable: '工作区列表尚未就绪', missing: '该工作区已不存在', disconnected: '连接已断开', defaultName: '默认工作区',
 };
 const en: WorkspaceCopy = {
-  commandTitle: workspaceCommandMetadata.en.title, category: workspaceCommandMetadata.en.category, pickerTitle: 'Switch Workspace',
+  commandTitle: workspaceCommandMetadata.en.title, category: workspaceCommandMetadata.en.category, pickerTitle: 'Choose a Workspace for a New Session',
   placeholder: 'Search workspace names or paths…', emptyText: 'No workspaces yet', noResultsText: 'No matching workspaces',
   unavailable: 'Workspace catalogue is not ready', missing: 'This workspace no longer exists', disconnected: 'Connection is disconnected', defaultName: 'Default Workspace',
 };
@@ -55,8 +55,18 @@ export default function installWorkspacePalette(ctx: Context): void {
           try { offWorkspaces(); } finally { try { offSessions(); } finally { offConnection(); } }
         };
       },
-      // Unlike startSession's void handoff, this public API preserves failures.
-      openWorkspace: workspaceId => paletteCtx.uiWorkspace.openWorkspace(workspaceId as WorkspaceId),
+      // Explicit create never reuses a blank session (unlike openWorkspace/startSession).
+      createNewSession: async (workspaceId, signal) => {
+        if (signal.aborted) return;
+        const sessionId = await paletteCtx.sessions.create({ workspaceId: workspaceId as WorkspaceId });
+        // Host creation is committed; cancellation leaves it catalogued but does not navigate.
+        if (signal.aborted) return;
+        if (!adapter.isConnected()) throw new Error(copy().disconnected);
+        const latest = adapter.getSnapshot();
+        if (latest.phase !== 'ready') throw new Error(copy().unavailable);
+        if (!latest.items.some(row => row.workspaceId === workspaceId)) throw new Error(copy().missing);
+        paletteCtx.uiWorkspace.openSession(sessionId);
+      },
     };
     paletteCtx.effect(() => registerWorkspaceProvider(palette, adapter, copy));
     paletteCtx.effect(() => paletteCtx.locale.subscribe(() => palette.refresh()));

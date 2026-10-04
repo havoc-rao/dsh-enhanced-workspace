@@ -23,7 +23,7 @@ const workspaceTag = {
 return {
   pluginTag: workspaceTag,
   iconId: 'open',
-  title: copy().commandTitle, // zh: 切换工作区；en: Switch Workspace
+  title: copy().commandTitle, // zh: 选择工作区新建会话；en: Create New Session
   localizedTitles: {
     zh: workspaceCommandMetadata.zh.title,
     en: workspaceCommandMetadata.en.title,
@@ -43,7 +43,7 @@ tag 与 child 的 zh/en 都是可选字段，纯英文、仅 title 的旧 provid
 
 tag 的 ID/title/zh/en 和 child 的 ID/title/zh/en、aliases/category 全部由
 面板做 fuzzy 搜索（精确、前缀、子串、顺序非连续字符），所有 token 均需匹配，
-可跨层命中。例如 `wsp swt`、`工区 switch` 都找到工作区切换命令。
+可跨层命中。例如 `wsp swt`、`工区 switch` 都通过兼容别名找到新建会话入口。
 不要为了命令搜索改变资源 picker 的查询逻辑。
 
 ## 已接入的图标选型
@@ -58,17 +58,17 @@ controller 的 `DisplayRow.iconId/pluginTagIconId` 传递纯数据，palette UI 
 | 贡献 | 生产字段与取值 | palette UI 映射的 DSH 共享组件 | 理由 |
 | --- | --- | --- | --- |
 | 总 tag `workspace`（工作区 / Workspace） | `pluginTag.iconId: 'workspace'` | `IconWorkspaceTreeOutlineRegular` | 表示工作区域/目录树身份 |
-| 唯一子命令 `workspaces.find`（切换工作区 / Switch Workspace，target 为 picker） | `CommandDescriptor.iconId: 'open'` | `IconFolderOpenOutlineRegular` | 打开的文件夹表达打开/切换工作区入口，不使用放大镜；仅覆盖自身，不改变 tag |
-| picker `workspaces.find` 返回的工作区资源项 | 不配置 item iconId 或旧 icon | 保留原有资源回退 | 资源不是子命令，不继承 workspace tag 或 open 动作图标 |
+| 唯一子命令 `workspaces.find`（选择工作区新建会话 / Create New Session，target 为 picker） | `CommandDescriptor.iconId: 'open'` | `IconFolderOpenOutlineRegular` | 保留用户指定的打开文件夹图标，表示选择工作区并进入新会话，不使用放大镜；仅覆盖自身，不改变 tag |
+| picker `workspaces.find` 返回的工作区资源项 | `PickerItem.iconId: 'workspace'` | `IconWorkspaceTreeOutlineRegular` | 本插件显式配置工作区身份图标，不继承 tag 或 open 动作图标 |
 
-切换工作区的主要动作是打开/切换目标，故选 `open`，**不因 target 为 picker
-就强制放大镜**。`search` → `IconSearchOutlineRegular` 仍是通用查询/查找语义，
-供真正以查询为主要动作的其他命令使用，不是本插件切换工作区的选型。
+命令现在明确表达「选择工作区新建会话」，图标保留用户此前指定的 `open`（不改为放大镜）。
+总 tag 仍是 workspace，资源项显式设置 workspace 图标而非继承；search/create/git 是公开可选语义，
+本次不扩展命令数量。旧切换/查找别名及 `workspaces.find` ID 保留兼容，但执行
+语义已经改为创建新会话，不再仅打开或复用已有空会话。
 
-当前没有 palette 创建工作区或 Git 子命令，因此不选 `create` / `git`，也不为
-图标展示新增没有业务实现的贡献。未来若真正贡献创建动作，再独立选择 `create`
-（`IconPlusOutlineRegular`）；Git 动作/领域如有需要再选择 `git`
-（`IconBranchOutlineRegular`）。同一插件的子命令可以使用不同语义 ID。
+picker 标题为「选择工作区新建会话 / Choose a Workspace for a New Session」。
+每项 label 保留工作区名称，detail 只显示路径，不重复新建会话动作前缀；
+搜索字段和排名保持原样。
 
 ### 回退约定与验证边界
 
@@ -80,7 +80,7 @@ controller 的 `DisplayRow.iconId/pluginTagIconId` 传递纯数据，palette UI 
 - 图标与 locale 无关、不参与 fuzzy 搜索，UI 使用 currentColor 与统一尺寸。
 - 本仓库真实 controller 回归验证命令行同时传递 `iconId: 'open'` 与
   `pluginTagIconId: 'workspace'`，语言切换后保持一致；由命令进入与直接打开
-  picker 的资源行都不继承这两个字段。UI resolver 自身的完整映射、未知 ID
+  picker 的资源行都有自己的 `iconId: 'workspace'`，不继承 `pluginTagIconId`。UI resolver 自身的完整映射、未知 ID
   及旧文本兼容测试归 palette 仓库维护。
 - 已接入源码和 snapshot 不等于已部署到宿主浏览器；本轮未做真实 GUI 验证，
   不宣称当前页面已加载新的打开文件夹 SVG。
@@ -89,8 +89,11 @@ controller 的 `DisplayRow.iconId/pluginTagIconId` 传递纯数据，palette UI 
 
 - picker 使用完整宿主目录，不读取侧栏折叠/过滤后的 DOM；queryMode 为 local。
 - picker 自己匹配名称、显示名、路径和 basename，排序、截断并返回 hasMore。
-- accept 重新解析最新目录、连接状态与目标；提交前检查 abort，等待公开
-  `uiWorkspace.openWorkspace`；提交后取消不回滚，不重复打开或发送成功 toast。
+- accept 重新解析最新目录、连接状态与目标；提交前检查 abort，调用公开
+  `sessions.create({ workspaceId })` 创建新身份（不传现有 sessionId、不复用空会话），
+  await 后再检查 signal/连接/目录与成员，再 `uiWorkspace.openSession(sessionId)`。
+  取消不会回滚已经提交的创建，但阻止尚未交接的导航；创建失败不打开旧会话。
+  completed 表示创建完成并已交接导航，不承诺视图加载完成。
 - workspace/session/connection 的订阅仅在 picker 激活时由控制器管理；locale
   改变动态刷新文案；注册失败回滚 picker，注销幂等并逆序清理。
 

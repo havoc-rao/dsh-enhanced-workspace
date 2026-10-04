@@ -20,8 +20,8 @@ export interface WorkspaceAdapter {
   isConnected(): boolean;
   /** Subscribe to BOTH catalogue and current-session retention changes. */
   subscribe(listener: () => void): Disposer;
-  /** Public navigation completion; supersession may resolve without opening. */
-  openWorkspace(workspaceId: string): Promise<void>;
+  /** Create a fresh session, then navigate only while still attached. */
+  createNewSession(workspaceId: string, signal: AbortSignal): Promise<void>;
 }
 export interface WorkspaceCopy {
   commandTitle: string; category: string; pickerTitle: string; placeholder: string;
@@ -37,16 +37,16 @@ export const workspaceTag = {
 } as const;
 /** Independent child-command translations; the palette owns display and fuzzy search. */
 export const workspaceCommandMetadata = {
-  zh: { title: '切换工作区', category: '工作区' },
-  en: { title: 'Switch Workspace', category: 'Workspace' },
+  zh: { title: '选择工作区新建会话', category: '工作区' },
+  en: { title: 'Create New Session', category: 'Workspace' },
 } as const;
 const workspaceCommandAliases: readonly string[] = [
   ...Object.values(workspaceCommandMetadata).flatMap(({ title, category }) => [title, category]),
-  '查找工作区', '搜索工作区', '打开工作区', '切换项目',
+  '切换工作区', 'Switch Workspace', '新建会话', 'create new session', 'new session', '查找工作区', '搜索工作区', '打开工作区', '切换项目',
   'find workspace', 'search workspace', 'open workspace', 'switch project',
 ];
 export const defaultWorkspaceCopy: WorkspaceCopy = {
-  commandTitle: workspaceCommandMetadata.zh.title, category: workspaceCommandMetadata.zh.category, pickerTitle: '切换工作区',
+  commandTitle: workspaceCommandMetadata.zh.title, category: workspaceCommandMetadata.zh.category, pickerTitle: '选择工作区新建会话',
   placeholder: '搜索工作区名称或路径…', emptyText: '尚无工作区', noResultsText: '没有匹配的工作区',
   unavailable: '工作区列表尚未就绪', missing: '该工作区已不存在',
   disconnected: '连接已断开', defaultName: '默认工作区',
@@ -108,6 +108,7 @@ export function createWorkspacePicker<C = unknown>(adapter: WorkspaceAdapter,
       const bound = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0;
       return { items: ranked.slice(0, bound).map(({ record }) => ({
         id: record.workspaceId as ItemId, label: record.displayTitle, detail: record.path,
+        iconId: 'workspace',
       })), hasMore: ranked.length > bound };
     },
     accept: async (id, { signal }) => {
@@ -119,11 +120,11 @@ export function createWorkspacePicker<C = unknown>(adapter: WorkspaceAdapter,
       if (!record) return { kind: 'failed', message: copy().missing };
       if (signal.aborted) return { kind: 'cancelled' };
       try {
-        await adapter.openWorkspace(record.workspaceId);
-        // The host owns supersession; do not announce success or open again.
+        await adapter.createNewSession(record.workspaceId, signal);
+        // Cancellation never rolls back a session already created on the host.
         return signal.aborted ? { kind: 'cancelled' } : { kind: 'completed' };
       } catch (error: unknown) {
-        console.warn('dsh-enhanced-workspace: open workspace failed',
+        console.warn('dsh-enhanced-workspace: create session failed',
           { workspaceId: record.workspaceId, path: record.path }, error);
         if (signal.aborted) return { kind: 'cancelled' };
         return { kind: 'failed', message: error instanceof Error ? error.message : String(error) };

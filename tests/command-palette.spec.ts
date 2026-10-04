@@ -12,14 +12,14 @@ function fixture(items: WorkspaceRecord[] = []) {
   let phase = 'ready'
   let connected = true
   let current: string | undefined
-  const openWorkspace = vi.fn(async () => {})
+  const createNewSession = vi.fn(async (_workspaceId: string, _signal: AbortSignal) => {})
   const adapter: WorkspaceAdapter = {
     getSnapshot: () => ({ phase, items }), isConnected: () => connected,
-    getCurrentSessionId: () => current, subscribe: vi.fn(() => vi.fn()), openWorkspace,
+    getCurrentSessionId: () => current, subscribe: vi.fn(() => vi.fn()), createNewSession,
   }
   const picker = createWorkspacePicker(adapter)
   const controller = new AbortController()
-  return { picker, adapter, openWorkspace, controller,
+  return { picker, adapter, createNewSession, controller,
     setPhase: (value: string) => { phase = value },
     setConnected: (value: boolean) => { connected = value },
     setCurrent: (value: string) => { current = value },
@@ -59,7 +59,7 @@ describe('workspace palette provider', () => {
     f.setPhase('ready'); f.setConnected(false)
     await expect(f.query()).rejects.toThrow('连接已断开')
     expect(await f.accept('a')).toMatchObject({ kind: 'failed', message: '连接已断开' })
-    expect(f.openWorkspace).not.toHaveBeenCalled()
+    expect(f.createNewSession).not.toHaveBeenCalled()
     expect(await fixture().query()).toEqual({ items: [], hasMore: false })
   })
   it('rechecks membership, cancels before handoff, and never emits a success toast', async () => {
@@ -69,16 +69,16 @@ describe('workspace palette provider', () => {
     expect(await f.accept('a')).toMatchObject({ kind: 'failed' })
     items.push(row('a', 'A'))
     expect(await f.accept('a')).toEqual({ kind: 'completed' })
-    expect(f.openWorkspace).toHaveBeenCalledExactlyOnceWith('a')
+    expect(f.createNewSession).toHaveBeenCalledExactlyOnceWith('a', f.controller.signal)
     f.controller.abort()
     expect(await f.accept('a')).toEqual({ kind: 'cancelled' })
-    expect(f.openWorkspace).toHaveBeenCalledTimes(1)
+    expect(f.createNewSession).toHaveBeenCalledTimes(1)
     expect(await f.query()).toEqual({ items: [], hasMore: false })
   })
   it('awaits navigation and reports rejected opens with workspace context and the original error', async () => {
     const f = fixture([row('a', 'A', '/missing/project')])
     let reject!: (error: Error) => void
-    f.openWorkspace.mockImplementation(() => new Promise<void>((_resolve, fail) => { reject = fail }))
+    f.createNewSession.mockImplementation(() => new Promise<void>((_resolve, fail) => { reject = fail }))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       let settled = false
@@ -88,19 +88,19 @@ describe('workspace palette provider', () => {
       const error = new Error('workspace directory does not exist')
       reject(error)
       expect(await accepted).toEqual({ kind: 'failed', message: error.message })
-      expect(warn).toHaveBeenCalledExactlyOnceWith('dsh-enhanced-workspace: open workspace failed',
+      expect(warn).toHaveBeenCalledExactlyOnceWith('dsh-enhanced-workspace: create session failed',
         { workspaceId: 'a', path: '/missing/project' }, error)
     } finally { warn.mockRestore() }
   })
   it('honors cancellation after navigation handoff without trying a second open', async () => {
     const f = fixture([row('a', 'A')])
     let finish!: () => void
-    f.openWorkspace.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
+    f.createNewSession.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
     const accepted = f.accept('a')
     f.controller.abort()
     finish()
     expect(await accepted).toEqual({ kind: 'cancelled' })
-    expect(f.openWorkspace).toHaveBeenCalledTimes(1)
+    expect(f.createNewSession).toHaveBeenCalledTimes(1)
   })
   it('registers stable IDs and releases contributions idempotently, including partial failure', () => {
     const removePicker = vi.fn(), removeCommand = vi.fn()
@@ -168,7 +168,7 @@ describe('two-layer palette compatibility', () => {
       const assertResourceIcons = () => {
         expect(controller.getSnapshot().rows).toHaveLength(1)
         for (const resource of controller.getSnapshot().rows) {
-          expect(resource.iconId).toBeUndefined()
+          expect(resource.iconId).toBe('workspace')
           expect(resource.pluginTagIconId).toBeUndefined()
           expect(resource.icon).toBeUndefined()
         }
@@ -189,13 +189,13 @@ describe('two-layer palette compatibility', () => {
       off(); off()
       expect(offInvalidation).toHaveBeenCalledTimes(4)
       expect(controller.getSnapshot().rows).toEqual([])
-      expect(f.openWorkspace).not.toHaveBeenCalled()
+      expect(f.createNewSession).not.toHaveBeenCalled()
     } finally { off(); controller.dispose() }
   })
 })
 
 describe('optional palette installation', () => {
-  it('waits for the optional service, reuses title owner/openWorkspace, invalidates and cleans up', async () => {
+  it('waits for the optional service, reuses title owner/createNewSession, invalidates and cleans up', async () => {
     let activate: ((ctx: Context) => void) | undefined
     const disposers: (() => void)[] = []
     let picker: Picker | undefined
@@ -207,7 +207,8 @@ describe('optional palette installation', () => {
     let language = 'zh'
     let dictionaries: Record<string, Record<string, string>> = {}
     let connected = true
-    const openWorkspace = vi.fn(async () => {}), refresh = vi.fn()
+    const createSession = vi.fn(async (_opts: { workspaceId: string }) => 'fresh-session'), openSession = vi.fn(),
+      openWorkspace = vi.fn(), refresh = vi.fn()
     const ctx = {
       inject: vi.fn((_keys, callback) => { activate = callback }),
       effect: (effect: () => () => void) => { disposers.push(effect()) },
@@ -218,8 +219,8 @@ describe('optional palette installation', () => {
         subscribe: (fn: () => void) => { listeners.locale = fn; return off.locale },
       },
       workspaces: { list: { getSnapshot: () => ({ phase: 'ready', items: [row('default', 'default-workspace')] }), subscribe: (fn: () => void) => { listeners.workspace = fn; return off.workspace } } },
-      sessions: { list: { getSnapshot: () => ({ byId: {} }), subscribe: (fn: () => void) => { listeners.session = fn; return off.session } } },
-      uiWorkspace: { openWorkspace },
+      sessions: { create: createSession, list: { getSnapshot: () => ({ byId: {} }), subscribe: (fn: () => void) => { listeners.session = fn; return off.session } } },
+      uiWorkspace: { openSession, openWorkspace },
       commandPalette: {
         registerPicker: (value: Picker) => { picker = value; return off.picker },
         registerCommand: (value: Command) => { command = value; return off.command }, refresh,
@@ -238,20 +239,20 @@ describe('optional palette installation', () => {
     const assertSearch = (title: string, category: string) => {
       const descriptor = command!.describe(undefined)
       expect(descriptor).toMatchObject({ title, category, iconId: 'open',
-        localizedTitles: { zh: '切换工作区', en: 'Switch Workspace' },
+        localizedTitles: { zh: '选择工作区新建会话', en: 'Create New Session' },
         pluginTag: { id: 'workspace', title: 'Workspace', iconId: 'workspace', localizedTitles: { zh: '工作区', en: 'Workspace' } } })
       expect(descriptor.pluginTag).toBe(workspaceTag)
       expect(descriptor.title).not.toContain(' · ')
       for (const query of ['', '切换工作区', 'Switch Workspace', '工作区', 'Workspace',
         '搜索工作区', 'open workspace', '切换 workspace', 'switch 工作区',
-        'wsp swt', '工区 switch', 'workspace', 'wsp', '工区', 'swt', 'workspaces.find']) {
+        'wsp swt', '工区 switch', 'workspace', 'wsp', '工区', 'swt', 'workspaces.find', '新建会话', 'create new session', 'wsp new']) {
         controller.setQuery(query)
         expect(controller.getSnapshot().rows).toMatchObject([{ id: WORKSPACE_COMMAND_ID, label: title, detail: category,
           iconId: 'open', pluginTagIconId: 'workspace' }])
         expect(controller.getSnapshot().rows).toHaveLength(1)
         const row = controller.getSnapshot().rows[0]!
         if (language === 'zh') {
-          expect(row).toMatchObject({ secondaryLabel: 'Switch Workspace', secondaryLocale: 'en',
+          expect(row).toMatchObject({ secondaryLabel: 'Create New Session', secondaryLocale: 'en',
             pluginTagId: 'workspace', pluginTagLabel: '工作区', pluginTagSecondaryLabel: 'Workspace' })
         } else {
           expect(row).toMatchObject({ pluginTagId: 'workspace', pluginTagLabel: 'Workspace' })
@@ -263,21 +264,42 @@ describe('optional palette installation', () => {
       controller.setQuery('unrelated')
       expect(controller.getSnapshot().rows).toEqual([])
     }
-    assertSearch('切换工作区', '工作区')
+    assertSearch('选择工作区新建会话', '工作区')
     const args = { query: '', limit: 10, context: undefined, signal: new AbortController().signal }
-    expect((await picker!.query(args)).items[0]?.label).toBe('默认工作区')
+    expect(picker!.describe(undefined).title).toBe('选择工作区新建会话')
+    expect((await picker!.query(args)).items[0]).toMatchObject({ label: '默认工作区', detail: '/projects/default' })
     language = 'en'; listeners.locale()
     expect(refresh).toHaveBeenCalledOnce()
     controller.refresh()
-    assertSearch('Switch Workspace', 'Workspace')
+    assertSearch('Create New Session', 'Workspace')
     controller.dispose()
-    expect((await picker!.query(args)).items[0]?.label).toBe('Default Workspace')
+    expect(picker!.describe(undefined).title).toBe('Choose a Workspace for a New Session')
+    expect((await picker!.query(args)).items[0]).toMatchObject({ label: 'Default Workspace', detail: '/projects/default' })
     const invalidate = vi.fn()
     const unsubscribe = picker!.subscribeInvalidation!(invalidate)
     listeners.workspace(); listeners.session(); listeners.connection()
     expect(invalidate).toHaveBeenCalledTimes(3)
     expect(await picker!.accept('default' as ItemId, args)).toEqual({ kind: 'completed' })
-    expect(openWorkspace).toHaveBeenCalledExactlyOnceWith('default')
+    expect(createSession).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'default' })
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('fresh-session')
+    expect(openWorkspace).not.toHaveBeenCalled()
+    await picker!.accept('default' as ItemId, args)
+    expect(createSession).toHaveBeenCalledTimes(2) // No reuse even if an existing blank is present.
+    expect(openSession).toHaveBeenCalledTimes(2)
+    let finish!: (id: string) => void
+    createSession.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const cancellation = new AbortController()
+    const pending = picker!.accept('default' as ItemId, { ...args, signal: cancellation.signal })
+    cancellation.abort()
+    finish('created-but-not-opened')
+    expect(await pending).toEqual({ kind: 'cancelled' })
+    expect(openSession).toHaveBeenCalledTimes(2)
+    createSession.mockRejectedValueOnce(new Error('creation refused'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(await picker!.accept('default' as ItemId, args)).toMatchObject({ kind: 'failed', message: 'creation refused' })
+      expect(openSession).toHaveBeenCalledTimes(2)
+    } finally { warn.mockRestore() }
     connected = false
     expect(await picker!.accept('default' as ItemId, args)).toMatchObject({ kind: 'failed' })
     unsubscribe(); disposers.reverse().forEach(dispose => dispose())
