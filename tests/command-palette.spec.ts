@@ -203,7 +203,7 @@ describe('optional palette installation', () => {
     const listeners: Record<'workspace' | 'session' | 'connection' | 'locale', () => void> = {
       workspace: vi.fn(), session: vi.fn(), connection: vi.fn(), locale: vi.fn(),
     }
-    const off = { workspace: vi.fn(), session: vi.fn(), connection: vi.fn(), locale: vi.fn(), dictionary: vi.fn(), picker: vi.fn(), command: vi.fn() }
+    const off = { workspace: vi.fn(), session: vi.fn(), connection: vi.fn(), locale: vi.fn(), dictionary: vi.fn(), picker: vi.fn(), command: vi.fn(), browserCommand: vi.fn(), panel: vi.fn() }
     let language = 'zh'
     let dictionaries: Record<string, Record<string, string>> = {}
     let connected = true
@@ -222,8 +222,12 @@ describe('optional palette installation', () => {
       sessions: { create: createSession, list: { getSnapshot: () => ({ byId: {} }), subscribe: (fn: () => void) => { listeners.session = fn; return off.session } } },
       uiWorkspace: { openSession, openWorkspace },
       commandPalette: {
+        registerPanel: () => off.panel,
         registerPicker: (value: Picker) => { picker = value; return off.picker },
-        registerCommand: (value: Command) => { command = value; return off.command }, refresh,
+        registerCommand: (value: Command) => {
+          if (value.id === 'workspaces.browse-files') return off.browserCommand
+          command = value; return off.command
+        }, refresh,
       },
     }
     installWorkspacePalette(ctx as unknown as Context)

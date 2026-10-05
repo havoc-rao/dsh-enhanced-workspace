@@ -44,6 +44,8 @@ import {
   PERSISTENCE_SAVE_ENDPOINT,
 } from './shared/persistence.ts'
 import { GIT_PROBE_ENDPOINT } from './shared/git.ts'
+import { FILE_BROWSER_ENDPOINT, type BrowserRequest } from './shared/file-browser.ts'
+import { browseWorkspace, type BrowserRegistry } from './host/file-browser.ts'
 import {
   probeGitIndex,
   serializeGitRepoIndex,
@@ -186,6 +188,14 @@ export function apply(ctx: Context): void {
               details: {},
             },
           } as const
+        }
+      }
+      if (endpoint === FILE_BROWSER_ENDPOINT) {
+        try {
+          const registry = ctx.get('workspaceRegistry' as never) as unknown as BrowserRegistry | undefined
+          return { ok: true, value: await browseWorkspace(registry, payload as BrowserRequest) } as const
+        } catch (error) {
+          return { ok: false, error: { code: 'internal', message: String(error), details: {} } } as const
         }
       }
       if (endpoint === APPROVAL_PENDING_ENDPOINT) {

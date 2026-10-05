@@ -8,6 +8,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client';
 import type { PaletteService } from '@deepseek-ai/dsh-client-ui-command-palette/core';
 import { registerWorkspaceProvider, workspaceCommandMetadata, type WorkspaceAdapter, type WorkspaceCopy } from './provider.ts';
 
+import { registerFileBrowser } from './install-file-browser.tsx';
+
 const NS = 'enhancedWorkspacePalette' as const;
 const zh: WorkspaceCopy = {
   commandTitle: workspaceCommandMetadata.zh.title, category: workspaceCommandMetadata.zh.category, pickerTitle: '选择工作区新建会话',
@@ -69,6 +71,7 @@ export default function installWorkspacePalette(ctx: Context): void {
       },
     };
     paletteCtx.effect(() => registerWorkspaceProvider(palette, adapter, copy));
+    paletteCtx.effect(() => registerFileBrowser(paletteCtx, palette, adapter));
     paletteCtx.effect(() => paletteCtx.locale.subscribe(() => palette.refresh()));
   });
 }
