@@ -624,7 +624,7 @@ describe('fileTreeUi hover card interlock', () => {
     const props = latestProps
     // The hover-card trigger is the wrapper span around the label slot's
     // anchor (the framework's rowLabel span wraps that wrapper).
-    const anchorWrapper = (): HTMLElement => label.firstElementChild as HTMLElement
+    const anchorWrapper = (): HTMLElement => label.querySelector<HTMLElement>('[data-dsw-enh-hover-anchor]')!
 
     const dwell = async (): Promise<void> => {
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 700)) })
@@ -956,6 +956,49 @@ describe('fileTreeUi service path (LeafRow)', () => {
     expect(props.startSession).toHaveBeenCalledWith('w-acme')
   })
 
+  it.each([false, true])('keeps workspace expansion unchanged when activating the portaled card (expanded=%s)', async (expanded) => {
+    vi.useFakeTimers()
+    const prior = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    try {
+      await renderBrowser()
+      fileTreeUiSeat = makeFileTreeUiService()
+      await rerender()
+      if (expanded) click(treeRowByText('绘画收集')!)
+      const row = treeRowByText('绘画收集')!
+      const label = row.querySelector<HTMLElement>('[class*="rowLabel"]')!
+      pointerEnter(label.querySelector('[data-dsw-enh-hover-anchor]')!)
+      act(() => { vi.advanceTimersByTime(500) })
+      const body = document.body.querySelector<HTMLElement>('[class*="hoverContent"]')!
+      expect(body).not.toBeNull()
+      const card = body.closest<HTMLElement>('[role="button"]')!
+      expect(card).not.toBeNull()
+      const expectUnchanged = (): void => {
+        expect(treeRowByText('绘画收集')!.getAttribute('aria-expanded')).toBe(String(expanded))
+      }
+      // Keyboard activation and clicks on the primitive's padding must not
+      // reach the framework row. Copy feedback replaces the original body,
+      // so a content-only stopPropagation would miss subsequent clicks.
+      act(() => { card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+      await act(async () => {})
+      expectUnchanged()
+      expect(writeText).toHaveBeenCalledWith('/projects/w-art')
+      click(card)
+      await act(async () => {})
+      expectUnchanged()
+      act(() => { card.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+      expectUnchanged()
+      // Ordinary row activation is still routed to expansion.
+      click(treeRowByText('绘画收集')!)
+      expect(treeRowByText('绘画收集')!.getAttribute('aria-expanded')).toBe(String(!expanded))
+    } finally {
+      if (prior === undefined) Reflect.deleteProperty(navigator, 'clipboard')
+      else Object.defineProperty(navigator, 'clipboard', prior)
+      vi.useRealTimers()
+    }
+  })
+
   it('still opens its hover card on dwell and suppresses it while the row menu is open', async () => {
     await renderBrowser()
     fileTreeUiSeat = makeFileTreeUiService()
@@ -966,13 +1009,13 @@ describe('fileTreeUi service path (LeafRow)', () => {
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 700)) })
     }
     const card = (): HTMLElement | null => document.body.querySelector('[class*="hoverContent"]')
-    pointerEnter(label.firstElementChild!)
+    pointerEnter(label.querySelector('[data-dsw-enh-hover-anchor]')!)
     await dwell()
     expect(card(), 'workspace hover card opens').not.toBeNull()
     // Opening the row menu disables the HoverCard for the same hover.
     click(row.querySelector<HTMLButtonElement>('button[aria-label]')!)
     expect(menuItemByText(zh.rename)).toBeDefined()
-    pointerEnter(label.firstElementChild!)
+    pointerEnter(label.querySelector('[data-dsw-enh-hover-anchor]')!)
     await dwell()
     expect(card(), 'menu open keeps the card closed').toBeNull()
   })

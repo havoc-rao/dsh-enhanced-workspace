@@ -1164,6 +1164,10 @@ describe('enhanced workspace browser', () => {
     // The label text stays at its visual spot (content box pinned back).
     expect(root.style.paddingLeft).toBe('48px')
     expect(root.style.paddingTop).toBe('7px')
+    expect(root.style.paddingRight, 'text stays within the label slot, not the extended anchor').toBe('56px')
+    const label = root.querySelector<HTMLElement>('[data-dsw-enh-hover-anchor]')!
+    expect(label.className, 'the block text owns its ellipsis instead of relying on its parent').toContain('hoverRowLabel')
+    expect(label.style.pointerEvents).toBe('auto')
     // The extension covers the row's chevron/actions: hit-test hole, with
     // pointer events re-enabled on the label content (the wrapper).
     expect(root.style.pointerEvents).toBe('none')

@@ -34,7 +34,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import {
-  HoverCard,
   IconArchiveOutlineRegular,
   IconBranchOutlineRegular,
   IconChevronUpOutlineRegular,
@@ -101,7 +100,7 @@ import {
   type InputDialogState,
   type MoveToDialogState,
 } from './Dialogs.tsx'
-import { SessionHoverContent, WorkspaceHoverContent, workspaceStatusLabel, HoverCardSurfaceSync, HoverRowAnchorSync } from './HoverCards.tsx'
+import { BrowserHoverCard, SessionHoverContent, WorkspaceHoverContent, workspaceStatusLabel, HoverCardSurfaceSync, HoverRowAnchorSync } from './HoverCards.tsx'
 import {
   deriveFlat,
   deriveFolderForest,
@@ -2435,7 +2434,7 @@ function LeafRow(props: {
   // hover (the ellipsis menu is the row's only other dwell surface).
   const rowElement = hasAccount
     ? (
-      <HoverCard
+      <BrowserHoverCard
         anchor={<HoverRowAnchorSync>{ownRow}</HoverRowAnchorSync>}
         content={(
           // The primitive's compact bed is fixed dark in both themes; the
@@ -2720,7 +2719,7 @@ function SessionRow(props: {
   // live status, and the file domain. An open row menu suppresses it for
   // the same hover.
   return (
-    <HoverCard
+    <BrowserHoverCard
       anchor={<HoverRowAnchorSync>{ownRow}</HoverRowAnchorSync>}
       content={(
         <HoverCardSurfaceSync>
@@ -3297,7 +3296,7 @@ function sessionRowModel(props: {
     // The hover card rides the label slot (the framework owns the row
     // chrome; the label is the row's only consumer-rendered surface).
     label: (
-      <HoverCard
+      <BrowserHoverCard
         anchor={(
           <HoverRowAnchorSync>{session.blank ? seat.t('newSession') : session.title}</HoverRowAnchorSync>
         )}
@@ -3563,7 +3562,7 @@ function leafRowModel(props: {
     // The workspace hover card rides the label slot (see sessionRowModel).
     label: hasAccount
       ? (
-        <HoverCard
+        <BrowserHoverCard
           anchor={<HoverRowAnchorSync>{leaf.label}</HoverRowAnchorSync>}
           content={(
             <HoverCardSurfaceSync>

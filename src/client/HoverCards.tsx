@@ -12,8 +12,8 @@
  */
 
 import { useLayoutEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import { IconCodeOutlineRegular, IconFolderCloseRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ComponentProps, ReactNode, SyntheticEvent } from 'react'
+import { HoverCard, IconCodeOutlineRegular, IconFolderCloseRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { EnhancedWorkspaceBrowserProps } from './contract.ts'
 import {
@@ -30,6 +30,34 @@ import {
   remoteMachineLabel,
 } from './remote-git.ts'
 import css from './Browser.module.css'
+
+/**
+ * Portal events bubble through the React tree into fileTreeUi's owning row.
+ * Stop card activations at this boundary, AFTER the primitive has handled
+ * copying (including its padding and copied-feedback surface). Anchor events
+ * remain untouched so normal row expansion/selection still works.
+ */
+export function BrowserHoverCard(props: ComponentProps<typeof HoverCard>): ReactNode {
+  const boundaryRef = useRef<HTMLSpanElement>(null)
+  const isolateCardEvent = (event: SyntheticEvent): void => {
+    if (event.target instanceof Node && !boundaryRef.current?.contains(event.target)) {
+      event.stopPropagation()
+    }
+  }
+  return (
+    <span
+      ref={boundaryRef}
+      data-dsw-enh-hover-boundary=""
+      style={{ display: 'contents' }}
+      onClick={isolateCardEvent}
+      onDoubleClick={isolateCardEvent}
+      onPointerDown={isolateCardEvent}
+      onKeyDown={isolateCardEvent}
+    >
+      <HoverCard {...props} />
+    </span>
+  )
+}
 
 /** The browser root's locale seat, prop-passed from the row seats. */
 type HoverTranslate = EnhancedWorkspaceBrowserProps['t']
@@ -62,7 +90,8 @@ export function HoverRowAnchorSync({ children }: { children: ReactNode }): React
     const sync = (): void => {
       const root = anchorRef.current?.parentElement
       if (root === null || root === undefined) return
-      const bed = root.parentElement
+      const parent = root.parentElement
+      const bed = parent?.hasAttribute('data-dsw-enh-hover-boundary') ? parent.parentElement : parent
       const row = bed?.parentElement
       if (bed === null || bed === undefined || row === null || row === undefined) return
       // fileTreeUi rows only: the label slot sits inside the framework's
@@ -85,6 +114,9 @@ export function HoverRowAnchorSync({ children }: { children: ReactNode }): React
       // is moot.)
       root.style.paddingLeft = `${dl}px`
       root.style.paddingTop = `${dt}px`
+      // The anchor extends to the row edge, but the text must stay inside
+      // the label slot (before any trailing badge / resting indicator).
+      root.style.paddingRight = `${dr}px`
       // The extension covers the chevron/leading/trailing/actions; make
       // the span hit-test transparent and re-enable pointer events on the
       // label content (a REAL block box — `display: contents` would have no
@@ -103,7 +135,7 @@ export function HoverRowAnchorSync({ children }: { children: ReactNode }): React
   // from anywhere on the row (not just the label glyphs), and the box is
   // hit-testable again after the root turns `pointer-events: none`.
   return (
-    <span ref={anchorRef} data-dsw-enh-hover-anchor="" style={{ display: 'block', pointerEvents: 'auto' }}>
+    <span ref={anchorRef} data-dsw-enh-hover-anchor="" className={css.hoverRowLabel} style={{ display: 'block', pointerEvents: 'auto' }}>
       {children}
     </span>
   )

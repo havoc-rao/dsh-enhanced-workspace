@@ -507,6 +507,51 @@
   white-space: nowrap;
 }
 
+/* HoverCard's block anchor needs its own ellipsis: the framework label's
+   text-overflow does not apply to text inside a block descendant. */
+.hoverRowLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Workspace actions float above the name rather than reserving flex width
+   while invisible. Scope the provider override to our hover-anchored
+   workspace rows; session rows and always-visible register pills keep their
+   framework layout. The provider exposes no action-layout option, so this
+   consumer-local selector targets its existing rowActions slot. */
+.workspaceRow > .rowActions,
+.region [role='treeitem'][aria-expanded]:has([data-dsw-enh-hover-anchor]) > [class*='rowActions'] {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  pointer-events: none;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-2, #353535);
+}
+
+.workspaceRow:hover > .rowActions,
+.workspaceRow:focus-within > .rowActions,
+.region [role='treeitem'][aria-expanded]:has([data-dsw-enh-hover-anchor]):hover > [class*='rowActions'],
+.region [role='treeitem'][aria-expanded]:has([data-dsw-enh-hover-anchor]):focus-within > [class*='rowActions'] {
+  pointer-events: auto;
+}
+
+/* Only reserve text space while the two workspace controls are visible:
+   24px × 2 buttons + 2px gap + 6px right inset + 6px text gap. Apply to
+   the text box, not the framework label slot, so the full-row HoverCard
+   anchor geometry stays unchanged. This also hides text in the right inset. */
+.workspaceRow:has(> .rowActions):hover > .rowLabel,
+.workspaceRow:has(> .rowActions):focus-within > .rowLabel,
+.region [role='treeitem'][aria-expanded]:has(> [class*='rowActions']):hover > [class*='rowLabel'] .hoverRowLabel,
+.region [role='treeitem'][aria-expanded]:has(> [class*='rowActions']):focus-within > [class*='rowLabel'] .hoverRowLabel {
+  box-sizing: border-box;
+  padding-right: 62px;
+}
+
 /* The escalation annotation: a small amber shield beside the label marks a
    pending approval whose grant would ELEVATE the sandbox — the flavor
    (approveEscalation's reason prefix) this browser separates out of DSH's
