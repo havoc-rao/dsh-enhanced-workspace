@@ -11,11 +11,10 @@
 [registerFileBrowser](../src/client/command-palette/install-file-browser.tsx)：
 
 - 唯一 command ID：`workspaces.find`。
-- target：`{ kind: 'panel', panelId: 'workspaces.browse-files' }`。
+- target：`{ kind: 'picker', pickerId: 'workspaces.find' }`。标准 Picker 负责工作区列表、搜索、选中、滚动与 Actions。
 - command 与 panel 标题：中文「浏览工作区」、英文「Browse Workspaces」。
 - command `iconId: 'open'`，category 为「工作区 / Workspace」。
-- 不同时注册 legacy workspace picker，也不额外注册 `workspaces.browse-files` command。
-  后者只保留为 panel ID 与搜索兼容别名。
+- 注册同 ID 的业务 Picker（复用原 provider 查询，但 accept 打开文件树而非新建会话）；不额外注册 `workspaces.browse-files` command，后者只作为 panel ID 与兼容别名。
 - 工作区选择后进入目录树；在浏览器中使用 **⌘L / Ctrl+L** 创建当前工作区的
   新会话并交接导航。新建会话是浏览器动作，不是第二个生产命令入口。
 
@@ -73,8 +72,8 @@ tag 的 ID/title/zh/en 和 child 的 ID/title/zh/en、aliases/category 全部由
 | 贡献 | 字段与取值 | palette UI 映射的 DSH 共享组件 |
 | --- | --- | --- |
 | 总 tag `workspace`（工作区 / Workspace） | `pluginTag.iconId: 'workspace'` | `IconWorkspaceTreeOutlineRegular` |
-| 唯一 command `workspaces.find`（浏览工作区 / Browse Workspaces，target 为 panel） | `CommandDescriptor.iconId: 'open'` | `IconFolderOpenOutlineRegular` |
-| legacy fallback picker 的工作区资源项 | `PickerItem.iconId: 'workspace'` | `IconWorkspaceTreeOutlineRegular` |
+| 唯一 command `workspaces.find`（浏览工作区 / Browse Workspaces，target 为 picker） | `CommandDescriptor.iconId: 'open'` | `IconFolderOpenOutlineRegular` |
+| 生产与 legacy fallback picker 的工作区资源项 | `PickerItem.iconId: 'workspace'` | `IconWorkspaceTreeOutlineRegular` |
 
 命令图标表示打开工作区浏览器，不改为放大镜。总 tag 不受子命令覆盖影响；legacy
 资源项显式使用 workspace 图标，**不继承 tag**，包括直接打开 picker 的场景。
@@ -108,13 +107,23 @@ tag 的 ID/title/zh/en 和 child 的 ID/title/zh/en、aliases/category 全部由
 
 ## 文件引用选择器
 
-`workspaces.find` 打开 `workspaces.browse-files` panel，以「选择目标 → 插入引用」为主路径：
+`workspaces.find` 先打开 CMD 标准 Picker，确认工作区后调用 `openPanel` 打开 `workspaces.browse-files` panel，以「选择目标 → 插入引用」为主路径：
 
-- 导航只分工作区选择与目录树两层；选中文件不会进入新的预览层，返回直接回到工作区选择并清空搜索。
+- 导航只分工作区选择与目录树两层；选中文件不会进入新的预览层，Panel 的 back 返回 false，由 CMD 返回原 Picker 并恢复其搜索、选中与滚动；不再业务自画列表或管理 hover/activeWorkspace。
 - 文件树无预览时占满宽度；显示预览时宽屏按 65% / 35% 分配。内容预览可以关闭，选择在本次挂载内保留；窄屏默认关闭，手动开启后以下方较小辅助区显示。
-- 底部固定展示当前目标及「插入引用」。文件/目录展示相对路径，悬停查看绝对路径，实际插入仍使用绝对路径。无选中项时明确标记「引用整个工作区」。
-- 单击/方向键选择文件，Enter 直接插入并关闭；目录的 Enter 只展开/收起，目录引用通过底部或行内插入按钮完成。复制路径保留为次级操作。
+- CMD Actions 展示当前目标；未选中文件时以工作区根路径为目标。实际插入使用绝对路径，不额外渲染业务引用底栏。
+- 单击/方向键选择文件，Enter 直接插入并关闭；目录的 Enter 只展开/收起，目录引用通过 Actions 或行内插入按钮完成。复制路径保留为次级操作。
 - 预览请求延迟 150ms，并在切换目标或关闭预览时取消。预览错误只显示在辅助区域，不影响引用插入及输入框捕获/过期保护。
 - 嵌入 palette 时，隐藏文件只通过 Actions 的「显示隐藏文件」切换，不再额外渲染 checkbox。action 使用 `status: { kind: 'toggle', checked: state.hidden, label }` 提供右侧只读状态标记；标题保持稳定，label 描述当前状态（隐藏文件：已显示 / 已隐藏），用于 tooltip 与辅助阅读。执行返回 `stay`，重新打开 Actions 时读取最新状态。无 palette shell 的独立浏览器保留 checkbox 回退。
 
 回归覆盖见 [组件测试](../tests/file-browser.client.spec.tsx) 与 [面板集成测试](../tests/file-browser-command.client.spec.tsx)。
+
+## 标准 Picker / 文件树 Panel 的职责与捕获时点
+
+- 工作区列表只贡献纯数据 query/accept/getActions，不渲染列表。查询复用名称、路径匹配、当前工作区优先、limit/hasMore 与订阅失效逻辑。
+- Picker Actions 保留三项：新建会话、复制绝对根路径、插入整个工作区引用；隐藏文件与预览开关仅在 Panel。
+- Picker Actions 在 getActions 调用时捕获当前 inputActions、binding key 和 insertion span；执行重新检查 signal、工作区身份/路径、连接与 binding。此捕获不发生在 query/describe，也不修改共享 context。
+- 文件树 Panel 在 onOpen 捕获 composer。这比旧版“打开含工作区列表的 Panel 时捕获”更晚：现在实际进入文件树才捕获，Back 后重新进入会重新捕获。关闭/退出令 adapter 失效，预览请求取消，过期绑定不得插入。
+- Picker accept 先校验并设置一次性 workspaceId，再调用 openPanel；该调用中止原 accept signal 属于正常导航，成功后返回 stay，不误报取消。
+- 直接打开 Panel 没有一次性工作区选择时仅显示“选择工作区”提示，不默认选择首项、不触发目录 RPC、不捕获 composer。
+- CMD 负责 Picker Actions 捕获选中项、查询、编号、执行与返回；stay 恢复原 Picker。需要同时装载支持 Picker.getActions 的 CMD 版本。

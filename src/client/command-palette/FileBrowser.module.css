@@ -1,5 +1,4 @@
 .browser { display: grid; gap: 12px; height: 100%; min-height: 0; min-width: 0; overflow: hidden; grid-template-rows: minmax(0, 1fr); color: var(--dsw-alias-text-primary, inherit); }
-.browser[data-stage=workspace] { grid-template-columns: minmax(0, 1fr); }
 .browser[data-stage=tree] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .browser[data-preview=true] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); }
 .treeHeader { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin: 0 4px; border: 1px solid var(--dsw-alias-border-standard, #8883); border-radius: 10px; background: var(--dsw-alias-bg-hover, #88808); }
@@ -15,17 +14,10 @@
 .browser button:hover, .browser button[aria-pressed=true] { background: var(--dsw-alias-bg-hover, #8882); }
 .browser button:focus-visible { outline: 2px solid var(--dsw-alias-border-focus, #6699ee); }
 .browser button:disabled { opacity: .5; cursor: default; }
-.workspaces, .files, .previewPane { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.files, .previewPane { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .files { display: flex; flex-direction: column; overflow: hidden; }
 .files > :not(.entries) { flex-shrink: 0; }
 .entries { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
-.browser:not([data-stage=workspace]) .workspaces { border-right: 1px solid #8883; padding-right: 10px; }
-.browser[data-stage=workspace] { height: auto; max-height: min(400px, 48dvh); }
-.browser .workspaces { padding: 0; max-height: none; }
-.browser .workspaceRow { display: flex; width: 100%; height: 34px; padding: 4px 10px; margin: 1px 0; font-family: inherit; font-weight: 400; }
-.browser .workspaceRow[data-active=true] { background: var(--dsw-alias-bg-hover, #8882); }
-.browser .workspaceRow small { margin: 0; opacity: 1; }
-.browser .workspaceRow svg { flex-shrink: 0; }
 .entries { margin-top: 8px; padding: 0 4px 4px; }
 .entries p { margin: 10px 12px; font-size: 12px; opacity: .7; }
 .files label { display: block; margin-top: 8px; font-size: 12px; }

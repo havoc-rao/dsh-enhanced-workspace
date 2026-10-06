@@ -1,5 +1,5 @@
 export interface BrowserInteractionState {
-  stage: 'workspace' | 'tree'
+  stage: 'tree'
   canGoBack: boolean
   count: number
   hidden: boolean

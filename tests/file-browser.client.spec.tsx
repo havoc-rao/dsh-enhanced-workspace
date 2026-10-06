@@ -4,6 +4,7 @@ import { act } from 'react-dom/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceFileBrowser, browserZh, absoluteBrowserPath, fileMention, type FileBrowserAdapter } from '../src/client/command-palette/FileBrowser.tsx'
 import type { BrowserResult } from '../src/shared/file-browser.ts'
+import type { BrowserInteraction, BrowserShell } from '../src/client/command-palette/browser-interaction.ts'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -23,10 +24,10 @@ const fixture = (): FileBrowserAdapter => ({
     : { kind: 'directory', entries: path ? [{ name: 'a.ts', path: 'src/a.ts', directory: false }]
       : [{ name: 'src', path: 'src', directory: true }, { name: '.hidden', path: '.hidden', directory: false }], truncated: false }),
 })
-const mount = async (adapter: FileBrowserAdapter) => {
+const mount = async (adapter: FileBrowserAdapter, shell?: BrowserShell) => {
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container); const close = vi.fn()
-  await act(async () => { root.render(<WorkspaceFileBrowser adapter={adapter} text={browserZh} close={close} />) })
+  await act(async () => { root.render(<WorkspaceFileBrowser adapter={adapter} workspaceId="other" text={browserZh} close={close} {...(shell ? { shell } : {})} />) })
   const click = async (label: string) => {
     const buttons = [...container.querySelectorAll('button')]
     const button = buttons.find(button => button.getAttribute('aria-label') === label)
@@ -41,6 +42,23 @@ const mount = async (adapter: FileBrowserAdapter) => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('workspace file browser UI', () => {
+  it('renders only the selected workspace tree and leaves Back to the palette', async () => {
+    viewport()
+    let interaction!: BrowserInteraction
+    const shell: BrowserShell = { query: '', invalidate: vi.fn(),
+      bind: value => { interaction = value; return () => {} } }
+    const view = await mount(fixture(), shell)
+    try {
+      expect(view.container.querySelector('[data-mode=picker]')).toBeNull()
+      expect(view.container.querySelector('.dsh-palette-row')).toBeNull()
+      expect(view.container.textContent).not.toContain('Second')
+      expect(view.container.querySelector('header strong')?.textContent).toBe('Other')
+      expect(interaction.back()).toBe(false)
+      await act(async () => { interaction.move(1) })
+      expect(view.container.querySelector('[data-path=src]')?.getAttribute('data-selected')).toBe('true')
+      expect(interaction.getState()).toMatchObject({ stage: 'tree', workspaceId: 'other' })
+    } finally { await view.dispose() }
+  })
   it('joins absolute cross-project paths and quotes spaces', () => {
     expect(absoluteBrowserPath('/projects/app/', 'src/a.ts')).toBe('/projects/app/src/a.ts')
     expect(absoluteBrowserPath('C:\\Dev\\app', 'src/a.ts')).toBe('C:\\Dev\\app\\src\\a.ts')
@@ -53,11 +71,10 @@ describe('workspace file browser UI', () => {
     const view = await mount(adapter)
     const { container, close, click } = view
     try {
-      expect(container.querySelector('[data-stage=workspace]')).not.toBeNull()
-      expect(container.querySelector('[role=tree]')).toBeNull()
+      expect(container.querySelector('[data-stage=workspace]')).toBeNull()
+      expect(container.querySelector('[role=tree]')).not.toBeNull()
       expect(container.querySelector('section[data-file-preview]')).toBeNull()
-      expect(adapter.browse).not.toHaveBeenCalled()
-      await click('Other')
+      expect(adapter.browse).toHaveBeenCalled()
       expect(container.querySelector('[data-stage=tree]')).not.toBeNull()
       const header = container.querySelector('header')!
       expect(header.querySelector('strong')?.textContent).toBe('Other')
@@ -103,7 +120,6 @@ describe('workspace file browser UI', () => {
     viewport()
     const view = await mount(fixture())
     try {
-      await view.click('Other')
       const checkbox = view.container.querySelector<HTMLInputElement>('input[type=checkbox]')!
       expect(checkbox.checked).toBe(false)
       expect(view.container.querySelector('[data-path=".hidden"]')).toBeNull()
@@ -118,7 +134,7 @@ describe('workspace file browser UI', () => {
     viewport()
     const adapter = fixture(); const view = await mount(adapter)
     try {
-      await view.click('Other'); await view.click('src')
+      await view.click('src')
       const row = view.container.querySelector<HTMLButtonElement>('button[data-tree-main][data-path="src/a.ts"]')!
       await act(async () => {
         row.focus()
@@ -136,7 +152,7 @@ describe('workspace file browser UI', () => {
     const { container, click } = view
     const previewCalls = () => vi.mocked(adapter.browse).mock.calls.filter(([request]) => request.preview)
     try {
-      await click('Other'); await click('src'); await click('a.ts')
+      await click('src'); await click('a.ts')
       expect(container.querySelector(`button[aria-label="${browserZh.togglePreview}"]`)?.getAttribute('aria-pressed')).toBe('false')
       expect(container.querySelector('section[data-file-preview]')).toBeNull()
       await previewDelay()
@@ -161,7 +177,7 @@ describe('workspace file browser UI', () => {
     adapter.browse = vi.fn((request, signal) => request.preview ? Promise.reject(new Error('Preview unavailable')) : browse(request, signal))
     const view = await mount(adapter)
     try {
-      await view.click('Other'); await view.click('src'); await view.click('a.ts'); await previewDelay()
+      await view.click('src'); await view.click('a.ts'); await previewDelay()
       const pane = view.container.querySelector('section[data-file-preview]')!
       expect(pane.textContent).toContain('Preview unavailable')
       expect(view.container.querySelector('[role=tree]')).not.toBeNull()
@@ -175,7 +191,7 @@ describe('workspace file browser UI', () => {
     viewport()
     const adapter = fixture(); const view = await mount(adapter)
     try {
-      await view.click('Other'); await view.click('src')
+      await view.click('src')
       expect(view.container.querySelector('[data-reference-footer]')).toBeNull()
       expect(view.container.querySelector('section[data-file-preview]')).toBeNull()
       await view.click(`${browserZh.insert}: src`)

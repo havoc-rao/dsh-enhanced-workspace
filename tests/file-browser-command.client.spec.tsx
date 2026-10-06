@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import type { Panel, PaletteService } from '@deepseek-ai/dsh-client-ui-command-palette/core'
+import { createPaletteController } from '@deepseek-ai/dsh-client-ui-command-palette/core'
+import type { Panel, PaletteService, Picker, ItemId } from '@deepseek-ai/dsh-client-ui-command-palette/core'
 import { registerFileBrowser } from '../src/client/command-palette/install-file-browser.tsx'
 import { browserZh } from '../src/client/command-palette/FileBrowser.tsx'
 import type { WorkspaceAdapter } from '../src/client/command-palette/provider.ts'
@@ -14,11 +15,67 @@ import type { BrowserRequest, BrowserResult } from '../src/shared/file-browser.t
 afterEach(() => vi.unstubAllGlobals())
 
 describe('file browser palette panel', () => {
+  it('uses the real controller to enter a non-first workspace and restore Picker query/selection across Back and reentry', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })))
+    const inputActions = { captureInsertion: vi.fn(() => ({})), insertReference: vi.fn(() => true), focus: vi.fn() }
+    const call = vi.fn(async () => ({ ok: true, value: { kind: 'directory', entries: [], truncated: false } }))
+    const ctx = { locale: { getSnapshot: () => ({ active: 'en' }) },
+      get: (name: string) => name === 'uiSession'
+        ? { adapter: { current: { getSnapshot: () => ({ key: 'original', props: { inputActions } }) } } }
+        : { rpc: { call } } } as unknown as Context
+    const workspaces: WorkspaceAdapter = {
+      getSnapshot: () => ({ phase: 'ready', items: ['first', 'second'].map(id => ({ workspaceId: id,
+        title: `Project ${id}`, displayTitle: `Project ${id}`, path: `/projects/${id}`, sessionIds: [] })) }),
+      getCurrentSessionId: () => undefined, subscribe: () => () => {}, isConnected: () => true,
+      createNewSession: vi.fn(async () => {}),
+    }
+    const palette = createPaletteController({ captureContext: () => ({}) })
+    const off = registerFileBrowser(ctx, palette, workspaces)
+    const container = document.createElement('div'); document.body.append(container)
+    const root = createRoot(container)
+    const render = () => root.render(palette.getSnapshot().panel?.render() ?? null)
+    const unsubscribe = palette.subscribe(render)
+    try {
+      await act(async () => { palette.openCommands() })
+      const command = palette.getSnapshot().rows.find(row => row.id === 'workspaces.find')!
+      await act(async () => { await palette.accept(command.key) })
+      expect(palette.getSnapshot().mode).toBe('picker')
+      expect(inputActions.captureInsertion).not.toHaveBeenCalled()
+      await act(async () => { palette.setQuery('Project') })
+      const rows = palette.getSnapshot().rows
+      expect(rows.map(row => row.id)).toEqual(['first', 'second'])
+      const target = rows[1]!
+      expect(palette.getSnapshot().selectedKey).toBe(rows[0]!.key)
+      // Explicit row accept (click path), not a pre-selected first-row stub.
+      await act(async () => { await palette.accept(target.key) })
+      expect(palette.getSnapshot()).toMatchObject({ mode: 'panel', panelId: 'workspaces.browse-files' })
+      expect(container.querySelector('header strong')?.textContent).toBe('Project second')
+      expect(container.querySelector('[data-mode=picker]')).toBeNull()
+      expect(call).toHaveBeenLastCalledWith('/enhanced-workspace', 'files/browse', { workspaceId: 'second', path: '' })
+      expect(inputActions.captureInsertion).toHaveBeenCalledOnce()
+      await act(async () => { palette.setQuery('file filter') })
+      await act(async () => { expect(palette.back()).toBe(true) })
+      expect(palette.getSnapshot()).toMatchObject({ mode: 'picker', query: 'Project', selectedKey: target.key })
+      expect(container.querySelector('[role=tree]')).toBeNull()
+      expect(inputActions.focus).toHaveBeenCalledOnce()
+      // Old component cleanup must not destroy the new Panel bridge on reentry.
+      await act(async () => { await palette.accept() })
+      expect(container.querySelector('header strong')?.textContent).toBe('Project second')
+      expect(palette.getSnapshot().panel?.actionsTargetLabel).toBe('/projects/second/')
+      expect(inputActions.captureInsertion).toHaveBeenCalledTimes(2)
+      await act(async () => { palette.back() })
+      expect(palette.getSnapshot()).toMatchObject({ mode: 'picker', query: 'Project', selectedKey: target.key })
+      expect(workspaces.createNewSession).not.toHaveBeenCalled()
+    } finally {
+      unsubscribe(); await act(async () => { root.unmount(); palette.close(); off(); palette.dispose() }); container.remove()
+    }
+  })
   it('accepts files directly, guards stale insertion, inserts the root through Actions and returns directly to workspace search', async () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
     let panel!: Panel
+    let picker!: Picker
     const command = vi.fn(() => vi.fn()), remove = vi.fn(), close = vi.fn(), openPanelActions = vi.fn()
-    const palette = { registerCommand: command, registerPanel: (value: Panel) => { panel = value; return remove }, close, openPanelActions } as unknown as PaletteService
+    const palette = { registerPicker: (value: Picker) => { picker = value; return vi.fn() }, openPanel: () => { const dispose = panel.onOpen!(executeArgs); if (typeof dispose === 'function') exit = dispose; return true }, registerCommand: command, registerPanel: (value: Panel) => { panel = value; return remove }, close, openPanelActions } as unknown as PaletteService
     const span = { start: 3, end: 3, draftRev: 7 }
     const inputActions = { captureInsertion: vi.fn(() => span), insertReference: vi.fn(() => true), focus: vi.fn() }
     let key = 'original'
@@ -47,31 +104,25 @@ describe('file browser palette panel', () => {
     const accept = () => act(async () => { await panel.accept!(executeArgs) })
     const select = (path: string) => act(async () => { container.querySelector<HTMLButtonElement>(`button[data-tree-main][data-path="${path}"]`)!.click() })
     try {
-      expect(command).toHaveBeenCalledWith(expect.objectContaining({ target: { kind: 'panel', panelId: 'workspaces.browse-files' } }))
-      const dispose = panel.onOpen!(executeArgs)
-      if (typeof dispose === 'function') exit = dispose
+      expect(command).toHaveBeenCalledWith(expect.objectContaining({ target: { kind: 'picker', pickerId: 'workspaces.find' } }))
+      // Picker actions work before any tree RPC and capture insertion at actions entry.
+      const workspaceActions = picker.getActions!('other' as ItemId, executeArgs)
+      expect(workspaceActions.map(action => action.id)).toEqual(['create-new-session', 'copy-absolute-path', 'insert-reference'])
+      expect(await workspaceActions[0]!.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(createNewSession).toHaveBeenLastCalledWith('other', executeArgs.signal)
+      expect(call).not.toHaveBeenCalled()
+      expect(await workspaceActions[2]!.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(inputActions.insertReference).toHaveBeenCalledWith(expect.objectContaining({ label: 'Other/', ref: '@"/other project/' }), span)
+      key = 'changed'
+      expect(await workspaceActions[2]!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
+      key = 'original'; inputActions.insertReference.mockClear()
+      expect(await picker.accept('other' as ItemId, executeArgs)).toEqual({ kind: 'stay' })
       const render = () => root.render(panel.render())
       unsubscribe = panel.subscribe(render)
       await act(async () => render())
-      expect(inputActions.captureInsertion).toHaveBeenCalledOnce()
+      expect(inputActions.captureInsertion).toHaveBeenCalledTimes(2)
       expect(container.querySelector('input:not([type=checkbox])')).toBeNull()
       expect(container.querySelector('[role=dialog]')).toBeNull()
-      expect(panel.getSnapshot()).toMatchObject({ title: browserZh.title, width: 'compact', acceptLabel: browserZh.chooseWorkspace, canAccept: true,
-        actionsTargetLabel: '/other project/' })
-      const workspaceActions = panel.getActions!()
-      expect(await workspaceActions[0]!.execute(executeArgs)).toEqual({ kind: 'completed' })
-      expect(createNewSession).toHaveBeenLastCalledWith('other', executeArgs.signal)
-      expect(call).not.toHaveBeenCalled() // Creating does not require loading a tree.
-      expect(await workspaceActions[2]!.execute(executeArgs)).toEqual({ kind: 'completed' })
-      expect(inputActions.insertReference).toHaveBeenCalledWith(expect.objectContaining({ label: 'Other/', ref: '@"/other project/' }), span)
-      inputActions.insertReference.mockClear()
-      await act(async () => panel.onQuery('absent'))
-      expect(panel.getActions!()).toEqual([])
-      expect(await workspaceActions[0]!.execute(executeArgs)).toEqual({ kind: 'cancelled' })
-      expect(container.textContent).not.toContain('Other')
-      expect(panel.getSnapshot().canAccept).toBe(false)
-      await act(async () => panel.onQuery(''))
-      await accept()
       expect(call).toHaveBeenCalledWith('/enhanced-workspace', 'files/browse', { workspaceId: 'other', path: '' })
       expect(container.querySelector('[data-stage=tree]')).not.toBeNull()
       expect(panel.getSnapshot()).toMatchObject({ scrollMode: 'contained', width: 'compact', canAccept: false })
@@ -148,21 +199,61 @@ describe('file browser palette panel', () => {
 
       await act(async () => panel.onQuery('a.ts'))
       expect(panel.getSnapshot().query).toBe('a.ts')
-      await act(async () => { expect(panel.back!()).toBe(true) })
-      expect(container.querySelector('[data-stage=workspace]')).not.toBeNull()
-      expect(container.querySelector('section[data-file-preview]')).toBeNull()
-      expect(panel.getSnapshot()).toMatchObject({ query: '', scrollMode: 'content', width: 'compact', acceptLabel: browserZh.chooseWorkspace })
-      expect(container.textContent).toContain('Other')
+      expect(panel.back!()).toBe(false) // CMD owns restoring the Picker frame.
+      expect(container.querySelector('[data-mode=picker]')).toBeNull()
+      expect(panel.getSnapshot().query).toBe('a.ts')
+      exit?.(); exit = undefined
       expect(await actions[2]!.execute(executeArgs)).toEqual({ kind: 'cancelled' })
       expect(await actions[3]!.execute(executeArgs)).toEqual({ kind: 'cancelled' })
       expect(await actions[4]!.execute(executeArgs)).toEqual({ kind: 'cancelled' })
-      expect(panel.getActions!().some(action => action.id === 'toggle-content-preview')).toBe(false)
-      expect(panel.back!()).toBe(false)
     } finally {
       unsubscribe?.(); await act(async () => root.unmount()); container.remove(); exit?.(); off()
     }
     expect(inputActions.focus).toHaveBeenCalledOnce()
     expect(remove).toHaveBeenCalledOnce()
+  })
+  it('guards direct panel access and accepts navigation even when openPanel aborts its signal', async () => {
+    let panel!: Panel; let picker!: Picker; let exit: (() => void) | undefined
+    const captureInsertion = vi.fn(() => ({})), insertReference = vi.fn(() => true)
+    const clipboard = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: clipboard } })
+    let items = [{ workspaceId: 'one', title: 'One', displayTitle: 'One', path: '/one', sessionIds: [] }]
+    const controller = new AbortController()
+    const args = { context: {}, signal: controller.signal }
+    const openPanel = vi.fn(() => {
+      controller.abort()
+      const dispose = panel.onOpen!({ context: {}, signal: new AbortController().signal })
+      if (typeof dispose === 'function') exit = dispose
+      return true
+    })
+    const palette = { registerPanel: (value: Panel) => { panel = value; return vi.fn() },
+      registerPicker: (value: Picker) => { picker = value; return vi.fn() }, registerCommand: () => vi.fn(), openPanel } as unknown as PaletteService
+    const ctx = { locale: { getSnapshot: () => ({ active: 'en' }) },
+      get: () => ({ adapter: { current: { getSnapshot: () => ({ key: 'composer', props: { inputActions: { captureInsertion, insertReference } } }) } } }) } as unknown as Context
+    const workspaces = { getSnapshot: () => ({ phase: 'ready', items }), isConnected: () => true,
+      subscribe: () => () => {}, createNewSession: vi.fn(async () => {}) } as unknown as WorkspaceAdapter
+    const off = registerFileBrowser(ctx, palette, workspaces)
+    try {
+      expect(panel.onOpen!(args)).toBeUndefined()
+      expect(captureInsertion).not.toHaveBeenCalled()
+      expect(panel.getActions!()).toEqual([])
+      expect(await picker.accept('missing' as ItemId, args)).toMatchObject({ kind: 'failed' })
+      expect(openPanel).not.toHaveBeenCalled()
+      const actions = picker.getActions!('one' as ItemId, args)
+      expect(await actions[1]!.execute(args)).toEqual({ kind: 'stay' })
+      expect(clipboard).toHaveBeenCalledWith('/one/')
+      items = []
+      expect(await actions[2]!.execute(args)).toEqual({ kind: 'cancelled' })
+      expect(insertReference).not.toHaveBeenCalled()
+      items = [{ workspaceId: 'one', title: 'One', displayTitle: 'One', path: '/one', sessionIds: [] }]
+      expect(await picker.accept('one' as ItemId, args)).toEqual({ kind: 'stay' })
+      expect(controller.signal.aborted).toBe(true)
+      expect(openPanel).toHaveBeenCalledOnce()
+      expect(await picker.accept('one' as ItemId, args)).toEqual({ kind: 'cancelled' })
+      exit?.(); exit = undefined
+      expect(panel.onOpen!({ ...args, signal: new AbortController().signal })).toBeUndefined()
+      expect(panel.getActions!()).toEqual([])
+    } finally { exit?.(); off() }
   })
   it('does not advertise an unsupported command on old palette versions', () => {
     const registerCommand = vi.fn()

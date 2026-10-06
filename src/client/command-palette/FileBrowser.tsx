@@ -40,15 +40,13 @@ export function fileMention(path: string, directory: boolean): string {
   return directory ? `@"${target}` : `@"${target}"`
 }
 
-export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
-  adapter: FileBrowserAdapter; text: typeof browserZh; close(): void; shell?: BrowserShell
+export function WorkspaceFileBrowser({ adapter, workspaceId, text, close, shell }: {
+  adapter: FileBrowserAdapter; workspaceId: string; text: typeof browserZh; close(): void; shell?: BrowserShell
 }) {
   const [workspaces, setWorkspaces] = useState(() => adapter.workspaces())
-  const [workspaceId, setWorkspaceId] = useState('')
   const workspace = workspaces.find(row => row.workspaceId === workspaceId)
   const [localSearch, setSearch] = useState('')
   const search = shell?.query ?? localSearch
-  const [activeWorkspace, setActiveWorkspace] = useState(0)
   const tree = useRef<HTMLDivElement>(null)
   const [hidden, setHidden] = useState(false)
   const [selected, setSelected] = useState<BrowserEntry | null>(null)
@@ -92,33 +90,20 @@ export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
   }
   const showPreview = previewEnabled && workspace && selected && !selected.directory
   const target = workspace ? absoluteBrowserPath(workspace.path, selected?.path ?? '') : ''
-  const stage = !workspace ? 'workspace' : 'tree'
-  const matches = workspaces.filter(row => `${row.displayTitle} ${row.path}`.toLowerCase().includes(search.toLowerCase()))
-  const actionWorkspace = workspace ?? matches[Math.min(activeWorkspace, matches.length - 1)]
-  const chooseWorkspace = (id: string) => {
-    if (id === workspaceId) return
-    setWorkspaceId(id); setSelected(null); setPreview(null); setError(''); setNotice('')
-    setSearch(''); shell?.setQuery?.('')
-  }
+  const stage = 'tree' as const
   useEffect(() => shell?.bind({
     setHidden, setPreviewEnabled,
-    getState: () => ({ stage, hidden, previewEnabled, canGoBack: !!workspace, count: workspace ? tree.current?.querySelectorAll('[role=treeitem]').length ?? 0 : matches.length,
-      ...(actionWorkspace ? { workspaceId: actionWorkspace.workspaceId, target: {
-        path: absoluteBrowserPath(actionWorkspace.path, workspace ? selected?.path ?? '' : ''),
-        directory: workspace ? selected?.directory ?? true : true,
-        label: workspace ? selected?.name ?? actionWorkspace.displayTitle : actionWorkspace.displayTitle,
-        selected: workspace ? !!selected : true,
+    getState: () => ({ stage, hidden, previewEnabled, canGoBack: false,
+      count: tree.current?.querySelectorAll('[role=treeitem]').length ?? 0,
+      ...(workspace ? { workspaceId: workspace.workspaceId, target: {
+        path: absoluteBrowserPath(workspace.path, selected?.path ?? ''),
+        directory: selected?.directory ?? true,
+        label: selected?.name ?? workspace.displayTitle,
+        selected: !!selected,
       } } : {}),
     }),
-    back: () => {
-      if (workspace) {
-        setWorkspaceId(''); setSelected(null); setPreview(null); setError(''); setNotice('')
-        setSearch(''); shell?.setQuery?.(''); return true
-      }
-      return false
-    },
+    back: () => false,
     move: delta => {
-      if (!workspace) { setActiveWorkspace(value => Math.max(0, Math.min(matches.length - 1, value + delta))); return }
       const rows = [...(tree.current?.querySelectorAll<HTMLButtonElement>('button[data-tree-main]') ?? [])].filter(row => !row.closest('[hidden]'))
       const index = rows.findIndex(row => row.dataset.path === selected?.path)
       const next = rows[Math.max(0, Math.min(rows.length - 1, index + delta))]
@@ -126,13 +111,13 @@ export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
       next?.scrollIntoView?.({ block: 'nearest' })
     },
     accept: () => {
-      if (!workspace) { const row = matches[Math.min(activeWorkspace, matches.length - 1)]; if (row) chooseWorkspace(row.workspaceId) }
-      else if (selected && !selected.directory) insert(selected)
+      if (selected && !selected.directory) insert(selected)
       else tree.current?.querySelector<HTMLButtonElement>(`button[data-tree-main][data-selected=true]`)?.click()
     },
-  }), [shell, stage, workspace, matches.length, activeWorkspace, selected, search, hidden, previewEnabled])
-  useEffect(() => { shell?.invalidate() }, [stage, activeWorkspace, search, selected, workspaces, hidden, previewEnabled])
-  return <div className={css.browser} data-stage={stage} data-preview={!!showPreview} onKeyDown={event => {
+  }), [shell, stage, workspace, selected, search, hidden, previewEnabled])
+  useEffect(() => { shell?.invalidate() }, [stage, search, selected, workspaces, hidden, previewEnabled])
+  return <div className={css.browser} data-stage={stage} data-preview={!!showPreview}
+    onKeyDown={event => {
     if (event.nativeEvent.isComposing || event.target instanceof HTMLInputElement) return
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -141,22 +126,8 @@ export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
       rows[Math.max(0, Math.min(rows.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))]?.focus()
     }
   }}>
-      {!workspace && <aside className={`${css.workspaces} dsh-palette-list`} data-mode="picker">
-        {!shell && <input autoFocus aria-label={text.search} placeholder={text.search} value={search} onChange={event => setSearch(event.target.value)} />}
-        {matches.map((row, index) =>
-          <button key={row.workspaceId} className={`dsh-palette-row ${css.workspaceRow}`}
-            data-active={workspaceId === row.workspaceId || (!workspace && activeWorkspace === index)}
-            aria-pressed={workspaceId === row.workspaceId || (!workspace && activeWorkspace === index)}
-            onMouseDown={event => { if (shell) event.preventDefault() }}
-            onMouseEnter={() => setActiveWorkspace(index)} onClick={() => chooseWorkspace(row.workspaceId)}>
-            <span className="dsh-palette-row-icon" aria-hidden="true"><IconWorkspaceTreeOutlineRegular size={16} /></span>
-            <span className="dsh-palette-row-text">
-              <span className="dsh-palette-row-label" title={row.displayTitle}>{row.displayTitle}</span>
-              <small className="dsh-palette-row-detail" title={row.path}>{row.path}</small>
-            </span>
-            {(workspaceId === row.workspaceId || (!workspace && activeWorkspace === index)) && <kbd className="dsh-palette-enter" aria-hidden="true">↵</kbd>}
-          </button>)}
-      </aside>}
+      {!workspace && <p role="alert">{text.unavailable}</p>}
+      {!shell && <input aria-label={text.filter} placeholder={text.filter} value={search} onChange={event => setSearch(event.target.value)} />}
       {workspace && <section className={css.files} aria-label={workspace.displayTitle}>
         <header className={css.treeHeader}>
           <span className={css.workspaceBadge} aria-hidden="true"><IconWorkspaceTreeOutlineRegular size={18} /></span>

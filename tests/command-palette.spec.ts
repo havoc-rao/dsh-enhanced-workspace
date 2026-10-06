@@ -249,15 +249,16 @@ describe('optional palette installation', () => {
     expect(f.commands).toEqual([])
     expect(f.panel).toBeUndefined()
     f.activate()
-    expect(f.ctx.commandPalette.registerPicker).not.toHaveBeenCalled()
+    expect(f.ctx.commandPalette.registerPicker).toHaveBeenCalledOnce()
     expect(f.ctx.commandPalette.registerPanel).toHaveBeenCalledOnce()
     expect(f.ctx.commandPalette.registerCommand).toHaveBeenCalledOnce()
-    expect(f.picker).toBeUndefined()
+    expect(f.picker).toBeDefined()
     const command = f.commands[0]!
     const panel = f.panel!
-    expect(command).toMatchObject({ id: 'workspaces.find', target: { kind: 'panel', panelId: 'workspaces.browse-files' } })
+    expect(command).toMatchObject({ id: 'workspaces.find', target: { kind: 'picker', pickerId: WORKSPACE_PICKER_ID } })
     expect(panel.id).toBe('workspaces.browse-files')
     const controller = createPaletteController({ captureContext: () => undefined, getLocale: f.getLanguage })
+    controller.registerPicker(f.picker!)
     controller.registerPanel(panel)
     controller.registerCommand(command)
     controller.openCommands()
@@ -294,24 +295,19 @@ describe('optional palette installation', () => {
     try {
       assertSearch('浏览工作区', '工作区')
       expect(panel.getSnapshot().title).toBe('浏览工作区')
-      expect(panel.render()).toBeNull()
-      const closePanel = panel.onOpen!({ context: undefined, signal: new AbortController().signal }) as () => void
-      // render owns the browser adapter; actual user interactions are covered by component specs.
-      const rendered = panel.render() as import('react').ReactElement<{ adapter: { workspaces(): WorkspaceRecord[] } }>
-      expect(rendered.props.adapter.workspaces()[0]).toMatchObject({ displayTitle: '默认工作区' })
+      // Direct panel access never guesses the first workspace or performs an RPC.
+      expect(panel.onOpen!({ context: undefined, signal: new AbortController().signal })).toBeUndefined()
+      expect((panel.render() as import('react').ReactElement).props).toMatchObject({ role: 'alert' })
       f.setLanguage('en')
       expect(f.refresh).toHaveBeenCalledOnce()
       controller.refresh()
       assertSearch('Browse Workspaces', 'Workspace')
       expect(panel.getSnapshot().title).toBe('Browse Workspaces')
-      expect(rendered.props.adapter.workspaces()[0]).toMatchObject({ displayTitle: 'Default Workspace' })
-      closePanel()
-      expect(panel.render()).toBeNull()
       expect(f.createSession).not.toHaveBeenCalled()
       expect(f.openSession).not.toHaveBeenCalled()
     } finally { controller.dispose(); f.dispose() }
     for (const key of ['dictionary', 'locale', 'command', 'panel'] as const) expect(f.off[key]).toHaveBeenCalledOnce()
-    expect(f.off.picker).not.toHaveBeenCalled()
+    expect(f.off.picker).toHaveBeenCalledOnce()
   })
 
   it('falls back to the legacy picker without registerPanel and preserves adapter creation, invalidation and cancellation guards', async () => {

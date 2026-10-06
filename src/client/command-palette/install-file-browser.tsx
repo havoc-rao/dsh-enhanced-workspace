@@ -1,10 +1,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
-import type { PaletteService, PanelId, PanelSnapshot } from '@deepseek-ai/dsh-client-ui-command-palette/core'
+import type { PaletteService, PanelId, PanelSnapshot, Picker, PanelAction } from '@deepseek-ai/dsh-client-ui-command-palette/core'
 import { FILE_BROWSER_ENDPOINT, type BrowserResult } from '../../shared/file-browser.ts'
 import { PERSISTENCE_CHANNEL } from '../../shared/persistence.ts'
-import { WORKSPACE_COMMAND_ID, workspaceTag, type WorkspaceAdapter } from './provider.ts'
-import { WorkspaceFileBrowser, browserZh, browserEn, fileMention, type FileBrowserAdapter } from './FileBrowser.tsx'
+import { WORKSPACE_COMMAND_ID, WORKSPACE_PICKER_ID, createWorkspacePicker, defaultWorkspaceCopy, workspaceTag, type WorkspaceAdapter } from './provider.ts'
+import { WorkspaceFileBrowser, browserZh, browserEn, absoluteBrowserPath, fileMention, type FileBrowserAdapter } from './FileBrowser.tsx'
 import type { BrowserInteraction } from './browser-interaction.ts'
 
 interface InsertionActions {
@@ -18,6 +18,9 @@ const PANEL_ID = 'workspaces.browse-files' as PanelId
 export function registerFileBrowser(ctx: Context, palette: PaletteService, workspaces: WorkspaceAdapter): () => void {
   // Older palette versions remain usable; do not register a command with a missing target.
   if (typeof palette.registerPanel !== 'function') return () => {}
+  let pendingWorkspaceId: string | undefined
+  let workspaceId = ''
+  let disposed = false
   let query = ''
   let interaction: BrowserInteraction | undefined
   let adapter: FileBrowserAdapter | undefined
@@ -28,14 +31,13 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
   const current = () => (ctx.get('uiSession') as unknown as SessionFace | undefined)?.adapter?.current?.getSnapshot()
   const getSnapshot = (): PanelSnapshot => {
     const state = interaction?.getState()
-    const browsing = state?.stage !== undefined && state.stage !== 'workspace'
     return { title: text().title,
-      placeholder: browsing ? text().filter : text().search, query,
+      placeholder: text().filter, query,
       actionsTargetLabel: state?.target?.path ?? '',
-      scrollMode: browsing ? 'contained' : 'content',
+      scrollMode: 'contained',
       width: 'compact',
-      canGoBack: state?.canGoBack ?? false, canAccept: state !== undefined && (browsing ? !!state.target?.selected : state.count > 0),
-      acceptLabel: browsing ? (state?.target?.directory ? text().openDirectory : text().insert) : text().chooseWorkspace,
+      canGoBack: false, canAccept: !!state?.target?.selected,
+      acceptLabel: state?.target?.directory ? text().openDirectory : text().insert,
       footerText: state ? `${state.count}` : '', status: 'ready' }
   }
   const removePanel = palette.registerPanel({
@@ -43,6 +45,10 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
     subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener) } },
     onOpen: () => {
       invocation++; query = ''; interaction = undefined
+      workspaceId = pendingWorkspaceId ?? ''; pendingWorkspaceId = undefined
+      if (!workspaceId || !workspaces.getSnapshot().items.some(row => row.workspaceId === workspaceId)) {
+        workspaceId = ''; return
+      }
       const binding = current()
       const actions = binding?.props.inputActions
       const span = typeof actions?.captureInsertion === 'function' ? actions.captureInsertion() : undefined
@@ -124,11 +130,66 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
     move: delta => interaction?.move(delta),
     back: () => interaction?.back() ?? false,
     accept: () => { interaction?.accept(); return { kind: 'stay' } },
-    render: () => adapter ? <WorkspaceFileBrowser key={invocation} adapter={adapter} text={text()} close={() => palette.close()}
-      shell={{ query, bind: value => { interaction = value; return () => { if (interaction === value) interaction = undefined } }, invalidate: notify, setQuery: value => { query = value; notify() } }} /> : null,
+    render: () => adapter ? <WorkspaceFileBrowser key={invocation} workspaceId={workspaceId} adapter={adapter} text={text()} close={() => palette.close()}
+      shell={{ query, bind: value => { interaction = value; return () => { if (interaction === value) interaction = undefined } }, invalidate: notify, setQuery: value => { query = value; notify() } }} /> : <p role="alert">{text().chooseWorkspace}</p>,
   })
+  // Queries remain pure. Only entering Actions captures its composer insertion point.
+  const picker: Picker = {
+    ...createWorkspacePicker(workspaces, () => ({ ...defaultWorkspaceCopy,
+      pickerTitle: text().title, placeholder: text().search,
+      emptyText: text() === browserZh ? '尚无工作区' : 'No workspaces yet',
+      noResultsText: text().empty, disconnected: text().disconnected, unavailable: text().unavailable })),
+    accept: (id, { signal }) => {
+      if (signal.aborted || disposed) return { kind: 'cancelled' }
+      if (!workspaces.isConnected()) return { kind: 'failed', message: text().disconnected }
+      if (workspaces.getSnapshot().phase !== 'ready') return { kind: 'failed', message: text().unavailable }
+      if (!workspaces.getSnapshot().items.some(row => row.workspaceId === id)) return { kind: 'failed', message: text().unavailable }
+      pendingWorkspaceId = id
+      try {
+        const opened = palette.openPanel(PANEL_ID)
+        // openPanel deliberately aborts the originating accept signal.
+        return opened ? { kind: 'stay' } : { kind: 'failed', message: text().unavailable }
+      } finally { pendingWorkspaceId = undefined }
+    },
+    getActions: (id, args): readonly PanelAction[] => {
+      const record = workspaces.getSnapshot().items.find(row => row.workspaceId === id)
+      if (!record || args.signal.aborted || disposed) return []
+      const binding = current()
+      const actions = binding?.props.inputActions
+      const span = actions?.captureInsertion?.()
+      const path = absoluteBrowserPath(record.path, '')
+      const valid = (signal: AbortSignal) => !disposed && !args.signal.aborted && !signal.aborted
+        && workspaces.getSnapshot().phase === 'ready' && workspaces.isConnected()
+        && workspaces.getSnapshot().items.some(row => row.workspaceId === id && row.path === record.path)
+      return [
+        { id: 'create-new-session', title: text().createSession, iconId: 'create', execute: async ({ signal }) => {
+          if (!valid(signal)) return { kind: 'cancelled' }
+          try {
+            await workspaces.createNewSession(id, signal)
+            return valid(signal) ? { kind: 'completed' } : { kind: 'cancelled' }
+          } catch (error) {
+            return valid(signal) ? { kind: 'failed', message: error instanceof Error ? error.message : String(error) } : { kind: 'cancelled' }
+          }
+        } },
+        { id: 'copy-absolute-path', title: text().copy, execute: async ({ signal }) => {
+          if (!valid(signal)) return { kind: 'cancelled' }
+          await navigator.clipboard.writeText(path)
+          return valid(signal) ? { kind: 'stay' } : { kind: 'cancelled' }
+        } },
+        { id: 'insert-reference', title: text().insert, execute: ({ signal }) => {
+          if (!valid(signal)) return { kind: 'cancelled' }
+          if (current()?.key !== binding?.key || !actions || span === undefined || /[\u0000-\u001f\u007f-\u009f"]/u.test(path)) return { kind: 'failed', message: text().stale }
+          const mention = fileMention(path, true)
+          return actions.insertReference?.({ source: 'reference', ref: mention, label: `${record.displayTitle}/`, appearance: 'folder', clipboardText: mention }, span)
+            ? { kind: 'completed' } : { kind: 'failed', message: text().stale }
+        } },
+      ]
+    },
+  }
+  let removePicker: (() => void) | undefined
   let removeCommand: () => void
   try {
+    removePicker = palette.registerPicker(picker)
     removeCommand = palette.registerCommand({
       id: WORKSPACE_COMMAND_ID,
       describe: () => ({ title: text().title, localizedTitles: { zh: browserZh.title, en: browserEn.title },
@@ -137,8 +198,8 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
           '浏览工作区文件', 'Browse Workspace Files', '切换工作区', 'Switch Workspace', '查找工作区', '搜索工作区', '打开工作区', '切换项目',
           'find workspace', 'search workspace', 'open workspace', 'switch project',
           '文件结构', '浏览项目', '复制路径', '文件引用', 'browse files', 'file tree', 'copy path', 'reference'] }),
-      target: { kind: 'panel', panelId: PANEL_ID },
+      target: { kind: 'picker', pickerId: WORKSPACE_PICKER_ID },
     })
-  } catch (error) { removePanel(); throw error }
-  return () => { try { removeCommand() } finally { removePanel() } }
+  } catch (error) { removePicker?.(); removePanel(); throw error }
+  return () => { disposed = true; try { removeCommand() } finally { try { removePicker?.() } finally { removePanel() } } }
 }
