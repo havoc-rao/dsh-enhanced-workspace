@@ -70,8 +70,9 @@ export default function installWorkspacePalette(ctx: Context): void {
         paletteCtx.uiWorkspace.openSession(sessionId);
       },
     };
-    paletteCtx.effect(() => registerWorkspaceProvider(palette, adapter, copy));
-    paletteCtx.effect(() => registerFileBrowser(paletteCtx, palette, adapter));
+    paletteCtx.effect(() => typeof palette.registerPanel === 'function'
+      ? registerFileBrowser(paletteCtx, palette, adapter)
+      : registerWorkspaceProvider(palette, adapter, copy));
     paletteCtx.effect(() => paletteCtx.locale.subscribe(() => palette.refresh()));
   });
 }

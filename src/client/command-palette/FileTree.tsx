@@ -42,6 +42,9 @@ function FileTreeRow({ entry, depth, ...props }: TreeProps & { entry: BrowserEnt
       <button className={css.rowMain} aria-label={entry.name} data-tree-main data-path={entry.path}
         data-name={entry.name} data-directory={entry.directory} data-selected={props.selected === entry.path} onKeyDown={event => {
           if (event.nativeEvent.isComposing) return
+          if (!entry.directory && event.key === 'Enter') {
+            event.preventDefault(); event.stopPropagation(); props.insert(entry); return
+          }
           if (entry.directory && event.key === 'ArrowRight') { event.preventDefault(); setExpanded(true); setLoaded(true) }
           if (entry.directory && event.key === 'ArrowLeft') { event.preventDefault(); setExpanded(false) }
         }} onFocus={() => props.select(entry)} onClick={() => {

@@ -1,15 +1,36 @@
 # commandPalette 可选对接
 
 工作区插件客户端通过 `installWorkspacePalette(ctx)` 的可选
-`ctx.inject(['commandPalette'], paletteCtx => …)` 安装真实 provider。
-所有字典、贡献和 locale 订阅由注入子上下文 effect 管理；服务缺席时不影响侧栏，
-服务失效/插件卸载时注销自己的贡献，不 dispose 共享面板服务。
-运行时代码不导入 palette 实现，仅 type-import `/core` 契约。
+`ctx.inject(['commandPalette'], paletteCtx => …)` 安装贡献。服务缺席不影响侧栏；
+所有字典、贡献和 locale 订阅由注入子上下文 effect 管理，服务失效/插件卸载时
+注销自己的贡献，不 dispose 共享 palette 服务。运行时代码仅 type-import `/core` 契约。
 
-## 两层双语描述与语义图标（已接入）
+## 唯一生产入口与兼容回退
 
-[真实 provider](../src/client/command-palette/provider.ts) 返回插件/领域总 tag 与
-独立子命令标题和图标，不新增可执行的总命令：
+支持 `registerPanel` 的 palette 上，安装只调用
+[registerFileBrowser](../src/client/command-palette/install-file-browser.tsx)：
+
+- 唯一 command ID：`workspaces.find`。
+- target：`{ kind: 'panel', panelId: 'workspaces.browse-files' }`。
+- command 与 panel 标题：中文「浏览工作区」、英文「Browse Workspaces」。
+- command `iconId: 'open'`，category 为「工作区 / Workspace」。
+- 不同时注册 legacy workspace picker，也不额外注册 `workspaces.browse-files` command。
+  后者只保留为 panel ID 与搜索兼容别名。
+- 工作区选择后进入目录树；在浏览器中使用 **⌘L / Ctrl+L** 创建当前工作区的
+  新会话并交接导航。新建会话是浏览器动作，不是第二个生产命令入口。
+
+不支持 `registerPanel` 的旧 palette 只调用
+[registerWorkspaceProvider](../src/client/command-palette/provider.ts) 回退：
+`workspaces.find` 指向 legacy workspace picker，选择工作区后直接创建新会话。
+这一分支保留旧 provider 文案与生命周期，不注册缺失的 panel target。
+
+历史上 legacy picker 的命令文案曾由切换工作区改为「选择工作区新建会话 / Create New Session」，
+文件浏览器也曾使用单独的 `workspaces.browse-files` 命令入口；这些是兼容历史，
+**不是支持 panel 的当前生产安装仍注册两个入口**。
+
+## 两层双语描述与搜索
+
+统一入口复用 [provider](../src/client/command-palette/provider.ts) 导出的稳定 tag：
 
 ```ts
 const workspaceTag = {
@@ -18,91 +39,82 @@ const workspaceTag = {
   localizedTitles: { zh: '工作区', en: 'Workspace' },
   iconId: 'workspace',
 } as const;
-// 现有 workspaces.find 的 describe；copy/metadata/aliases 均为 provider 现有定义。
-// describe 时动态读取当前语言，注册与 picker target 不变。
+// 唯一 command 的动态 describe：
 return {
   pluginTag: workspaceTag,
   iconId: 'open',
-  title: copy().commandTitle, // zh: 选择工作区新建会话；en: Create New Session
-  localizedTitles: {
-    zh: workspaceCommandMetadata.zh.title,
-    en: workspaceCommandMetadata.en.title,
-  },
-  category: copy().category,
-  aliases: workspaceCommandAliases,
+  title: text().title, // zh: 浏览工作区；en: Browse Workspaces
+  localizedTitles: { zh: '浏览工作区', en: 'Browse Workspaces' },
+  category: /* 当前语言的工作区 / Workspace */,
+  aliases: /* 统一入口兼容别名 */,
 };
 ```
 
-同插件命令应复用同一个稳定 tag ID 和一致文案。保留既有查找/搜索/打开别名与
-当前语言 category；中文 title 不拼接 ` · Switch Workspace` 等英文后缀。
-目前只有 `workspaces.find` 一条命令，引用同 ID 的本地工作区 picker。
+aliases 保留 `workspaces.find`、`workspaces.browse-files`，旧新建会话、浏览工作区文件、
+切换/搜索/打开工作区中英文关键词，以及文件树、复制路径、文件引用等浏览器关键词。
+因此旧 `create new session`、`Browse Workspace Files`、`切换工作区` 搜索仍只找到
+同一个浏览工作区入口；别名不恢复旧执行语义。中文 title 不拼接英文后缀。
 
-tag 与 child 的 zh/en 都是可选字段，纯英文、仅 title 的旧 provider 都合法，
-没有必须返回的 subtitle。主标题与 tag 按 locale 由面板解析；仅中文 locale
-显示不重复的独立英文翻译纯文本（无 EN 标签），英文 locale 不显示中文次标题。
+tag 与 child 的 zh/en 都是可选字段，纯英文、仅 title 的旧 provider 都合法。
+主标题与 tag 按 locale 解析；仅中文 locale 显示不重复的独立英文翻译纯文本
+（无 EN 标签），英文 locale 不显示中文次标题。
 
-tag 的 ID/title/zh/en 和 child 的 ID/title/zh/en、aliases/category 全部由
-面板做 fuzzy 搜索（精确、前缀、子串、顺序非连续字符），所有 token 均需匹配，
-可跨层命中。例如 `wsp swt`、`工区 switch` 都通过兼容别名找到新建会话入口。
-不要为了命令搜索改变资源 picker 的查询逻辑。
+tag 的 ID/title/zh/en 和 child 的 ID/title/zh/en、aliases/category 全部由 palette
+做 fuzzy 搜索（精确、前缀、子串、顺序非连续字符），所有 token 均需匹配，可跨层
+命中；例如 `wsp swt`、`工区 switch` 通过兼容别名找到统一入口。
+命令搜索不会改变 legacy picker 自身的资源查询逻辑。
 
-## 已接入的图标选型
+## 图标与资源边界
 
-palette 真实类型已公开 `PaletteIconId = 'workspace' | 'git' | 'search' | 'create' | 'open'`，
-`CommandPluginTag`、`CommandDescriptor` 与 `PickerItem` 均支持可选 `iconId`。
-本仓库使用真实契约类型安全接入，不用断言或 ts-ignore 绕过字段检查。
-controller 的 `DisplayRow.iconId/pluginTagIconId` 传递纯数据，palette UI 静态
-映射 DSH shared SVG；生产 provider 不导入 React 图标、不传 ReactNode/原始 SVG，
-也不把组件名写入旧 `icon` 文本或使用 emoji 假装 SVG。
+真实契约公开 `PaletteIconId = 'workspace' | 'git' | 'search' | 'create' | 'open'`。
+本仓库使用类型安全的纯数据字段，不导入 React 图标、不传 ReactNode/原始 SVG，
+也不把组件名写入旧 `icon` 文本或用 emoji 假装 SVG。
 
-| 贡献 | 生产字段与取值 | palette UI 映射的 DSH 共享组件 | 理由 |
-| --- | --- | --- | --- |
-| 总 tag `workspace`（工作区 / Workspace） | `pluginTag.iconId: 'workspace'` | `IconWorkspaceTreeOutlineRegular` | 表示工作区域/目录树身份 |
-| 唯一子命令 `workspaces.find`（选择工作区新建会话 / Create New Session，target 为 picker） | `CommandDescriptor.iconId: 'open'` | `IconFolderOpenOutlineRegular` | 保留用户指定的打开文件夹图标，表示选择工作区并进入新会话，不使用放大镜；仅覆盖自身，不改变 tag |
-| picker `workspaces.find` 返回的工作区资源项 | `PickerItem.iconId: 'workspace'` | `IconWorkspaceTreeOutlineRegular` | 本插件显式配置工作区身份图标，不继承 tag 或 open 动作图标 |
+| 贡献 | 字段与取值 | palette UI 映射的 DSH 共享组件 |
+| --- | --- | --- |
+| 总 tag `workspace`（工作区 / Workspace） | `pluginTag.iconId: 'workspace'` | `IconWorkspaceTreeOutlineRegular` |
+| 唯一 command `workspaces.find`（浏览工作区 / Browse Workspaces，target 为 panel） | `CommandDescriptor.iconId: 'open'` | `IconFolderOpenOutlineRegular` |
+| legacy fallback picker 的工作区资源项 | `PickerItem.iconId: 'workspace'` | `IconWorkspaceTreeOutlineRegular` |
 
-命令现在明确表达「选择工作区新建会话」，图标保留用户此前指定的 `open`（不改为放大镜）。
-总 tag 仍是 workspace，资源项显式设置 workspace 图标而非继承；search/create/git 是公开可选语义，
-本次不扩展命令数量。旧切换/查找别名及 `workspaces.find` ID 保留兼容，但执行
-语义已经改为创建新会话，不再仅打开或复用已有空会话。
+命令图标表示打开工作区浏览器，不改为放大镜。总 tag 不受子命令覆盖影响；legacy
+资源项显式使用 workspace 图标，**不继承 tag**，包括直接打开 picker 的场景。
+未知 icon ID 与旧文本兼容由 palette resolver 按其回退协议处理。
 
-picker 标题为「选择工作区新建会话 / Choose a Workspace for a New Session」。
-每项 label 保留工作区名称，detail 只显示路径，不重复新建会话动作前缀；
-搜索字段和排名保持原样。
+## 生命周期与创建边界
 
-### 回退约定与验证边界
-
-- 子命令行按「有效自身 iconId → 非空旧 icon 文本 → 有效 tag iconId →
-  原有通用回退」解析；总 tag 标题只用自己的有效 iconId。单行覆盖不改变
-  共享 tag 或其他命令；未知 ID 按缺失继续回退。旧 icon 仍为文本，不解析名称。
-- 资源项按「有效 item iconId → 非空旧 icon 文本 → 原有资源回退」解析，
-  **不继承 tag**，包括直接打开 picker 的场景。
-- 图标与 locale 无关、不参与 fuzzy 搜索，UI 使用 currentColor 与统一尺寸。
-- 本仓库真实 controller 回归验证命令行同时传递 `iconId: 'open'` 与
-  `pluginTagIconId: 'workspace'`，语言切换后保持一致；由命令进入与直接打开
-  picker 的资源行都有自己的 `iconId: 'workspace'`，不继承 `pluginTagIconId`。UI resolver 自身的完整映射、未知 ID
-  及旧文本兼容测试归 palette 仓库维护。
-- 已接入源码和 snapshot 不等于已部署到宿主浏览器；本轮未做真实 GUI 验证，
-  不宣称当前页面已加载新的打开文件夹 SVG。
-
-## 保持不变的资源与生命周期边界
-
-- picker 使用完整宿主目录，不读取侧栏折叠/过滤后的 DOM；queryMode 为 local。
-- picker 自己匹配名称、显示名、路径和 basename，排序、截断并返回 hasMore。
-- accept 重新解析最新目录、连接状态与目标；提交前检查 abort，调用公开
-  `sessions.create({ workspaceId })` 创建新身份（不传现有 sessionId、不复用空会话），
-  await 后再检查 signal/连接/目录与成员，再 `uiWorkspace.openSession(sessionId)`。
-  取消不会回滚已经提交的创建，但阻止尚未交接的导航；创建失败不打开旧会话。
+- browser panel 的 `render` 承载组件及当前调用捕获的输入框引用；关闭/卸载释放调用，
+  过期输入框不允许插入引用。目录树/预览通过插件 RPC，不读取侧栏 DOM。
+- 浏览器新建会话动作调用公开 adapter `createNewSession`；实际键盘交互、工作区阶段
+  切换和创建/导航取消边界由组件测试验证。
+- legacy fallback picker 使用完整宿主目录，queryMode 为 local；匹配名称、显示名、
+  路径和 basename，排序、截断并返回 hasMore，不读取侧栏折叠/过滤后的 DOM。
+- adapter 调用 `sessions.create({ workspaceId })` 创建新身份（不传现有 sessionId、
+  不复用空会话），await 后检查 signal/连接/目录与成员，再 `uiWorkspace.openSession(sessionId)`。
+  取消不会回滚已提交的创建，但阻止尚未交接的导航；创建失败不打开旧会话。
   completed 表示创建完成并已交接导航，不承诺视图加载完成。
-- workspace/session/connection 的订阅仅在 picker 激活时由控制器管理；locale
-  改变动态刷新文案；注册失败回滚 picker，注销幂等并逆序清理。
+- workspace/session/connection 订阅随实际激活的 browser 组件或 fallback picker 管理；
+  locale 改变动态刷新描述。贡献注册失败回滚，卸载释放对应的 command/panel 或 picker。
 
 ## 验证
 
-[command-palette.spec.ts](../tests/command-palette.spec.ts) 使用链接包真实
-`createPaletteController`，覆盖安装后的两层描述、图标 snapshot 与资源不继承，
-中英文/跨层模糊搜索、纯英文及旧 provider 兼容，并回归查询/导航/返回/卸载、
-注册失败、动态 locale、连接变化和取消边界。
-这不是宿主浏览器端验证；不据此宣称当前 GUI 已挂载或快捷键已交付。
+[command-palette.spec.ts](../tests/command-palette.spec.ts) 保留旧 provider 独立测试，
+使用真实 `createPaletteController` 验证支持 panel 时唯一 command + panel、两层双语
+描述与图标、旧新 aliases 搜索、动态 locale、panel render 的 adapter 与 dispose；
+不支持 panel 时独立验证 fallback 安装、adapter 创建新会话、导航取消保护与订阅清理。
+实际 browser `createNewSession` 交互由下述组件测试验证。
 
+这不是宿主浏览器端验证；不据此宣称当前 GUI 已挂载、SVG 或快捷键已部署。
 契约依据：[palette 对接协议](../../dsh-command-palette/docs/cmd-integration.md)。
+
+## 文件引用选择器
+
+`workspaces.find` 打开 `workspaces.browse-files` panel，以「选择目标 → 插入引用」为主路径：
+
+- 导航只分工作区选择与目录树两层；选中文件不会进入新的预览层，返回直接回到工作区选择并清空搜索。
+- 文件树无预览时占满宽度；显示预览时宽屏按 65% / 35% 分配。内容预览可以关闭，选择在本次挂载内保留；窄屏默认关闭，手动开启后以下方较小辅助区显示。
+- 底部固定展示当前目标及「插入引用」。文件/目录展示相对路径，悬停查看绝对路径，实际插入仍使用绝对路径。无选中项时明确标记「引用整个工作区」。
+- 单击/方向键选择文件，Enter 直接插入并关闭；目录的 Enter 只展开/收起，目录引用通过底部或行内插入按钮完成。复制路径保留为次级操作。
+- 预览请求延迟 150ms，并在切换目标或关闭预览时取消。预览错误只显示在辅助区域，不影响引用插入及输入框捕获/过期保护。
+- 嵌入 palette 时，隐藏文件只通过 Actions 的「显示隐藏文件」切换，不再额外渲染 checkbox。action 使用 `status: { kind: 'toggle', checked: state.hidden, label }` 提供右侧只读状态标记；标题保持稳定，label 描述当前状态（隐藏文件：已显示 / 已隐藏），用于 tooltip 与辅助阅读。执行返回 `stay`，重新打开 Actions 时读取最新状态。无 palette shell 的独立浏览器保留 checkbox 回退。
+
+回归覆盖见 [组件测试](../tests/file-browser.client.spec.tsx) 与 [面板集成测试](../tests/file-browser-command.client.spec.tsx)。

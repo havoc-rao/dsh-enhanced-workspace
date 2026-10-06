@@ -14,16 +14,20 @@ export interface FileBrowserAdapter {
   copy(path: string): Promise<void>
 }
 export const browserZh = {
-  title: '浏览工作区文件', search: '搜索工作区名称或路径…', filter: '筛选当前目录…',
+  title: '浏览工作区', createSession: '新建会话', disconnected: '连接已断开', unavailable: '工作区列表尚未就绪', search: '搜索工作区名称或路径…', filter: '筛选当前目录…',
   close: '关闭', copy: '复制绝对路径', insert: '插入引用', copied: '已复制路径',
+  hiddenShown: '隐藏文件：已显示', hiddenHidden: '隐藏文件：已隐藏', previewOn: '内容预览：已开启', previewOff: '内容预览：已关闭',
   hidden: '显示隐藏文件', loading: '加载中…', empty: '没有匹配的条目', preview: '选择文件查看预览',
   truncated: '结果已截断', stale: '输入框已变化或不可用，请关闭后重新打开', retry: '重试',
+  hideHidden: '隐藏隐藏文件', togglePreview: '内容预览', rootReference: '引用整个工作区', chooseWorkspace: '选择工作区', openDirectory: '展开 / 收起目录',
 }
 export const browserEn: typeof browserZh = {
-  title: 'Browse Workspace Files', search: 'Search workspace names or paths…', filter: 'Filter this directory…',
+  title: 'Browse Workspaces', createSession: 'Create New Session', disconnected: 'Connection is disconnected', unavailable: 'Workspace catalogue is not ready', search: 'Search workspace names or paths…', filter: 'Filter this directory…',
   close: 'Close', copy: 'Copy Absolute Path', insert: 'Insert Reference', copied: 'Path copied',
+  hiddenShown: 'Hidden files: shown', hiddenHidden: 'Hidden files: hidden', previewOn: 'Content preview: on', previewOff: 'Content preview: off',
   hidden: 'Show hidden files', loading: 'Loading…', empty: 'No matching entries', preview: 'Select a file to preview',
   truncated: 'Results truncated', stale: 'Composer changed or is unavailable; close and reopen', retry: 'Retry',
+  hideHidden: 'Hide hidden files', togglePreview: 'Content preview', rootReference: 'Reference entire workspace', chooseWorkspace: 'Choose workspace', openDirectory: 'Expand / collapse directory',
 }
 export function absoluteBrowserPath(root: string, path: string): string {
   const separator = /^[A-Za-z]:[\\/]|^\\\\/u.test(root) ? '\\' : '/'
@@ -49,6 +53,8 @@ export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
   const [hidden, setHidden] = useState(false)
   const [selected, setSelected] = useState<BrowserEntry | null>(null)
   const [preview, setPreview] = useState<Extract<BrowserResult, { kind: 'file' }> | null>(null)
+  const [previewEnabled, setPreviewEnabled] = useState(() => !globalThis.matchMedia?.('(max-width: 720px)').matches)
+  const [previewError, setPreviewError] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -57,17 +63,22 @@ export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => adapter.subscribe(() => setWorkspaces(adapter.workspaces())), [adapter])
   useEffect(() => {
-    setPreview(null); setLoading(false)
-    if (!workspace || !selected || selected.directory) return
+    setPreview(null); setPreviewError(''); setLoading(false)
+    if (!previewEnabled || !workspace || !selected || selected.directory) return
     setLoading(true)
     const controller = new AbortController()
-    adapter.browse({ workspaceId: workspace.workspaceId, path: selected.path, preview: true }, controller.signal).then(result => {
-      if (!controller.signal.aborted && result.kind === 'file') setPreview(result)
-    }).catch(reason => { if (!controller.signal.aborted) setError(String(reason)) })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
-  }, [adapter, workspace?.workspaceId, selected, revision])
-  const select = (entry: BrowserEntry) => { setSelected(entry); setPreview(null); setError(''); setNotice('') }
+    const timer = setTimeout(() => {
+      adapter.browse({ workspaceId: workspace.workspaceId, path: selected.path, preview: true }, controller.signal).then(result => {
+        if (!controller.signal.aborted && result.kind === 'file') setPreview(result)
+      }).catch(reason => { if (!controller.signal.aborted) setPreviewError(String(reason)) })
+        .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    }, 150)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [adapter, workspace?.workspaceId, selected?.path, selected?.directory, previewEnabled, revision])
+  const select = (entry: BrowserEntry) => {
+    setSelected(current => current?.path === entry.path && current.directory === entry.directory ? current : entry)
+    setError(''); setNotice('')
+  }
   const copy = (entry?: BrowserEntry) => {
     if (!workspace) return
     void adapter.copy(absoluteBrowserPath(workspace.path, entry?.path ?? '')).then(() => {
@@ -79,25 +90,31 @@ export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
     if (adapter.insert(absoluteBrowserPath(workspace.path, entry?.path ?? ''), entry?.directory ?? true, entry?.name ?? workspace.displayTitle)) close()
     else setError(text.stale)
   }
-  const showPreview = workspace && selected && !selected.directory
-  const target = workspace && selected ? absoluteBrowserPath(workspace.path, selected.path) : ''
-  const stage = !workspace ? 'workspace' : showPreview ? 'preview' : 'tree'
+  const showPreview = previewEnabled && workspace && selected && !selected.directory
+  const target = workspace ? absoluteBrowserPath(workspace.path, selected?.path ?? '') : ''
+  const stage = !workspace ? 'workspace' : 'tree'
   const matches = workspaces.filter(row => `${row.displayTitle} ${row.path}`.toLowerCase().includes(search.toLowerCase()))
+  const actionWorkspace = workspace ?? matches[Math.min(activeWorkspace, matches.length - 1)]
   const chooseWorkspace = (id: string) => {
     if (id === workspaceId) return
     setWorkspaceId(id); setSelected(null); setPreview(null); setError(''); setNotice('')
     setSearch(''); shell?.setQuery?.('')
   }
   useEffect(() => shell?.bind({
-    getState: () => ({ stage, canGoBack: !!workspace, count: workspace ? tree.current?.querySelectorAll('[role=treeitem]').length ?? 0 : matches.length,
-      ...(workspace ? { workspaceId: workspace.workspaceId, target: {
-        path: absoluteBrowserPath(workspace.path, selected?.path ?? ''), directory: selected?.directory ?? true,
-        label: selected?.name ?? workspace.displayTitle,
+    setHidden, setPreviewEnabled,
+    getState: () => ({ stage, hidden, previewEnabled, canGoBack: !!workspace, count: workspace ? tree.current?.querySelectorAll('[role=treeitem]').length ?? 0 : matches.length,
+      ...(actionWorkspace ? { workspaceId: actionWorkspace.workspaceId, target: {
+        path: absoluteBrowserPath(actionWorkspace.path, workspace ? selected?.path ?? '' : ''),
+        directory: workspace ? selected?.directory ?? true : true,
+        label: workspace ? selected?.name ?? actionWorkspace.displayTitle : actionWorkspace.displayTitle,
+        selected: workspace ? !!selected : true,
       } } : {}),
     }),
     back: () => {
-      if (showPreview) { setSelected(null); setPreview(null); return true }
-      if (workspace) { setWorkspaceId(''); setSelected(null); setPreview(null); return true }
+      if (workspace) {
+        setWorkspaceId(''); setSelected(null); setPreview(null); setError(''); setNotice('')
+        setSearch(''); shell?.setQuery?.(''); return true
+      }
       return false
     },
     move: delta => {
@@ -110,12 +127,12 @@ export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
     },
     accept: () => {
       if (!workspace) { const row = matches[Math.min(activeWorkspace, matches.length - 1)]; if (row) chooseWorkspace(row.workspaceId) }
-      else if (selected && !selected.directory) shell?.openActions?.()
+      else if (selected && !selected.directory) insert(selected)
       else tree.current?.querySelector<HTMLButtonElement>(`button[data-tree-main][data-selected=true]`)?.click()
     },
-  }), [shell, stage, workspace, matches.length, activeWorkspace, selected, search])
-  useEffect(() => { shell?.invalidate() }, [stage, activeWorkspace, search, selected, workspaces])
-  return <div className={css.browser} data-stage={stage} onKeyDown={event => {
+  }), [shell, stage, workspace, matches.length, activeWorkspace, selected, search, hidden, previewEnabled])
+  useEffect(() => { shell?.invalidate() }, [stage, activeWorkspace, search, selected, workspaces, hidden, previewEnabled])
+  return <div className={css.browser} data-stage={stage} data-preview={!!showPreview} onKeyDown={event => {
     if (event.nativeEvent.isComposing || event.target instanceof HTMLInputElement) return
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
@@ -142,9 +159,14 @@ export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
       </aside>}
       {workspace && <section className={css.files} aria-label={workspace.displayTitle}>
         <header className={css.treeHeader}>
-          <strong>{workspace.displayTitle}</strong>
+          <span className={css.workspaceBadge} aria-hidden="true"><IconWorkspaceTreeOutlineRegular size={18} /></span>
+          <div className={css.workspaceInfo}>
+            <strong title={workspace.displayTitle}>{workspace.displayTitle}</strong>
+            <small title={workspace.path}>{workspace.path}</small>
+          </div>
+          {!shell && <button className={css.previewToggle} aria-label={text.togglePreview} aria-pressed={previewEnabled} onClick={() => setPreviewEnabled(value => !value)}>{text.togglePreview}</button>}
         </header>
-        <label><input type="checkbox" checked={hidden} onChange={event => setHidden(event.target.checked)} />{text.hidden}</label>
+        {!shell && <label><input type="checkbox" checked={hidden} onChange={event => setHidden(event.target.checked)} />{text.hidden}</label>}
         {error && <div role="alert">{error} <button onClick={() => setRevision(value => value + 1)}>{text.retry}</button></div>}
         {notice && <p role="status">{notice}</p>}
         <div ref={tree} role="tree" aria-label={workspace.displayTitle} className={css.entries}>
@@ -152,9 +174,9 @@ export function WorkspaceFileBrowser({ adapter, text, close, shell }: {
             text={text} hidden={hidden} filter={search} selected={selected?.path} select={select} copy={copy} insert={insert} />
         </div>
       </section>}
-      {workspace && !showPreview && <div className={css.previewPlaceholder} aria-hidden="true" />}
-      {showPreview && <section className={css.previewPane} aria-label={selected.name}>
-        <small className={css.path}>{target}</small>
+      {showPreview && <section className={css.previewPane} data-file-preview aria-label={`${text.togglePreview}: ${selected.name}`}>
+        <small className={css.path} title={target}>{selected.path}</small>
+        {previewError && <div role="alert">{previewError} <button onClick={() => setRevision(value => value + 1)}>{text.retry}</button></div>}
         {loading ? <p role="status">{text.loading}</p> : preview && <>
           <pre>{preview.text}</pre>{preview.truncated && <p>{text.truncated}</p>}
         </>}

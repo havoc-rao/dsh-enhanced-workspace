@@ -195,15 +195,16 @@ describe('two-layer palette compatibility', () => {
 })
 
 describe('optional palette installation', () => {
-  it('waits for the optional service, reuses title owner/createNewSession, invalidates and cleans up', async () => {
+  function installationFixture(supportsPanels = true) {
     let activate: ((ctx: Context) => void) | undefined
     const disposers: (() => void)[] = []
     let picker: Picker | undefined
-    let command: Command | undefined
+    let panel: import('@deepseek-ai/dsh-client-ui-command-palette/core').Panel | undefined
+    const commands: Command[] = []
     const listeners: Record<'workspace' | 'session' | 'connection' | 'locale', () => void> = {
       workspace: vi.fn(), session: vi.fn(), connection: vi.fn(), locale: vi.fn(),
     }
-    const off = { workspace: vi.fn(), session: vi.fn(), connection: vi.fn(), locale: vi.fn(), dictionary: vi.fn(), picker: vi.fn(), command: vi.fn(), browserCommand: vi.fn(), panel: vi.fn() }
+    const off = { workspace: vi.fn(), session: vi.fn(), connection: vi.fn(), locale: vi.fn(), dictionary: vi.fn(), picker: vi.fn(), command: vi.fn(), panel: vi.fn() }
     let language = 'zh'
     let dictionaries: Record<string, Record<string, string>> = {}
     let connected = true
@@ -212,8 +213,11 @@ describe('optional palette installation', () => {
     const ctx = {
       inject: vi.fn((_keys, callback) => { activate = callback }),
       effect: (effect: () => () => void) => { disposers.push(effect()) },
-      get: (key: string): unknown => key === 'commandPalette' ? ctx.commandPalette : ({ state: { getSnapshot: () => connected ? 'connected' : 'disconnected', subscribe: (fn: () => void) => { listeners.connection = fn; return off.connection } } }),
+      get: (key: string): unknown => key === 'commandPalette' ? ctx.commandPalette : key === 'connection'
+        ? { state: { getSnapshot: () => connected ? 'connected' : 'disconnected', subscribe: (fn: () => void) => { listeners.connection = fn; return off.connection } } }
+        : undefined,
       locale: {
+        getSnapshot: () => ({ active: language }),
         register: (_ns: string, dict: typeof dictionaries) => { dictionaries = dict; return off.dictionary },
         bind: () => (key: string) => dictionaries[language]![key],
         subscribe: (fn: () => void) => { listeners.locale = fn; return off.locale },
@@ -222,41 +226,60 @@ describe('optional palette installation', () => {
       sessions: { create: createSession, list: { getSnapshot: () => ({ byId: {} }), subscribe: (fn: () => void) => { listeners.session = fn; return off.session } } },
       uiWorkspace: { openSession, openWorkspace },
       commandPalette: {
-        registerPanel: () => off.panel,
-        registerPicker: (value: Picker) => { picker = value; return off.picker },
-        registerCommand: (value: Command) => {
-          if (value.id === 'workspaces.browse-files') return off.browserCommand
-          command = value; return off.command
-        }, refresh,
+        registerPanel: supportsPanels ? vi.fn((value: typeof panel) => { panel = value; return off.panel }) : undefined,
+        registerPicker: vi.fn((value: Picker) => { picker = value; return off.picker }),
+        registerCommand: vi.fn((value: Command) => { commands.push(value); return off.command }),
+        refresh, close: vi.fn(),
       },
     }
     installWorkspacePalette(ctx as unknown as Context)
-    expect(ctx.inject).toHaveBeenCalledWith(['commandPalette'], expect.any(Function))
-    expect(picker).toBeUndefined()
-    activate!(ctx as unknown as Context)
-    expect(command!.id).toBe('workspaces.find')
-    // Use the real cmd matcher: both languages must find one localized row.
-    const controller = createPaletteController({ captureContext: () => undefined, getLocale: () => language })
-    controller.registerPicker(picker!)
-    controller.registerCommand(command!)
+    return { ctx, off, listeners, commands, createSession, openSession, openWorkspace, refresh,
+      get picker() { return picker }, get panel() { return panel },
+      activate: () => activate!(ctx as unknown as Context),
+      setLanguage: (value: string) => { language = value; listeners.locale() },
+      getLanguage: () => language,
+      setConnected: (value: boolean) => { connected = value },
+      dispose: () => disposers.reverse().forEach(dispose => dispose()),
+    }
+  }
+
+  it('waits for the optional service and installs only one browser command/panel with localized compatibility search and cleanup', () => {
+    const f = installationFixture()
+    expect(f.ctx.inject).toHaveBeenCalledWith(['commandPalette'], expect.any(Function))
+    expect(f.commands).toEqual([])
+    expect(f.panel).toBeUndefined()
+    f.activate()
+    expect(f.ctx.commandPalette.registerPicker).not.toHaveBeenCalled()
+    expect(f.ctx.commandPalette.registerPanel).toHaveBeenCalledOnce()
+    expect(f.ctx.commandPalette.registerCommand).toHaveBeenCalledOnce()
+    expect(f.picker).toBeUndefined()
+    const command = f.commands[0]!
+    const panel = f.panel!
+    expect(command).toMatchObject({ id: 'workspaces.find', target: { kind: 'panel', panelId: 'workspaces.browse-files' } })
+    expect(panel.id).toBe('workspaces.browse-files')
+    const controller = createPaletteController({ captureContext: () => undefined, getLocale: f.getLanguage })
+    controller.registerPanel(panel)
+    controller.registerCommand(command)
     controller.openCommands()
     const assertSearch = (title: string, category: string) => {
-      const descriptor = command!.describe(undefined)
+      const descriptor = command.describe(undefined)
       expect(descriptor).toMatchObject({ title, category, iconId: 'open',
-        localizedTitles: { zh: '选择工作区新建会话', en: 'Create New Session' },
+        localizedTitles: { zh: '浏览工作区', en: 'Browse Workspaces' },
         pluginTag: { id: 'workspace', title: 'Workspace', iconId: 'workspace', localizedTitles: { zh: '工作区', en: 'Workspace' } } })
       expect(descriptor.pluginTag).toBe(workspaceTag)
+      expect(descriptor.aliases).toEqual(expect.arrayContaining(['workspaces.find', 'workspaces.browse-files']))
       expect(descriptor.title).not.toContain(' · ')
-      for (const query of ['', '切换工作区', 'Switch Workspace', '工作区', 'Workspace',
-        '搜索工作区', 'open workspace', '切换 workspace', 'switch 工作区',
-        'wsp swt', '工区 switch', 'workspace', 'wsp', '工区', 'swt', 'workspaces.find', '新建会话', 'create new session', 'wsp new']) {
+      for (const query of ['', '浏览工作区', 'Browse Workspaces', '浏览工作区文件', 'Browse Workspace Files',
+        '切换工作区', 'Switch Workspace', '工作区', 'Workspace', '搜索工作区', 'open workspace',
+        '切换 workspace', 'switch 工作区', 'wsp swt', '工区 switch', 'wsp', '工区', 'swt',
+        'workspaces.find', 'workspaces.browse-files', '新建会话', 'create new session', 'wsp new']) {
         controller.setQuery(query)
         expect(controller.getSnapshot().rows).toMatchObject([{ id: WORKSPACE_COMMAND_ID, label: title, detail: category,
           iconId: 'open', pluginTagIconId: 'workspace' }])
         expect(controller.getSnapshot().rows).toHaveLength(1)
         const row = controller.getSnapshot().rows[0]!
-        if (language === 'zh') {
-          expect(row).toMatchObject({ secondaryLabel: 'Create New Session', secondaryLocale: 'en',
+        if (f.getLanguage() === 'zh') {
+          expect(row).toMatchObject({ secondaryLabel: 'Browse Workspaces', secondaryLocale: 'en',
             pluginTagId: 'workspace', pluginTagLabel: '工作区', pluginTagSecondaryLabel: 'Workspace' })
         } else {
           expect(row).toMatchObject({ pluginTagId: 'workspace', pluginTagLabel: 'Workspace' })
@@ -268,45 +291,73 @@ describe('optional palette installation', () => {
       controller.setQuery('unrelated')
       expect(controller.getSnapshot().rows).toEqual([])
     }
-    assertSearch('选择工作区新建会话', '工作区')
+    try {
+      assertSearch('浏览工作区', '工作区')
+      expect(panel.getSnapshot().title).toBe('浏览工作区')
+      expect(panel.render()).toBeNull()
+      const closePanel = panel.onOpen!({ context: undefined, signal: new AbortController().signal }) as () => void
+      // render owns the browser adapter; actual user interactions are covered by component specs.
+      const rendered = panel.render() as import('react').ReactElement<{ adapter: { workspaces(): WorkspaceRecord[] } }>
+      expect(rendered.props.adapter.workspaces()[0]).toMatchObject({ displayTitle: '默认工作区' })
+      f.setLanguage('en')
+      expect(f.refresh).toHaveBeenCalledOnce()
+      controller.refresh()
+      assertSearch('Browse Workspaces', 'Workspace')
+      expect(panel.getSnapshot().title).toBe('Browse Workspaces')
+      expect(rendered.props.adapter.workspaces()[0]).toMatchObject({ displayTitle: 'Default Workspace' })
+      closePanel()
+      expect(panel.render()).toBeNull()
+      expect(f.createSession).not.toHaveBeenCalled()
+      expect(f.openSession).not.toHaveBeenCalled()
+    } finally { controller.dispose(); f.dispose() }
+    for (const key of ['dictionary', 'locale', 'command', 'panel'] as const) expect(f.off[key]).toHaveBeenCalledOnce()
+    expect(f.off.picker).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the legacy picker without registerPanel and preserves adapter creation, invalidation and cancellation guards', async () => {
+    const f = installationFixture(false)
+    f.activate()
+    expect(f.ctx.commandPalette.registerPicker).toHaveBeenCalledOnce()
+    expect(f.ctx.commandPalette.registerCommand).toHaveBeenCalledOnce()
+    expect(f.panel).toBeUndefined()
+    expect(f.commands[0]).toMatchObject({ id: 'workspaces.find', target: { kind: 'picker', pickerId: WORKSPACE_PICKER_ID } })
+    const picker = f.picker!
     const args = { query: '', limit: 10, context: undefined, signal: new AbortController().signal }
-    expect(picker!.describe(undefined).title).toBe('选择工作区新建会话')
-    expect((await picker!.query(args)).items[0]).toMatchObject({ label: '默认工作区', detail: '/projects/default' })
-    language = 'en'; listeners.locale()
-    expect(refresh).toHaveBeenCalledOnce()
-    controller.refresh()
-    assertSearch('Create New Session', 'Workspace')
-    controller.dispose()
-    expect(picker!.describe(undefined).title).toBe('Choose a Workspace for a New Session')
-    expect((await picker!.query(args)).items[0]).toMatchObject({ label: 'Default Workspace', detail: '/projects/default' })
+    expect(picker.describe(undefined).title).toBe('选择工作区新建会话')
+    expect((await picker.query(args)).items[0]).toMatchObject({ label: '默认工作区', detail: '/projects/default' })
+    f.setLanguage('en')
+    expect(f.refresh).toHaveBeenCalledOnce()
+    expect(picker.describe(undefined).title).toBe('Choose a Workspace for a New Session')
+    expect((await picker.query(args)).items[0]).toMatchObject({ label: 'Default Workspace', detail: '/projects/default' })
     const invalidate = vi.fn()
-    const unsubscribe = picker!.subscribeInvalidation!(invalidate)
-    listeners.workspace(); listeners.session(); listeners.connection()
+    const unsubscribe = picker.subscribeInvalidation!(invalidate)
+    f.listeners.workspace(); f.listeners.session(); f.listeners.connection()
     expect(invalidate).toHaveBeenCalledTimes(3)
-    expect(await picker!.accept('default' as ItemId, args)).toEqual({ kind: 'completed' })
-    expect(createSession).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'default' })
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('fresh-session')
-    expect(openWorkspace).not.toHaveBeenCalled()
-    await picker!.accept('default' as ItemId, args)
-    expect(createSession).toHaveBeenCalledTimes(2) // No reuse even if an existing blank is present.
-    expect(openSession).toHaveBeenCalledTimes(2)
+    expect(await picker.accept('default' as ItemId, args)).toEqual({ kind: 'completed' })
+    expect(f.createSession).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'default' })
+    expect(f.openSession).toHaveBeenCalledExactlyOnceWith('fresh-session')
+    expect(f.openWorkspace).not.toHaveBeenCalled()
+    await picker.accept('default' as ItemId, args)
+    expect(f.createSession).toHaveBeenCalledTimes(2) // Explicit create never reuses an existing blank session.
+    expect(f.openSession).toHaveBeenCalledTimes(2)
     let finish!: (id: string) => void
-    createSession.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    f.createSession.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
     const cancellation = new AbortController()
-    const pending = picker!.accept('default' as ItemId, { ...args, signal: cancellation.signal })
+    const pending = picker.accept('default' as ItemId, { ...args, signal: cancellation.signal })
     cancellation.abort()
     finish('created-but-not-opened')
     expect(await pending).toEqual({ kind: 'cancelled' })
-    expect(openSession).toHaveBeenCalledTimes(2)
-    createSession.mockRejectedValueOnce(new Error('creation refused'))
+    expect(f.openSession).toHaveBeenCalledTimes(2)
+    f.createSession.mockRejectedValueOnce(new Error('creation refused'))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      expect(await picker!.accept('default' as ItemId, args)).toMatchObject({ kind: 'failed', message: 'creation refused' })
-      expect(openSession).toHaveBeenCalledTimes(2)
+      expect(await picker.accept('default' as ItemId, args)).toMatchObject({ kind: 'failed', message: 'creation refused' })
+      expect(f.openSession).toHaveBeenCalledTimes(2)
     } finally { warn.mockRestore() }
-    connected = false
-    expect(await picker!.accept('default' as ItemId, args)).toMatchObject({ kind: 'failed' })
-    unsubscribe(); disposers.reverse().forEach(dispose => dispose())
-    for (const dispose of Object.values(off)) expect(dispose).toHaveBeenCalledOnce()
+    f.setConnected(false)
+    expect(await picker.accept('default' as ItemId, args)).toMatchObject({ kind: 'failed' })
+    unsubscribe(); f.dispose()
+    for (const key of ['workspace', 'session', 'connection', 'locale', 'dictionary', 'picker', 'command'] as const) expect(f.off[key]).toHaveBeenCalledOnce()
+    expect(f.off.panel).not.toHaveBeenCalled()
   })
 })

@@ -1,9 +1,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
-import type { CommandId, PaletteService, PanelId, PanelSnapshot } from '@deepseek-ai/dsh-client-ui-command-palette/core'
+import type { PaletteService, PanelId, PanelSnapshot } from '@deepseek-ai/dsh-client-ui-command-palette/core'
 import { FILE_BROWSER_ENDPOINT, type BrowserResult } from '../../shared/file-browser.ts'
 import { PERSISTENCE_CHANNEL } from '../../shared/persistence.ts'
-import { workspaceTag, type WorkspaceAdapter } from './provider.ts'
+import { WORKSPACE_COMMAND_ID, workspaceTag, type WorkspaceAdapter } from './provider.ts'
 import { WorkspaceFileBrowser, browserZh, browserEn, fileMention, type FileBrowserAdapter } from './FileBrowser.tsx'
 import type { BrowserInteraction } from './browser-interaction.ts'
 
@@ -29,13 +29,13 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
   const getSnapshot = (): PanelSnapshot => {
     const state = interaction?.getState()
     const browsing = state?.stage !== undefined && state.stage !== 'workspace'
-    return { title: browsing ? state.target?.label ?? text().title : text().title,
+    return { title: text().title,
       placeholder: browsing ? text().filter : text().search, query,
       actionsTargetLabel: state?.target?.path ?? '',
       scrollMode: browsing ? 'contained' : 'content',
-      width: browsing ? 'wide' : 'compact',
-      canGoBack: state?.canGoBack ?? false, canAccept: state !== undefined && (state.stage !== 'workspace' || state.count > 0),
-      acceptLabel: state?.stage === 'preview' ? (text() === browserZh ? '选择操作' : 'Actions') : text().title,
+      width: 'compact',
+      canGoBack: state?.canGoBack ?? false, canAccept: state !== undefined && (browsing ? !!state.target?.selected : state.count > 0),
+      acceptLabel: browsing ? (state?.target?.directory ? text().openDirectory : text().insert) : text().chooseWorkspace,
       footerText: state ? `${state.count}` : '', status: 'ready' }
   }
   const removePanel = palette.registerPanel({
@@ -78,9 +78,22 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
       const generation = invocation
       if (!target || !state.workspaceId || !capturedAdapter) return []
       const valid = (signal: AbortSignal) => !signal.aborted && adapter === capturedAdapter && invocation === generation
-        && interaction?.getState().workspaceId === state.workspaceId
+        && interaction?.getState().workspaceId === state.workspaceId && interaction?.getState().stage === state.stage
         && workspaces.getSnapshot().items.some(row => row.workspaceId === state.workspaceId)
       return [
+        { id: 'create-new-session', title: text().createSession, iconId: 'create' as const,
+          aliases: ['new session', 'create session', '新建会话'], execute: async ({ signal }) => {
+            if (!valid(signal)) return { kind: 'cancelled' as const }
+            if (!workspaces.isConnected()) return { kind: 'failed' as const, message: text().disconnected }
+            if (workspaces.getSnapshot().phase !== 'ready') return { kind: 'failed' as const, message: text().unavailable }
+            try {
+              await workspaces.createNewSession(state.workspaceId!, signal)
+              return valid(signal) ? { kind: 'completed' as const } : { kind: 'cancelled' as const }
+            } catch (error) {
+              return !valid(signal) ? { kind: 'cancelled' as const }
+                : { kind: 'failed' as const, message: error instanceof Error ? error.message : String(error) }
+            }
+          } },
         { id: 'copy-absolute-path', title: text().copy, aliases: ['copy', 'path', '复制'], execute: async ({ signal }) => {
           if (!valid(signal)) return { kind: 'cancelled' as const }
           await capturedAdapter.copy(target.path)
@@ -91,6 +104,20 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
           return capturedAdapter.insert(target.path, target.directory, target.label)
             ? { kind: 'completed' as const } : { kind: 'failed' as const, message: text().stale }
         } },
+        { id: 'toggle-hidden-files', title: text().hidden,
+          status: { kind: 'toggle', checked: state.hidden, label: state.hidden ? text().hiddenShown : text().hiddenHidden },
+          aliases: ['hidden', 'dotfiles', '隐藏文件'], execute: ({ signal }) => {
+            if (!valid(signal)) return { kind: 'cancelled' as const }
+            interaction?.setHidden(!interaction.getState().hidden)
+            return { kind: 'stay' as const }
+          } },
+        ...(state.stage === 'tree' ? [{ id: 'toggle-content-preview', title: text().togglePreview,
+          status: { kind: 'toggle' as const, checked: state.previewEnabled, label: state.previewEnabled ? text().previewOn : text().previewOff },
+          aliases: ['preview', 'content', '预览', '内容'], execute: ({ signal }: { signal: AbortSignal }) => {
+            if (!valid(signal)) return { kind: 'cancelled' as const }
+            interaction?.setPreviewEnabled(!interaction.getState().previewEnabled)
+            return { kind: 'stay' as const }
+          } }] : []),
       ]
     },
     onQuery: value => { query = value; notify() },
@@ -98,14 +125,18 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
     back: () => interaction?.back() ?? false,
     accept: () => { interaction?.accept(); return { kind: 'stay' } },
     render: () => adapter ? <WorkspaceFileBrowser key={invocation} adapter={adapter} text={text()} close={() => palette.close()}
-      shell={{ query, bind: value => { interaction = value; return () => { if (interaction === value) interaction = undefined } }, invalidate: notify, setQuery: value => { query = value; notify() }, openActions: () => { palette.openPanelActions() } }} /> : null,
+      shell={{ query, bind: value => { interaction = value; return () => { if (interaction === value) interaction = undefined } }, invalidate: notify, setQuery: value => { query = value; notify() } }} /> : null,
   })
   let removeCommand: () => void
   try {
     removeCommand = palette.registerCommand({
-      id: 'workspaces.browse-files' as CommandId,
+      id: WORKSPACE_COMMAND_ID,
       describe: () => ({ title: text().title, localizedTitles: { zh: browserZh.title, en: browserEn.title },
-        pluginTag: workspaceTag, iconId: 'search', aliases: ['文件结构', '浏览项目', '复制路径', '文件引用', 'browse files', 'file tree', 'copy path', 'reference'] }),
+        pluginTag: workspaceTag, iconId: 'open', category: text() === browserZh ? '工作区' : 'Workspace',
+        aliases: ['workspaces.find', 'workspaces.browse-files', '选择工作区新建会话', 'Create New Session', '新建会话', 'new session',
+          '浏览工作区文件', 'Browse Workspace Files', '切换工作区', 'Switch Workspace', '查找工作区', '搜索工作区', '打开工作区', '切换项目',
+          'find workspace', 'search workspace', 'open workspace', 'switch project',
+          '文件结构', '浏览项目', '复制路径', '文件引用', 'browse files', 'file tree', 'copy path', 'reference'] }),
       target: { kind: 'panel', panelId: PANEL_ID },
     })
   } catch (error) { removePanel(); throw error }
