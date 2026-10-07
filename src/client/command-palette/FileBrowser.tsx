@@ -15,7 +15,7 @@ export interface FileBrowserAdapter {
 }
 export const browserZh = {
   title: '浏览工作区', createSession: '新建会话', disconnected: '连接已断开', unavailable: '工作区列表尚未就绪', search: '搜索工作区名称或路径…', filter: '筛选当前目录…',
-  close: '关闭', copy: '复制绝对路径', insert: '插入引用', copied: '已复制路径',
+  close: '关闭', copy: '复制绝对路径', insert: '插入引用', insertWorkspace: '插入工作区引用', insertPath: '插入路径引用', copied: '已复制路径',
   hiddenShown: '隐藏文件：已显示', hiddenHidden: '隐藏文件：已隐藏', previewOn: '内容预览：已开启', previewOff: '内容预览：已关闭',
   hidden: '显示隐藏文件', loading: '加载中…', empty: '没有匹配的条目', preview: '选择文件查看预览',
   truncated: '结果已截断', stale: '输入框已变化或不可用，请关闭后重新打开', retry: '重试',
@@ -23,7 +23,7 @@ export const browserZh = {
 }
 export const browserEn: typeof browserZh = {
   title: 'Browse Workspaces', createSession: 'Create New Session', disconnected: 'Connection is disconnected', unavailable: 'Workspace catalogue is not ready', search: 'Search workspace names or paths…', filter: 'Filter this directory…',
-  close: 'Close', copy: 'Copy Absolute Path', insert: 'Insert Reference', copied: 'Path copied',
+  close: 'Close', copy: 'Copy Absolute Path', insert: 'Insert Reference', insertWorkspace: 'Insert Workspace Reference', insertPath: 'Insert Path Reference', copied: 'Path copied',
   hiddenShown: 'Hidden files: shown', hiddenHidden: 'Hidden files: hidden', previewOn: 'Content preview: on', previewOff: 'Content preview: off',
   hidden: 'Show hidden files', loading: 'Loading…', empty: 'No matching entries', preview: 'Select a file to preview',
   truncated: 'Results truncated', stale: 'Composer changed or is unavailable; close and reopen', retry: 'Retry',

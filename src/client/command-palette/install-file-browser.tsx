@@ -6,6 +6,7 @@ import { PERSISTENCE_CHANNEL } from '../../shared/persistence.ts'
 import { WORKSPACE_COMMAND_ID, WORKSPACE_PICKER_ID, createWorkspacePicker, defaultWorkspaceCopy, workspaceTag, type WorkspaceAdapter } from './provider.ts'
 import { WorkspaceFileBrowser, browserZh, browserEn, absoluteBrowserPath, fileMention, type FileBrowserAdapter } from './FileBrowser.tsx'
 import type { BrowserInteraction } from './browser-interaction.ts'
+import { workspaceMention } from '../reference.ts'
 
 interface InsertionActions {
   captureInsertion(): unknown
@@ -23,7 +24,7 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
   let disposed = false
   let query = ''
   let interaction: BrowserInteraction | undefined
-  let adapter: FileBrowserAdapter | undefined
+  let adapter: (FileBrowserAdapter & { insertWorkspace(): boolean }) | undefined
   let invocation = 0
   const listeners = new Set<() => void>()
   const notify = () => { for (const listener of listeners) listener() }
@@ -69,10 +70,21 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
         },
         insert: (path, directory, label) => {
           if (!active || current()?.key !== binding?.key || !actions || span === undefined || typeof actions.insertReference !== 'function') return false
+          const workspace = workspaces.getSnapshot().items.find(row => row.workspaceId === workspaceId)
+          if (!workspace) return false
           if (/[\u0000-\u001f\u007f-\u009f"]/u.test(path)) return false
           const mention = fileMention(path, directory)
-          return actions.insertReference({ source: 'reference', ref: mention, label: directory ? `${label}/` : label,
+          return actions.insertReference({ source: 'reference', ref: mention,
+            label: directory ? `${label}/` : label,
             appearance: directory ? 'folder' : 'file', clipboardText: mention }, span)
+        },
+        insertWorkspace: () => {
+          if (!active || current()?.key !== binding?.key || !actions || span === undefined || typeof actions.insertReference !== 'function') return false
+          const workspace = workspaces.getSnapshot().items.find(row => row.workspaceId === workspaceId)
+          if (!workspace) return false
+          const mention = workspaceMention(workspace.workspaceId, workspace.displayTitle)
+          return actions.insertReference({ source: 'reference', ref: mention, label: workspace.displayTitle,
+            appearance: 'folder', clipboardText: mention }, span)
         },
       }
       return () => { active = false; adapter = undefined; interaction = undefined; if (current()?.key === binding?.key) actions?.focus?.() }
@@ -105,11 +117,17 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
           await capturedAdapter.copy(target.path)
           return valid(signal) ? { kind: 'stay' as const } : { kind: 'cancelled' as const }
         } },
-        { id: 'insert-reference', title: text().insert, aliases: ['inputbox', 'ref', '输入框'], execute: ({ signal }) => {
+        { id: 'insert-reference', title: text().insertPath, aliases: ['inputbox', 'ref', 'path', '输入框', '路径引用'], execute: ({ signal }) => {
           if (!valid(signal)) return { kind: 'cancelled' as const }
           return capturedAdapter.insert(target.path, target.directory, target.label)
             ? { kind: 'completed' as const } : { kind: 'failed' as const, message: text().stale }
         } },
+        ...(!target.selected ? [{ id: 'insert-workspace-reference', title: text().insertWorkspace,
+          aliases: ['workspace ref', '工作区引用'], execute: ({ signal }: { signal: AbortSignal }) => {
+            if (!valid(signal)) return { kind: 'cancelled' as const }
+            return capturedAdapter.insertWorkspace()
+              ? { kind: 'completed' as const } : { kind: 'failed' as const, message: text().stale }
+          } }] : []),
         { id: 'toggle-hidden-files', title: text().hidden,
           status: { kind: 'toggle', checked: state.hidden, label: state.hidden ? text().hiddenShown : text().hiddenHidden },
           aliases: ['hidden', 'dotfiles', '隐藏文件'], execute: ({ signal }) => {
@@ -176,11 +194,19 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
           await navigator.clipboard.writeText(path)
           return valid(signal) ? { kind: 'stay' } : { kind: 'cancelled' }
         } },
-        { id: 'insert-reference', title: text().insert, execute: ({ signal }) => {
+        { id: 'insert-reference', title: text().insertWorkspace, aliases: ['workspace ref', '工作区引用'], execute: ({ signal }) => {
+          if (!valid(signal)) return { kind: 'cancelled' }
+          if (current()?.key !== binding?.key || !actions || span === undefined) return { kind: 'failed', message: text().stale }
+          const mention = workspaceMention(record.workspaceId, record.displayTitle)
+          return actions.insertReference?.({ source: 'reference', ref: mention, label: record.displayTitle, appearance: 'folder', clipboardText: mention }, span)
+            ? { kind: 'completed' } : { kind: 'failed', message: text().stale }
+        } },
+        { id: 'insert-path-reference', title: text().insertPath, aliases: ['path ref', '路径引用'], execute: ({ signal }) => {
           if (!valid(signal)) return { kind: 'cancelled' }
           if (current()?.key !== binding?.key || !actions || span === undefined || /[\u0000-\u001f\u007f-\u009f"]/u.test(path)) return { kind: 'failed', message: text().stale }
           const mention = fileMention(path, true)
-          return actions.insertReference?.({ source: 'reference', ref: mention, label: `${record.displayTitle}/`, appearance: 'folder', clipboardText: mention }, span)
+          return actions.insertReference?.({ source: 'reference', ref: mention, label: `${record.displayTitle}/`,
+            appearance: 'folder', clipboardText: mention }, span)
             ? { kind: 'completed' } : { kind: 'failed', message: text().stale }
         } },
       ]

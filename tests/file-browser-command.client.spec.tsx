@@ -107,13 +107,21 @@ describe('file browser palette panel', () => {
       expect(command).toHaveBeenCalledWith(expect.objectContaining({ target: { kind: 'picker', pickerId: 'workspaces.find' } }))
       // Picker actions work before any tree RPC and capture insertion at actions entry.
       const workspaceActions = picker.getActions!('other' as ItemId, executeArgs)
-      expect(workspaceActions.map(action => action.id)).toEqual(['create-new-session', 'copy-absolute-path', 'insert-reference'])
+      expect(workspaceActions.map(action => action.id)).toEqual(['create-new-session', 'copy-absolute-path', 'insert-reference', 'insert-path-reference'])
+      expect(workspaceActions[2]!.title).toBe(browserZh.insertWorkspace)
+      expect(workspaceActions[3]!.title).toBe(browserZh.insertPath)
       expect(await workspaceActions[0]!.execute(executeArgs)).toEqual({ kind: 'completed' })
       expect(createNewSession).toHaveBeenLastCalledWith('other', executeArgs.signal)
       expect(call).not.toHaveBeenCalled()
       expect(await workspaceActions[2]!.execute(executeArgs)).toEqual({ kind: 'completed' })
-      expect(inputActions.insertReference).toHaveBeenCalledWith(expect.objectContaining({ label: 'Other/', ref: '@"/other project/' }), span)
+      const workspaceRef = `@workspace-ref/${Buffer.from(JSON.stringify({ id: 'other', label: 'Other' })).toString('base64url')}`
+      expect(inputActions.insertReference).toHaveBeenCalledWith({ source: 'reference', ref: workspaceRef,
+        label: 'Other', appearance: 'folder', clipboardText: workspaceRef }, span)
+      expect(await workspaceActions[3]!.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(inputActions.insertReference).toHaveBeenLastCalledWith({ source: 'reference', ref: '@"/other project/',
+        label: 'Other/', appearance: 'folder', clipboardText: '@"/other project/' }, span)
       key = 'changed'
+      expect(await workspaceActions[3]!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
       expect(await workspaceActions[2]!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
       key = 'original'; inputActions.insertReference.mockClear()
       expect(await picker.accept('other' as ItemId, executeArgs)).toEqual({ kind: 'stay' })
@@ -129,13 +137,23 @@ describe('file browser palette panel', () => {
       expect(container.querySelector('[data-mode=picker]')).toBeNull()
       expect(container.querySelector('[data-reference-footer]')).toBeNull()
       await act(async () => { expect(await panel.getActions!()[2]!.execute(executeArgs)).toEqual({ kind: 'completed' }) })
-      expect(inputActions.insertReference).toHaveBeenLastCalledWith({ source: 'reference', ref: '@"/other project/', label: 'Other/', appearance: 'folder', clipboardText: '@"/other project/' }, span)
+      expect(inputActions.insertReference).toHaveBeenLastCalledWith({ source: 'reference', ref: '@"/other project/',
+        label: 'Other/', appearance: 'folder', clipboardText: '@"/other project/' }, span)
+      const rootWorkspaceAction = panel.getActions!().find(action => action.id === 'insert-workspace-reference')!
+      expect(rootWorkspaceAction.title).toBe(browserZh.insertWorkspace)
+      expect(await rootWorkspaceAction.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(inputActions.insertReference).toHaveBeenLastCalledWith({ source: 'reference', ref: workspaceRef,
+        label: 'Other', appearance: 'folder', clipboardText: workspaceRef }, span)
       expect(close).not.toHaveBeenCalled() // The palette closes Actions returning completed.
       inputActions.insertReference.mockClear(); close.mockClear()
 
       await select('src')
       expect(panel.getSnapshot()).toMatchObject({ acceptLabel: browserZh.openDirectory, canAccept: true })
       expect(container.querySelector('[role=treeitem][aria-expanded=true]')).not.toBeNull()
+      expect(await panel.getActions!()[2]!.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(inputActions.insertReference).toHaveBeenLastCalledWith({ source: 'reference', ref: '@"/other project/src/',
+        label: 'src/', appearance: 'folder', clipboardText: '@"/other project/src/' }, span)
+      inputActions.insertReference.mockClear()
       await accept()
       expect(container.querySelector('[role=treeitem][aria-expanded=false]')).not.toBeNull()
       expect(inputActions.insertReference).not.toHaveBeenCalled()
