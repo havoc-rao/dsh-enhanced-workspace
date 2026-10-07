@@ -9,6 +9,8 @@ import type { PaletteService } from '@deepseek-ai/dsh-client-ui-command-palette/
 import { registerWorkspaceProvider, workspaceCommandMetadata, type WorkspaceAdapter, type WorkspaceCopy } from './provider.ts';
 
 import { registerFileBrowser } from './install-file-browser.tsx';
+import { createPaletteSession } from './create-session.ts';
+import type { CreationObservation } from './creation-observation.ts';
 
 const NS = 'enhancedWorkspacePalette' as const;
 const zh: WorkspaceCopy = {
@@ -39,6 +41,11 @@ export default function installWorkspacePalette(ctx: Context): void {
     // service by its public structural contract, not ambient Context merging.
     const palette = paletteCtx.get('commandPalette') as PaletteService;
     const connection = paletteCtx.get('connection') as unknown as ConnectionHandle;
+    // Optional structural contract: no newer runtime import required by old Hosts.
+    type Id = Awaited<ReturnType<typeof paletteCtx.sessions.create>>;
+    const sessions = paletteCtx.sessions as typeof paletteCtx.sessions & {
+      observeCreation?: () => Promise<CreationObservation<Id> | undefined>;
+    };
     const adapter: WorkspaceAdapter = {
       getSnapshot: () => {
         const snapshot = paletteCtx.workspaces.list.getSnapshot();
@@ -58,17 +65,19 @@ export default function installWorkspacePalette(ctx: Context): void {
         };
       },
       // Explicit create never reuses a blank session (unlike openWorkspace/startSession).
-      createNewSession: async (workspaceId, signal) => {
-        if (signal.aborted) return;
-        const sessionId = await paletteCtx.sessions.create({ workspaceId: workspaceId as WorkspaceId });
-        // Host creation is committed; cancellation leaves it catalogued but does not navigate.
-        if (signal.aborted) return;
-        if (!adapter.isConnected()) throw new Error(copy().disconnected);
-        const latest = adapter.getSnapshot();
-        if (latest.phase !== 'ready') throw new Error(copy().unavailable);
-        if (!latest.items.some(row => row.workspaceId === workspaceId)) throw new Error(copy().missing);
-        paletteCtx.uiWorkspace.openSession(sessionId);
-      },
+      createNewSession: (workspaceId, signal) => createPaletteSession({
+        create: () => paletteCtx.sessions.create({ workspaceId: workspaceId as WorkspaceId }),
+        workspaceId,
+        ...(typeof sessions.observeCreation === 'function'
+          ? { observeCreation: () => sessions.observeCreation!() } : {}),
+        validateNavigation: () => {
+          if (!adapter.isConnected()) throw new Error(copy().disconnected);
+          const latest = adapter.getSnapshot();
+          if (latest.phase !== 'ready') throw new Error(copy().unavailable);
+          if (!latest.items.some(row => row.workspaceId === workspaceId)) throw new Error(copy().missing);
+        },
+        open: sessionId => paletteCtx.uiWorkspace.openSession(sessionId),
+      }, signal),
     };
     paletteCtx.effect(() => typeof palette.registerPanel === 'function'
       ? registerFileBrowser(paletteCtx, palette, adapter)
