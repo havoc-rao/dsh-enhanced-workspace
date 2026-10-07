@@ -1383,11 +1383,12 @@ function buildLeaf(
   statuses: SessionStatusTable = EMPTY_STATUS_TABLE,
   rowKey: string = workspace.workspaceId,
 ): WorkspaceLeaf {
+  const current = currentSessionIdOf(list)
   const members: SessionSummary[] = []
   for (const id of workspace.sessionIds) {
     const summary = list.byId[id]
     if (summary === undefined) continue // account may lead the list pull; the row appears when the summary lands
-    if (!sessionVisible(summary, currentSessionIdOf(list), archived)) continue
+    if (!sessionVisible(summary, current, archived)) continue
     members.push(summary)
   }
   const key = rowKey
@@ -1403,9 +1404,9 @@ function buildLeaf(
     label: workspace.title,
     sessionCount: members.length,
     expanded,
-    containsCurrent: currentSessionIdOf(list) !== undefined && workspace.sessionIds.includes(currentSessionIdOf(list) as SessionId),
+    containsCurrent: current !== undefined && workspace.sessionIds.includes(current),
     status: workspaceSessionStatus(members, descendants, statuses),
-    sessions: expanded ? ordered.map(member => sessionNode(member, descendants, currentSessionIdOf(list), statuses)) : [],
+    sessions: expanded ? ordered.map(member => sessionNode(member, descendants, current, statuses)) : [],
   }
 }
 
@@ -1463,9 +1464,10 @@ export function deriveFolderForest(
   const ungroupedOrder = view.ungroupedOrder
   const descendants = indexSubagentDescendants(list.byId)
   const workspaceById = new Map(workspaces.map(workspace => [workspace.workspaceId, workspace]))
-  const currentGroup: string | undefined = currentSessionIdOf(list) === undefined
+  const current = currentSessionIdOf(list)
+  const currentGroup: string | undefined = current === undefined
     ? undefined
-    : (workspaces.find(workspace => workspace.sessionIds.includes(currentSessionIdOf(list) as SessionId))?.workspaceId as string | undefined)
+    : (workspaces.find(workspace => workspace.sessionIds.includes(current))?.workspaceId as string | undefined)
       ?? UNGROUPED_KEY
 
   const buildFolder = (record: FolderRecord, depth: number, visited: Set<FolderId>): FolderNode => {
@@ -1521,7 +1523,7 @@ export function deriveFolderForest(
   const stray = list.ids
     .map(id => list.byId[id])
     .filter((session): session is SessionSummary =>
-      session !== undefined && !accounted.has(session.id) && sessionVisible(session, currentSessionIdOf(list), archived))
+      session !== undefined && !accounted.has(session.id) && sessionVisible(session, current, archived))
   let ungrouped: WorkspaceLeaf | undefined
   if (stray.length > 0) {
     const ordered = ungroupedOrder === undefined
@@ -1553,7 +1555,7 @@ export function deriveFolderForest(
       containsCurrent: currentGroup === UNGROUPED_KEY,
       status: workspaceSessionStatus(ordered, descendants, statuses),
       sessions: expandedGroups.has(UNGROUPED_KEY)
-        ? ordered.map(session => sessionNode(session, descendants, currentSessionIdOf(list), statuses))
+        ? ordered.map(session => sessionNode(session, descendants, current, statuses))
         : [],
     }
   }
@@ -1574,14 +1576,15 @@ export function deriveFlat(
 ): SessionNode[] {
   const archived = new Set(archivedSessionIds)
   const descendants = indexSubagentDescendants(list.byId)
+  const current = currentSessionIdOf(list)
   const rows: SessionSummary[] = []
   for (const id of list.ids) {
     const session = list.byId[id]
-    if (session === undefined || !sessionVisible(session, currentSessionIdOf(list), archived)) continue
+    if (session === undefined || !sessionVisible(session, current, archived)) continue
     rows.push(session)
   }
   rows.sort(byRecency)
-  return rows.map(session => sessionNode(session, descendants, currentSessionIdOf(list), statuses))
+  return rows.map(session => sessionNode(session, descendants, current, statuses))
 }
 
 /**
@@ -1625,6 +1628,7 @@ export function filterForestByQuery(
 ): ForestResult {
   const q = query.trim().toLowerCase()
   if (q === '') return forest
+  const current = currentSessionIdOf(sessions)
   const archived = new Set(archivedSessionIds)
   const has = (text: string | undefined): boolean => text !== undefined && text.toLowerCase().includes(q)
   const basename = (path: string): string => path.split(/[\\/]/).filter(Boolean).at(-1) ?? ''
@@ -1641,7 +1645,7 @@ export function filterForestByQuery(
     const titles: string[] = []
     for (const id of sessionIds) {
       const summary = sessions.byId[id]
-      if (summary === undefined || summary.blank || !sessionVisible(summary, currentSessionIdOf(sessions), archived)) continue
+      if (summary === undefined || summary.blank || !sessionVisible(summary, current, archived)) continue
       titles.push(sessionTitle(summary))
     }
     return titles

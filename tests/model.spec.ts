@@ -848,6 +848,23 @@ describe('deriveFolderForest', () => {
     }
   }
 
+  it('derives large flat and workspace lists without repeated catalogue enumeration per row', () => {
+    const items = Array.from({ length: 200 }, (_, i) => summary(`s${i}`))
+    const state = sessionState(items, S('s199'))
+    let enumerations = 0
+    const counted = { ...state, byId: new Proxy(state.byId, {
+      ownKeys(target) { enumerations++; return Reflect.ownKeys(target) },
+    }) }
+    const flat = deriveFlat(counted, [])
+    expect(flat).toHaveLength(200)
+    expect(flat.find(row => row.id === S('s199'))?.current).toBe(true)
+    expect(enumerations).toBeLessThanOrEqual(4)
+    enumerations = 0
+    const forest = deriveFolderForest(counted, [workspace('w', items.map(x => x.id))], rootTree(['w']), [],
+      { folderExpansion: {}, groupExpansion: { w: true } })
+    expect(forest.topRows[0]?.kind).toBe('workspace')
+    expect(enumerations).toBeLessThanOrEqual(5)
+  })
   it('assembles the forest from the root and skips unreachable folders', () => {
     let tree = rootTree(['w0', 'w1'])
     tree = createFolderIn(tree, ROOT_FOLDER_ID, 'a', F('a'), NOW).folders
