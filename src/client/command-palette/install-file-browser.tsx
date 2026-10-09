@@ -179,6 +179,23 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
       const valid = (signal: AbortSignal) => !disposed && !args.signal.aborted && !signal.aborted
         && workspaces.getSnapshot().phase === 'ready' && workspaces.isConnected()
         && workspaces.getSnapshot().items.some(row => row.workspaceId === id && row.path === record.path)
+      /**
+       * Commit one picker-side reference insertion and hand the keyboard back.
+       * The overlay owns focus while it is open and the composer deliberately
+       * suppresses its DOM selection while blurred, so the Modal's closing
+       * `element.focus()` would import the stale caret at the draft start.
+       * Returning the keyboard through the composer's own face
+       * (`facade.focus` → `focusDraftEditor`) re-applies the post-insertion
+       * caret first; the later bare modal focus is then a no-op because the
+       * composer root is already the active element.
+       * @param insert - the guarded insertion call.
+       * @returns the palette operation result.
+       */
+      const commitReference = (insert: () => boolean): { kind: 'completed' } | { kind: 'failed'; message: string } => {
+        if (!insert()) return { kind: 'failed', message: text().stale }
+        actions?.focus?.()
+        return { kind: 'completed' }
+      }
       return [
         { id: 'create-new-session', title: text().createSession, iconId: 'create', execute: async ({ signal }) => {
           if (!valid(signal)) return { kind: 'cancelled' }
@@ -193,16 +210,14 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
           if (!valid(signal)) return { kind: 'cancelled' }
           if (current()?.key !== binding?.key || !actions || span === undefined) return { kind: 'failed', message: text().stale }
           const mention = workspaceMention(record.workspaceId, record.displayTitle)
-          return actions.insertReference?.({ source: 'reference', ref: mention, label: record.displayTitle, appearance: 'folder', clipboardText: mention }, span)
-            ? { kind: 'completed' } : { kind: 'failed', message: text().stale }
+          return commitReference(() => actions.insertReference?.({ source: 'reference', ref: mention, label: record.displayTitle, appearance: 'folder', clipboardText: mention }, span) ?? false)
         } },
         { id: 'insert-path-reference', title: text().insertPath, aliases: ['path ref', '路径引用'], execute: ({ signal }) => {
           if (!valid(signal)) return { kind: 'cancelled' }
           if (current()?.key !== binding?.key || !actions || span === undefined || /[\u0000-\u001f\u007f-\u009f"]/u.test(path)) return { kind: 'failed', message: text().stale }
           const mention = fileMention(path, true)
-          return actions.insertReference?.({ source: 'reference', ref: mention, label: `${record.displayTitle}/`,
-            appearance: 'folder', clipboardText: mention }, span)
-            ? { kind: 'completed' } : { kind: 'failed', message: text().stale }
+          return commitReference(() => actions.insertReference?.({ source: 'reference', ref: mention, label: `${record.displayTitle}/`,
+            appearance: 'folder', clipboardText: mention }, span) ?? false)
         } },
         { id: 'copy-absolute-path', title: text().copy, execute: async ({ signal }) => {
           if (!valid(signal)) return { kind: 'cancelled' }

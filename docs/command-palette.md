@@ -123,6 +123,8 @@ tag 的 ID/title/zh/en 和 child 的 ID/title/zh/en、aliases/category 全部由
 - 工作区列表只贡献纯数据 query/accept/getActions，不渲染列表。查询复用名称、路径匹配、当前工作区优先、limit/hasMore 与订阅失效逻辑。
 - Picker Actions 四项，顺序为：新建会话 → 插入整个工作区引用 → 插入路径引用 → 复制绝对根路径；隐藏文件与预览开关仅在 Panel。Panel Actions 采用同一约定：新建会话 → （未选中时的）插入工作区引用 → 插入路径引用 → 复制绝对路径 → 显示隐藏文件 → 内容预览——插入类动作在前，复制路径殿后，视图开关收尾。
 - Picker Actions 在 getActions 调用时捕获当前 inputActions、binding key 和 insertion span；执行重新检查 signal、工作区身份/路径、连接与 binding。此捕获不发生在 query/describe，也不修改共享 context。
+- 插入成功后必须把键盘交还 composer（`inputActions.focus()`），否则光标停在草稿最前面：overlay 打开期间 composer 失焦，其编辑器主动抑制 DOM selection 同步（`SKIP_DOM_SELECTION_TAG`），而 palette 的 Modal 关闭时只做裸 `element.focus()`（`useModalLayer` 恢复 previous），会导入失焦前的陈旧光标；composer 自己的 `focus()` 走 `focusDraftEditor`，先取回插入后的 selection 再原生聚焦，随后 Modal 的裸 focus 因 composer 已是 activeElement 而成为空操作。Picker 侧两个插入动作在 execute 内先插入再交还（失败不抢焦点）；Panel 侧在 `palette.close()` 同步触发的 onOpen disposer 里已有同一交还，故不重复。
+- `@workspace-ref/<base64url>` 只是引用文本/chip 载荷，与 `@"<path>` 走同一条 chip 插入路径（含尾随空格规则），光标问题不需要在 mention 文本上做额外处理。
 - 文件树 Panel 在 onOpen 捕获 composer。这比旧版“打开含工作区列表的 Panel 时捕获”更晚：现在实际进入文件树才捕获，Back 后重新进入会重新捕获。关闭/退出令 adapter 失效，预览请求取消，过期绑定不得插入。
 - Picker accept 先校验并设置一次性 workspaceId，再调用 openPanel；该调用中止原 accept signal 属于正常导航，成功后返回 stay，不误报取消。
 - 直接打开 Panel 没有一次性工作区选择时仅显示“选择工作区”提示，不默认选择首项、不触发目录 RPC、不捕获 composer。

@@ -113,16 +113,23 @@ describe('file browser palette panel', () => {
       expect(await workspaceActions[0]!.execute(executeArgs)).toEqual({ kind: 'completed' })
       expect(createNewSession).toHaveBeenLastCalledWith('other', executeArgs.signal)
       expect(call).not.toHaveBeenCalled()
+      // Creating a session leaves focus to the host; a reference insertion hands
+      // the keyboard back to the composer so the caret lands after the chip
+      // instead of at the draft start (the Modal's closing bare focus).
+      expect(inputActions.focus).not.toHaveBeenCalled()
       expect(await workspaceActions[1]!.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(inputActions.focus).toHaveBeenCalledTimes(1)
       const workspaceRef = `@workspace-ref/${Buffer.from(JSON.stringify({ id: 'other', label: 'Other' })).toString('base64url')}`
       expect(inputActions.insertReference).toHaveBeenCalledWith({ source: 'reference', ref: workspaceRef,
         label: 'Other', appearance: 'folder', clipboardText: workspaceRef }, span)
       expect(await workspaceActions[2]!.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(inputActions.focus).toHaveBeenCalledTimes(2)
       expect(inputActions.insertReference).toHaveBeenLastCalledWith({ source: 'reference', ref: '@"/other project/',
         label: 'Other/', appearance: 'folder', clipboardText: '@"/other project/' }, span)
       key = 'changed'
       expect(await workspaceActions[2]!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
       expect(await workspaceActions[1]!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
+      expect(inputActions.focus).toHaveBeenCalledTimes(2) // failed insertions never steal the keyboard
       key = 'original'; inputActions.insertReference.mockClear()
       expect(await picker.accept('other' as ItemId, executeArgs)).toEqual({ kind: 'stay' })
       const render = () => root.render(panel.render())
@@ -230,7 +237,9 @@ describe('file browser palette panel', () => {
     } finally {
       unsubscribe?.(); await act(async () => root.unmount()); container.remove(); exit?.(); off()
     }
-    expect(inputActions.focus).toHaveBeenCalledOnce()
+    // Two picker-side insertions handed the keyboard back; the panel close
+    // handback (dispose) is the third.
+    expect(inputActions.focus).toHaveBeenCalledTimes(3)
     expect(remove).toHaveBeenCalledOnce()
   })
   it('guards direct panel access and accepts navigation even when openPanel aborts its signal', async () => {
