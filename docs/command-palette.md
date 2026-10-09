@@ -112,7 +112,7 @@ tag 的 ID/title/zh/en 和 child 的 ID/title/zh/en、aliases/category 全部由
 - 导航只分工作区选择与目录树两层；选中文件不会进入新的预览层，Panel 的 back 返回 false，由 CMD 返回原 Picker 并恢复其搜索、选中与滚动；不再业务自画列表或管理 hover/activeWorkspace。
 - 文件树无预览时占满宽度；显示预览时宽屏按 65% / 35% 分配。内容预览可以关闭，选择在本次挂载内保留；窄屏默认关闭，手动开启后以下方较小辅助区显示。
 - CMD Actions 展示当前目标；未选中文件时以工作区根路径为目标。实际插入使用绝对路径，不额外渲染业务引用底栏。
-- 单击/方向键选择文件，Enter 直接插入并关闭；目录的 Enter 只展开/收起，目录引用通过 Actions 或行内插入按钮完成。复制路径保留为次级操作。
+- 单击/方向键选择文件，Enter 直接插入并关闭；目录的 Enter 只展开/收起，目录引用通过 Actions 或行内插入按钮完成。复制路径保留为次级操作，在 Actions 中排在插入类动作之后。
 - 预览请求延迟 150ms，并在切换目标或关闭预览时取消。预览错误只显示在辅助区域，不影响引用插入及输入框捕获/过期保护。
 - 嵌入 palette 时，隐藏文件只通过 Actions 的「显示隐藏文件」切换，不再额外渲染 checkbox。action 使用 `status: { kind: 'toggle', checked: state.hidden, label }` 提供右侧只读状态标记；标题保持稳定，label 描述当前状态（隐藏文件：已显示 / 已隐藏），用于 tooltip 与辅助阅读。执行返回 `stay`，重新打开 Actions 时读取最新状态。无 palette shell 的独立浏览器保留 checkbox 回退。
 
@@ -121,7 +121,7 @@ tag 的 ID/title/zh/en 和 child 的 ID/title/zh/en、aliases/category 全部由
 ## 标准 Picker / 文件树 Panel 的职责与捕获时点
 
 - 工作区列表只贡献纯数据 query/accept/getActions，不渲染列表。查询复用名称、路径匹配、当前工作区优先、limit/hasMore 与订阅失效逻辑。
-- Picker Actions 保留三项：新建会话、复制绝对根路径、插入整个工作区引用；隐藏文件与预览开关仅在 Panel。
+- Picker Actions 四项，顺序为：新建会话 → 插入整个工作区引用 → 插入路径引用 → 复制绝对根路径；隐藏文件与预览开关仅在 Panel。Panel Actions 采用同一约定：新建会话 → （未选中时的）插入工作区引用 → 插入路径引用 → 复制绝对路径 → 显示隐藏文件 → 内容预览——插入类动作在前，复制路径殿后，视图开关收尾。
 - Picker Actions 在 getActions 调用时捕获当前 inputActions、binding key 和 insertion span；执行重新检查 signal、工作区身份/路径、连接与 binding。此捕获不发生在 query/describe，也不修改共享 context。
 - 文件树 Panel 在 onOpen 捕获 composer。这比旧版“打开含工作区列表的 Panel 时捕获”更晚：现在实际进入文件树才捕获，Back 后重新进入会重新捕获。关闭/退出令 adapter 失效，预览请求取消，过期绑定不得插入。
 - Picker accept 先校验并设置一次性 workspaceId，再调用 openPanel；该调用中止原 accept signal 属于正常导航，成功后返回 stay，不误报取消。

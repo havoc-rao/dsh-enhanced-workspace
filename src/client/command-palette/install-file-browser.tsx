@@ -112,22 +112,22 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
                 : { kind: 'failed' as const, message: error instanceof Error ? error.message : String(error) }
             }
           } },
-        { id: 'copy-absolute-path', title: text().copy, aliases: ['copy', 'path', '复制'], execute: async ({ signal }) => {
-          if (!valid(signal)) return { kind: 'cancelled' as const }
-          await capturedAdapter.copy(target.path)
-          return valid(signal) ? { kind: 'stay' as const } : { kind: 'cancelled' as const }
-        } },
-        { id: 'insert-reference', title: text().insertPath, aliases: ['inputbox', 'ref', 'path', '输入框', '路径引用'], execute: ({ signal }) => {
-          if (!valid(signal)) return { kind: 'cancelled' as const }
-          return capturedAdapter.insert(target.path, target.directory, target.label)
-            ? { kind: 'completed' as const } : { kind: 'failed' as const, message: text().stale }
-        } },
         ...(!target.selected ? [{ id: 'insert-workspace-reference', title: text().insertWorkspace,
           aliases: ['workspace ref', '工作区引用'], execute: ({ signal }: { signal: AbortSignal }) => {
             if (!valid(signal)) return { kind: 'cancelled' as const }
             return capturedAdapter.insertWorkspace()
               ? { kind: 'completed' as const } : { kind: 'failed' as const, message: text().stale }
           } }] : []),
+        { id: 'insert-reference', title: text().insertPath, aliases: ['inputbox', 'ref', 'path', '输入框', '路径引用'], execute: ({ signal }) => {
+          if (!valid(signal)) return { kind: 'cancelled' as const }
+          return capturedAdapter.insert(target.path, target.directory, target.label)
+            ? { kind: 'completed' as const } : { kind: 'failed' as const, message: text().stale }
+        } },
+        { id: 'copy-absolute-path', title: text().copy, aliases: ['copy', 'path', '复制'], execute: async ({ signal }) => {
+          if (!valid(signal)) return { kind: 'cancelled' as const }
+          await capturedAdapter.copy(target.path)
+          return valid(signal) ? { kind: 'stay' as const } : { kind: 'cancelled' as const }
+        } },
         { id: 'toggle-hidden-files', title: text().hidden,
           status: { kind: 'toggle', checked: state.hidden, label: state.hidden ? text().hiddenShown : text().hiddenHidden },
           aliases: ['hidden', 'dotfiles', '隐藏文件'], execute: ({ signal }) => {
@@ -189,11 +189,6 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
             return valid(signal) ? { kind: 'failed', message: error instanceof Error ? error.message : String(error) } : { kind: 'cancelled' }
           }
         } },
-        { id: 'copy-absolute-path', title: text().copy, execute: async ({ signal }) => {
-          if (!valid(signal)) return { kind: 'cancelled' }
-          await navigator.clipboard.writeText(path)
-          return valid(signal) ? { kind: 'stay' } : { kind: 'cancelled' }
-        } },
         { id: 'insert-reference', title: text().insertWorkspace, aliases: ['workspace ref', '工作区引用'], execute: ({ signal }) => {
           if (!valid(signal)) return { kind: 'cancelled' }
           if (current()?.key !== binding?.key || !actions || span === undefined) return { kind: 'failed', message: text().stale }
@@ -208,6 +203,11 @@ export function registerFileBrowser(ctx: Context, palette: PaletteService, works
           return actions.insertReference?.({ source: 'reference', ref: mention, label: `${record.displayTitle}/`,
             appearance: 'folder', clipboardText: mention }, span)
             ? { kind: 'completed' } : { kind: 'failed', message: text().stale }
+        } },
+        { id: 'copy-absolute-path', title: text().copy, execute: async ({ signal }) => {
+          if (!valid(signal)) return { kind: 'cancelled' }
+          await navigator.clipboard.writeText(path)
+          return valid(signal) ? { kind: 'stay' } : { kind: 'cancelled' }
         } },
       ]
     },

@@ -107,22 +107,22 @@ describe('file browser palette panel', () => {
       expect(command).toHaveBeenCalledWith(expect.objectContaining({ target: { kind: 'picker', pickerId: 'workspaces.find' } }))
       // Picker actions work before any tree RPC and capture insertion at actions entry.
       const workspaceActions = picker.getActions!('other' as ItemId, executeArgs)
-      expect(workspaceActions.map(action => action.id)).toEqual(['create-new-session', 'copy-absolute-path', 'insert-reference', 'insert-path-reference'])
-      expect(workspaceActions[2]!.title).toBe(browserZh.insertWorkspace)
-      expect(workspaceActions[3]!.title).toBe(browserZh.insertPath)
+      expect(workspaceActions.map(action => action.id)).toEqual(['create-new-session', 'insert-reference', 'insert-path-reference', 'copy-absolute-path'])
+      expect(workspaceActions[1]!.title).toBe(browserZh.insertWorkspace)
+      expect(workspaceActions[2]!.title).toBe(browserZh.insertPath)
       expect(await workspaceActions[0]!.execute(executeArgs)).toEqual({ kind: 'completed' })
       expect(createNewSession).toHaveBeenLastCalledWith('other', executeArgs.signal)
       expect(call).not.toHaveBeenCalled()
-      expect(await workspaceActions[2]!.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(await workspaceActions[1]!.execute(executeArgs)).toEqual({ kind: 'completed' })
       const workspaceRef = `@workspace-ref/${Buffer.from(JSON.stringify({ id: 'other', label: 'Other' })).toString('base64url')}`
       expect(inputActions.insertReference).toHaveBeenCalledWith({ source: 'reference', ref: workspaceRef,
         label: 'Other', appearance: 'folder', clipboardText: workspaceRef }, span)
-      expect(await workspaceActions[3]!.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(await workspaceActions[2]!.execute(executeArgs)).toEqual({ kind: 'completed' })
       expect(inputActions.insertReference).toHaveBeenLastCalledWith({ source: 'reference', ref: '@"/other project/',
         label: 'Other/', appearance: 'folder', clipboardText: '@"/other project/' }, span)
       key = 'changed'
-      expect(await workspaceActions[3]!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
       expect(await workspaceActions[2]!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
+      expect(await workspaceActions[1]!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
       key = 'original'; inputActions.insertReference.mockClear()
       expect(await picker.accept('other' as ItemId, executeArgs)).toEqual({ kind: 'stay' })
       const render = () => root.render(panel.render())
@@ -136,7 +136,10 @@ describe('file browser palette panel', () => {
       expect(panel.getSnapshot()).toMatchObject({ scrollMode: 'contained', width: 'compact', canAccept: false })
       expect(container.querySelector('[data-mode=picker]')).toBeNull()
       expect(container.querySelector('[data-reference-footer]')).toBeNull()
-      await act(async () => { expect(await panel.getActions!()[2]!.execute(executeArgs)).toEqual({ kind: 'completed' }) })
+      // Root Actions follow the shared convention: inserts first, copy last, view toggles last.
+      expect(panel.getActions!().map(action => action.id)).toEqual(['create-new-session', 'insert-workspace-reference',
+        'insert-reference', 'copy-absolute-path', 'toggle-hidden-files', 'toggle-content-preview'])
+      await act(async () => { expect(await panel.getActions!().find(action => action.id === 'insert-reference')!.execute(executeArgs)).toEqual({ kind: 'completed' }) })
       expect(inputActions.insertReference).toHaveBeenLastCalledWith({ source: 'reference', ref: '@"/other project/',
         label: 'Other/', appearance: 'folder', clipboardText: '@"/other project/' }, span)
       const rootWorkspaceAction = panel.getActions!().find(action => action.id === 'insert-workspace-reference')!
@@ -150,7 +153,7 @@ describe('file browser palette panel', () => {
       await select('src')
       expect(panel.getSnapshot()).toMatchObject({ acceptLabel: browserZh.openDirectory, canAccept: true })
       expect(container.querySelector('[role=treeitem][aria-expanded=true]')).not.toBeNull()
-      expect(await panel.getActions!()[2]!.execute(executeArgs)).toEqual({ kind: 'completed' })
+      expect(await panel.getActions!().find(action => action.id === 'insert-reference')!.execute(executeArgs)).toEqual({ kind: 'completed' })
       expect(inputActions.insertReference).toHaveBeenLastCalledWith({ source: 'reference', ref: '@"/other project/src/',
         label: 'src/', appearance: 'folder', clipboardText: '@"/other project/src/' }, span)
       inputActions.insertReference.mockClear()
@@ -163,7 +166,7 @@ describe('file browser palette panel', () => {
       expect(container.querySelector('section[data-file-preview]')).not.toBeNull()
       expect(panel.getSnapshot()).toMatchObject({ width: 'compact', acceptLabel: browserZh.insert, canAccept: true })
       const actions = panel.getActions!()
-      expect(actions.map(action => action.id)).toEqual(['create-new-session', 'copy-absolute-path', 'insert-reference', 'toggle-hidden-files', 'toggle-content-preview'])
+      expect(actions.map(action => action.id)).toEqual(['create-new-session', 'insert-reference', 'copy-absolute-path', 'toggle-hidden-files', 'toggle-content-preview'])
       expect(container.querySelector(`header button[aria-label="${browserZh.togglePreview}"]`)).toBeNull()
       expect(actions[4]).toMatchObject({ title: browserZh.togglePreview,
         status: { kind: 'toggle', checked: true, label: browserZh.previewOn } })
@@ -207,7 +210,7 @@ describe('file browser palette panel', () => {
       expect(inputActions.insertReference).not.toHaveBeenCalled()
       expect(close).not.toHaveBeenCalled()
       expect(container.textContent).toContain(browserZh.stale)
-      expect(await actions[2]!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
+      expect(await actions.find(action => action.id === 'insert-reference')!.execute(executeArgs)).toMatchObject({ kind: 'failed' })
       key = 'original'
       await accept() // The palette routes Enter to the panel accept handler.
       expect(inputActions.insertReference).toHaveBeenCalledOnce()
@@ -258,7 +261,7 @@ describe('file browser palette panel', () => {
       expect(await picker.accept('missing' as ItemId, args)).toMatchObject({ kind: 'failed' })
       expect(openPanel).not.toHaveBeenCalled()
       const actions = picker.getActions!('one' as ItemId, args)
-      expect(await actions[1]!.execute(args)).toEqual({ kind: 'stay' })
+      expect(await actions[3]!.execute(args)).toEqual({ kind: 'stay' })
       expect(clipboard).toHaveBeenCalledWith('/one/')
       items = []
       expect(await actions[2]!.execute(args)).toEqual({ kind: 'cancelled' })
